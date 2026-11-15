@@ -36,6 +36,7 @@ impl WidgetHost {
         state.chat = preserved_chat;
         self.replace_editor_state(state);
         self.arm_missing_fonts_detection();
+        crate::codex_bridge::document_replaced();
     }
 
     /// Install a Figma/HTML import as a new unsaved document. Ordinary Open

@@ -10,10 +10,12 @@ use crate::repaint_ctx::RepaintContext;
 use op_editor_core::bridge_protocol::BridgeInbound;
 
 type MessageHandler = Rc<dyn Fn(BridgeInbound)>;
+type SelectionHandler = Rc<dyn Fn() -> String>;
 type NameHandler = Rc<dyn Fn(String)>;
 thread_local! {
     static OUTBOUND: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
     static INBOUND: RefCell<Option<MessageHandler>> = const { RefCell::new(None) };
+    static SELECTION: RefCell<Option<SelectionHandler>> = const { RefCell::new(None) };
     static NAME: RefCell<Option<NameHandler>> = const { RefCell::new(None) };
     static EARLY: RefCell<Vec<BridgeInbound>> = const { RefCell::new(Vec::new()) };
 }
@@ -71,6 +73,24 @@ pub fn codex_document_name(name: String) -> Result<(), JsValue> {
     Ok(())
 }
 
+#[wasm_bindgen]
+pub fn codex_selection_json() -> Result<String, JsValue> {
+    if !active() {
+        return Err(JsValue::from_str("Codex embedding mode required"));
+    }
+    let handler = SELECTION
+        .with(|slot| slot.borrow().clone())
+        .ok_or_else(|| JsValue::from_str("Editor is not ready"))?;
+    Ok(handler())
+}
+
+pub(crate) fn document_replaced() {
+    #[cfg(target_arch = "wasm32")]
+    if active() {
+        emit(r#"{"type":"op-shell/document-replaced"}"#);
+    }
+}
+
 pub(crate) fn emit(json: &str) {
     let callback = OUTBOUND.with(|slot| slot.borrow().clone());
     if let Some(callback) = callback {
@@ -82,6 +102,14 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
     if !active() {
         return;
     }
+    let selection_inner = inner.clone();
+    SELECTION.with(|slot| {
+        *slot.borrow_mut() = Some(Rc::new(move || {
+            op_editor_core::web_sync::selection_push_body(
+                selection_inner.borrow().host().editor_state(),
+            )
+        }))
+    });
     let message_inner = inner.clone();
     let handler: MessageHandler = Rc::new(move |message| {
         crate::vscode_bridge::route_message(&message_inner, &sync, "codex-mcp-app", message);

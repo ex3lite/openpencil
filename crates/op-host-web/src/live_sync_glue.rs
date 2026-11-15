@@ -171,8 +171,9 @@ pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync: S
     // apply, which resets daemon-side selection). Seeded with the current key
     // so mount does not push an initial no-op selection (TS pushes selection
     // only on change).
-    let last_selection_key = Rc::new(RefCell::new(Some(web_sync::selection_sync_key(
+    let last_selection_key = Rc::new(RefCell::new(Some(selection_delivery_key(
         inner.borrow().host().editor_state(),
+        sync.borrow().client.last_version(),
     ))));
 
     // ---- pull + selection tick ----
@@ -184,7 +185,7 @@ pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync: S
         let last_selection_key = last_selection_key.clone();
         let tick: Rc<dyn Fn()> = Rc::new(move || {
             poll_version(&inner, &base, &sync, &fetch_busy, &last_selection_key);
-            push_selection_if_changed(&inner, &base, &last_selection_key);
+            push_selection_if_changed(&inner, &base, &sync, &last_selection_key);
         });
         let _ = live_sync::start_interval(POLL_INTERVAL_MS, tick);
     }
@@ -628,9 +629,16 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
 /// the 400 ms tick). Fire-and-forget like the TS fetch().catch(() => {}).
 /// Unaffected by the sync gate (one-way browser → daemon presentation state,
 /// not document content).
+// A document replacement clears daemon selection even when the UI selection
+// did not change. Include the acknowledged document version in its delivery key.
+fn selection_delivery_key(state: &op_editor_core::EditorState, version: u64) -> String {
+    format!("{}|version:{version}", web_sync::selection_sync_key(state))
+}
+
 fn push_selection_if_changed<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     base: &str,
+    sync: &SharedSync,
     last_selection_key: &Rc<RefCell<Option<String>>>,
 ) {
     let (key, body) = {
@@ -639,7 +647,7 @@ fn push_selection_if_changed<C: RepaintContext + 'static>(
         };
         let state = b.host().editor_state();
         (
-            web_sync::selection_sync_key(state),
+            selection_delivery_key(state, sync.borrow().client.last_version()),
             web_sync::selection_push_body(state),
         )
     };
@@ -660,6 +668,19 @@ fn push_selection_if_changed<C: RepaintContext + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_selection_is_republished_after_document_sync() {
+        let state = op_editor_core::EditorState::starter();
+        assert_eq!(
+            selection_delivery_key(&state, 1),
+            selection_delivery_key(&state, 1)
+        );
+        assert_ne!(
+            selection_delivery_key(&state, 1),
+            selection_delivery_key(&state, 2)
+        );
+    }
 
     fn minimal_document() -> op_editor_core::PenDocument {
         serde_json::from_str(r#"{"version":"1.0","children":[]}"#)

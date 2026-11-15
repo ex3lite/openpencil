@@ -181,6 +181,7 @@ pub(super) fn new_document<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
     file_actions::preserve_app_preferences(b.host().editor_state(), &mut state);
     state.editor_ui.file_name_display = None;
     b.host_mut().replace_editor_state(state);
+    crate::codex_bridge::document_replaced();
     let (w, h) = b.viewport_size();
     b.host_mut().fit_content_to_viewport(w, h);
     let _ = b.repaint();
