@@ -471,3 +471,13 @@ fn export_download_file_name_joins_document_and_selected_node() {
     state.editor_ui.file_name_display = Some("re:port/v2.op".to_string());
     assert_eq!(export_download_file_name(&state), "re-port-v2-星图.png");
 }
+
+#[test]
+fn opening_a_document_keeps_codex_chat_ownership() {
+    let mut previous = EditorState::new();
+    previous.editor_ui.embed = op_editor_core::EmbedHost::Codex;
+    previous.editor_ui.host_owns_chat = true;
+    let ingested = ingest_op_source(r#"{"version":"1.0","children":[]}"#, &previous).unwrap();
+    assert_eq!(ingested.state.editor_ui.embed, op_editor_core::EmbedHost::Codex);
+    assert!(ingested.state.editor_ui.host_owns_chat);
+}

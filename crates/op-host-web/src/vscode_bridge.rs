@@ -152,6 +152,7 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
     for (origin, msg) in buffered {
         route_message(inner, &sync, &origin, msg);
     }
+    crate::codex_bridge::install(inner, sync);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +164,9 @@ fn handle_message<C: RepaintContext + 'static>(
     sync: &SharedSync,
     evt: &MessageEvent,
 ) {
+    if crate::codex_bridge::active() {
+        return;
+    }
     // Source lock: only the parent frame (the VS Code webview host) may drive
     // the bridge. `event.source == window.parent`.
     let parent = web_sys::window().and_then(|w| w.parent().ok().flatten());
@@ -189,7 +193,7 @@ fn handle_message<C: RepaintContext + 'static>(
 /// Origin lock + dispatch — shared by the live listener and the early-inbox
 /// replay: [`install`] feeds [`early_listener`]'s buffered messages through
 /// here with their receive-time origin, so both paths enforce the same rules.
-fn route_message<C: RepaintContext + 'static>(
+pub(crate) fn route_message<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     sync: &SharedSync,
     origin: &str,

@@ -55,6 +55,10 @@ pub fn copy_text(text: &str) {
 /// iframe, so the page forwards the intent and the extension runs the
 /// regular VS Code save (which lands in `saveCustomDocument`).
 pub fn post_save_to_parent() {
+    if crate::codex_bridge::active() {
+        crate::codex_bridge::emit(r#"{"type":"op-shell/save"}"#);
+        return;
+    }
     let Some(win) = web_sys::window() else { return };
     let Ok(Some(parent)) = win.parent() else {
         return;

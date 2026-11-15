@@ -109,6 +109,9 @@ pub(super) fn take_over() -> Vec<(String, BridgeInbound)> {
 /// The early listener's body: same source lock as the full pipeline, parse,
 /// buffer. No editor state is touched — there is none yet.
 fn handle_message_early(evt: &MessageEvent) {
+    if crate::codex_bridge::active() {
+        return;
+    }
     if EARLY_INBOX.with(|inbox| inbox.borrow().is_drained()) {
         return; // the full bridge is live; its listener handles everything
     }

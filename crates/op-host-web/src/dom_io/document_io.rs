@@ -190,6 +190,14 @@ pub(super) fn new_document<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
 /// common daemon path does not also build a pretty canonical download, and
 /// Save As does not build a daemon body it will never send.
 pub(super) fn save_document<C: RepaintContext + 'static>(inner: &InnerRc<C>, daemon_first: bool) {
+    if crate::codex_bridge::active() {
+        crate::codex_bridge::emit(if daemon_first {
+            r#"{"type":"op-shell/save"}"#
+        } else {
+            r#"{"type":"op-shell/save-as"}"#
+        });
+        return;
+    }
     if daemon_first {
         save_to_daemon(inner);
     } else {

@@ -201,7 +201,10 @@ pub(super) fn register_keyboard_listeners(
                     // forwarded for a host-side save (extension runs the
                     // regular workbench save → saveCustomDocument). Outside
                     // the embed the browser default stays suppressed-by-noop.
-                    if b.host.editor_state().editor_ui.embed == op_editor_core::EmbedHost::VsCode {
+                    if matches!(
+                        b.host.editor_state().editor_ui.embed,
+                        op_editor_core::EmbedHost::VsCode | op_editor_core::EmbedHost::Codex
+                    ) {
                         crate::web_clipboard::post_save_to_parent();
                     }
                     consumed = true;

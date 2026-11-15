@@ -36,6 +36,10 @@ pub(super) fn release_push_busy(sync: &SharedSync) {
 /// Post a codec string to the locked host origin (falling back to `*` only
 /// before the origin is known — by which point every real reply is sent).
 pub(crate) fn post_to_parent(json: &str) {
+    if crate::codex_bridge::active() {
+        crate::codex_bridge::emit(json);
+        return;
+    }
     let Some(window) = web_sys::window() else {
         return;
     };
