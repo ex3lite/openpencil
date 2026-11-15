@@ -234,7 +234,9 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     }
     // Populate the chat model picker from the daemon's `/api/ai/models`
     // catalog (best-effort; async, repaints when the response lands).
-    crate::web_chat::fetch_models(&inner);
+    if !inner.borrow().host.editor_state().editor_ui.host_owns_chat {
+        crate::web_chat::fetch_models(&inner);
+    }
     // Pull the brand-logo catalog (omitted from the wasm bundle) from the daemon
     // in the background so the icon picker / figma can resolve simple-icons.
     crate::iconify_web::fetch_brand_catalog(&inner);

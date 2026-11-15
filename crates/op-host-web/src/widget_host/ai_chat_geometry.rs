@@ -25,8 +25,10 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        if self.editor_state.editor_ui.embed == op_editor_core::EmbedHost::VsCode {
-            // The VS Code plugin is MCP-driven; the in-editor chat is hidden.
+        if self.editor_state.editor_ui.host_owns_chat
+            || self.editor_state.editor_ui.embed == op_editor_core::EmbedHost::VsCode
+        {
+            // Embedded host conversations own the agent and its provider.
             return None;
         }
         // The chat is PINNED into a left column — the workspace's dock,

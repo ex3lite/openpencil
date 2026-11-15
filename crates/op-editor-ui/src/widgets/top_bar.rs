@@ -247,7 +247,11 @@ impl TopBar {
             collab: CollabTopBarModel::for_editor_ui(ui),
             theme: theme_for(ui),
             label_edited: translate(ui, "topbar.edited"),
-            label_agents_and_mcp: if ui.embed == op_editor_core::EmbedHost::VsCode {
+            label_agents_and_mcp: if ui.host_owns_chat
+                && ui.embed == op_editor_core::EmbedHost::Codex
+            {
+                translate(ui, "settings.title")
+            } else if ui.embed == op_editor_core::EmbedHost::VsCode {
                 translate(ui, "topbar.mcp")
             } else {
                 translate(ui, "topbar.agentsAndMcp")

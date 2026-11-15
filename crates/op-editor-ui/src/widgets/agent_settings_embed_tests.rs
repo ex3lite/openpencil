@@ -141,3 +141,22 @@ fn vscode_embed_sidebar_paints_only_the_mcp_nav_label() {
         "System nav label must not paint in the VS Code embed"
     );
 }
+
+#[test]
+fn codex_uses_host_agent_and_keeps_local_editor_preferences() {
+    let mut state = EditorState::new();
+    state.editor_ui.embed = EmbedHost::Codex;
+    state.editor_ui.host_owns_chat = true;
+    let panel = AgentSettingsPanel::for_web_editor(&state);
+    let rect = panel.rect(1200.0, 800.0);
+    for (index, expected) in [
+        Some(AgentSettingsTab::Fonts),
+        Some(AgentSettingsTab::System),
+        None,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(panel.nav_at(rect, nav_row_center(rect, index)), expected);
+    }
+}

@@ -51,3 +51,12 @@ fn ai_chat_collapse_click_stays_expanded_while_streaming_like_ts() {
         "TS immediately reopens a minimized chat while a response is streaming"
     );
 }
+
+#[test]
+fn host_owned_chat_has_no_floating_provider_picker() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.host_owns_chat = true;
+    assert!(host.ai_chat_rect(1600.0, 1000.0).is_none());
+    host.editor_state.chat.minimize();
+    assert!(host.ai_chat_rect(1600.0, 1000.0).is_none());
+}

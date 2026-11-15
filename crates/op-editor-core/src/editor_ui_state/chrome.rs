@@ -31,6 +31,8 @@ pub enum EmbedHost {
     None,
     /// VS Code / Cursor custom-editor webview (`?embed=vscode`).
     VsCode,
+    /// Codex MCP App: the surrounding conversation owns the agent.
+    Codex,
 }
 
 impl EmbedHost {
@@ -38,8 +40,10 @@ impl EmbedHost {
     pub fn from_query(search: &str) -> Self {
         let trimmed = search.strip_prefix('?').unwrap_or(search);
         for pair in trimmed.split('&') {
-            if pair.strip_prefix("embed=") == Some("vscode") {
-                return Self::VsCode;
+            match pair.strip_prefix("embed=") {
+                Some("vscode") => return Self::VsCode,
+                Some("codex") => return Self::Codex,
+                _ => {}
             }
         }
         Self::None

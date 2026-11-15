@@ -4,10 +4,13 @@ use op_editor_core::EditorState;
 #[test]
 fn host_chat_is_an_explicit_embedded_capability() {
     assert!(host_owns_chat_from_query("?embed=vscode&chat=host"));
+    assert!(host_owns_chat_from_query("?embed=codex&chat=host"));
     for query in [
         "",
         "?chat=host",
         "?embed=vscode",
+        "?embed=codex",
+        "?embed=codex&chat=local",
         "?embed=vscode&chat=local",
     ] {
         assert!(!host_owns_chat_from_query(query), "{query}");

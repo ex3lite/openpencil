@@ -164,10 +164,15 @@ pub enum AgentSettingsPanelMode {
     /// auth backend).
     WebBuiltinOnlyWithAccount,
     McpOnly,
+    /// The embedding conversation supplies AI; retain local editor preferences.
+    HostChat,
 }
 
 impl AgentSettingsPanelMode {
     fn visible_tabs(self, ui: &EditorUiState) -> &'static [AgentSettingsTab] {
+        if self == AgentSettingsPanelMode::HostChat {
+            return &[AgentSettingsTab::Fonts, AgentSettingsTab::System];
+        }
         if ui.touch_chrome() && self != AgentSettingsPanelMode::McpOnly {
             return if matches!(
                 self,
@@ -196,6 +201,9 @@ impl AgentSettingsPanelMode {
                 AgentSettingsTab::Account,
             ],
             AgentSettingsPanelMode::McpOnly => &[AgentSettingsTab::Mcp],
+            AgentSettingsPanelMode::HostChat => {
+                &[AgentSettingsTab::Fonts, AgentSettingsTab::System]
+            }
         }
     }
 
@@ -247,7 +255,9 @@ fn mode_for_ui(ui: &EditorUiState, base: AgentSettingsPanelMode) -> AgentSetting
     // signed-in profile still needs its Account settings even if that runtime
     // gate has not been advertised yet.
     let account_visible = ui.account_ui_available || ui.account.is_signed_in();
-    if ui.embed == op_editor_core::EmbedHost::VsCode {
+    if ui.host_owns_chat && ui.embed == op_editor_core::EmbedHost::Codex {
+        AgentSettingsPanelMode::HostChat
+    } else if ui.embed == op_editor_core::EmbedHost::VsCode {
         AgentSettingsPanelMode::McpOnly
     } else if base == AgentSettingsPanelMode::Full && account_visible {
         AgentSettingsPanelMode::FullWithAccount

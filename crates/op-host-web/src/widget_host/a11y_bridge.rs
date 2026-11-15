@@ -77,7 +77,8 @@ impl WidgetHost {
         // and must never accept keyboard focus. Web-only: `EmbedHost` is
         // never `VsCode` on the native host.
         if target == a11y_regions::AI_CHAT_WIDGET_ID
-            && self.editor_state.editor_ui.embed == op_editor_core::EmbedHost::VsCode
+            && (self.editor_state.editor_ui.host_owns_chat
+                || self.editor_state.editor_ui.embed == op_editor_core::EmbedHost::VsCode)
         {
             return false;
         }

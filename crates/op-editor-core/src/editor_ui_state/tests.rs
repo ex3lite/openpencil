@@ -401,3 +401,12 @@ fn host_locale_override_changes_only_the_effective_locale() {
     ui.set_host_locale_override(None);
     assert_eq!(ui.effective_locale(), Locale::ZhCn);
 }
+
+#[test]
+fn codex_embed_is_distinct_from_vscode_file_and_clipboard_transport() {
+    assert_eq!(
+        EmbedHost::from_query("?embed=codex&chat=host"),
+        EmbedHost::Codex
+    );
+    assert_ne!(EmbedHost::Codex, EmbedHost::VsCode);
+}
