@@ -34,7 +34,6 @@ fn run_pass(sink: &mut VecDocSink, root_id: &str) -> bool {
 
 fn run_driver(sink: &mut VecDocSink, root_id: &str) -> RepairSummary {
     let plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: root_id.to_string(),
             name: "Deck".into(),
@@ -47,7 +46,6 @@ fn run_driver(sink: &mut VecDocSink, root_id: &str) -> RepairSummary {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     };
     let mut summary = RepairSummary::default();
     run_cleanup_passes_with_summary(sink, &plan, &[root_id], &mut summary);
@@ -433,7 +431,6 @@ fn a_card_with_small_unified_section_margins_gets_the_floor_backstop() {
         }),
     );
     let plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "card".to_string(),
             name: "知识卡片".into(),
@@ -446,7 +443,6 @@ fn a_card_with_small_unified_section_margins_gets_the_floor_backstop() {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     };
     let mut summary = RepairSummary::default();
     run_cleanup_passes_with_summary(&mut sink, &plan, &["card"], &mut summary);

@@ -57,9 +57,6 @@ fn selection_changing_right_press_closes_image_search() {
     .expect("fixture")
     .value;
     let mut host = WidgetHost::new();
-    // The expanded chat panel lives in the rail's Agent tab; anywhere
-    // else the chat is composer-only, so put the rail on its home.
-    host.editor_state.editor_ui.enter_chat_tab();
     host.editor_state = EditorState::from_document(doc);
     host.editor_state.set_single_selection(NodeId::new("n2"));
     host.editor_state.editor_ui.image_panel.search_open = true;
@@ -69,14 +66,12 @@ fn selection_changing_right_press_closes_image_search() {
         .search_query
         .set_text("hero query");
 
-    // The rail carries a tab row now (Agent / Layers / Slides), so the
-    // tree starts below it; ask the host rather than rebuilding the rect.
-    let rect = host.layers_content_rect(VIEWPORT_H);
+    let rect = host.layer_panel_rect(VIEWPORT_H);
     let panel = LayerPanel::from_editor(&host.editor_state);
     let mut point = None;
     let mut y = rect.origin.y;
     while y < rect.origin.y + rect.size.y {
-        let candidate = Point2D::new(rect.origin.x + 48.0, y);
+        let candidate = Point2D::new(48.0, y);
         if panel.hit_test(rect, candidate) == Some(LayerPanelHit::Layer(NodeId::new("n1"))) {
             point = Some(candidate);
             break;

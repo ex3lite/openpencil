@@ -102,20 +102,81 @@ fn city_map_becomes_a_vector_placeholder_and_clears_search_intent() {
     assert!(patch["imageSearchQuery"].is_null());
 
     let children = patch["children"].as_array().unwrap();
-    assert_eq!(
-        patch["explain"],
-        "map-template:location; illustrative, not geographic data; viewport:327x280"
-    );
-    assert!(children.iter().any(|child| child["name"] == "map-pin"));
-    assert!(!children.iter().any(|child| child["name"] == "map-route"));
-    let layers = children
+    let map_blocks: Vec<&Value> = children
         .iter()
-        .find(|child| child["name"] == "Map layer control")
+        .filter(|child| {
+            child["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("map-block-"))
+        })
+        .collect();
+    assert_eq!(map_blocks.len(), 12);
+    let expected_block_width = (327.0 - 5.0 * 12.0) / 4.0;
+    assert!(map_blocks.iter().all(|block| {
+        (block["width"].as_f64().unwrap() - expected_block_width).abs() < f64::EPSILON
+    }));
+    assert_eq!(
+        children
+            .iter()
+            .filter(|child| child["name"].as_str() == Some("map-road-h"))
+            .count(),
+        1
+    );
+    let road_h = children
+        .iter()
+        .find(|child| child["name"].as_str() == Some("map-road-h"))
         .unwrap();
-    assert_eq!(layers["width"], 40);
-    assert_eq!(layers["height"], 40);
-    // Authored controls must paint above the map (lower index paints on top).
-    assert_eq!(children[0]["id"], "locate");
+    let road_v = children
+        .iter()
+        .find(|child| child["name"].as_str() == Some("map-road-v"))
+        .unwrap();
+    assert_eq!(road_h["height"], json!(10.0));
+    assert_eq!(road_v["width"], json!(10.0));
+    assert!(
+        road_h["y"].as_f64().unwrap()
+            > map_blocks[0]["y"].as_f64().unwrap() + map_blocks[0]["height"].as_f64().unwrap()
+    );
+    assert!(road_h["y"].as_f64().unwrap() < map_blocks[4]["y"].as_f64().unwrap());
+    assert!(
+        road_v["x"].as_f64().unwrap()
+            > map_blocks[0]["x"].as_f64().unwrap() + map_blocks[0]["width"].as_f64().unwrap()
+    );
+    assert!(road_v["x"].as_f64().unwrap() < map_blocks[1]["x"].as_f64().unwrap());
+    let route_index = children
+        .iter()
+        .position(|child| child["name"].as_str() == Some("map-route"))
+        .unwrap();
+    let road_h_index = children
+        .iter()
+        .position(|child| child["name"].as_str() == Some("map-road-h"))
+        .unwrap();
+    let road_v_index = children
+        .iter()
+        .position(|child| child["name"].as_str() == Some("map-road-v"))
+        .unwrap();
+    assert!(route_index > road_h_index && route_index > road_v_index);
+    assert_eq!(children[route_index]["stroke"]["thickness"], json!(5));
+    assert_eq!(children[route_index]["stroke"]["join"], json!("round"));
+    assert_eq!(children[route_index]["stroke"]["cap"], json!("round"));
+    assert_eq!(
+        children[route_index]["stroke"]["fill"],
+        json!([{ "type": "solid", "color": "$--primary" }])
+    );
+    let pin_index = children
+        .iter()
+        .position(|child| child["name"].as_str() == Some("map-pin"))
+        .unwrap();
+    let origin_halo_index = children
+        .iter()
+        .position(|child| child["name"].as_str() == Some("map-origin-halo"))
+        .unwrap();
+    let origin_index = children
+        .iter()
+        .position(|child| child["name"].as_str() == Some("map-origin"))
+        .unwrap();
+    assert!(pin_index > route_index);
+    assert!(origin_halo_index > route_index);
+    assert!(origin_index > route_index);
     assert!(patch.get("height").is_none());
     assert!(children.iter().any(|child| child["id"] == "locate"));
     for child in children {
@@ -226,7 +287,7 @@ fn fit_content_height_is_sized_without_overwriting_width_sizing() {
         .iter()
         .find(|child| child["name"] == "map-block-1")
         .unwrap();
-    assert_eq!(block["width"], json!(327.0 * 0.18));
+    assert_eq!(block["width"], json!((327.0 - 5.0 * 12.0) / 4.0));
 }
 
 #[test]
@@ -343,392 +404,4 @@ fn decorations_inside_a_hand_drawn_map_and_small_map_shapes_are_left_alone() {
         vec!["wide-tile"],
         "only the wide leaf is a map slot; got {ids:?}"
     );
-}
-
-/// astra-new2 a3: a film-lab detail hero whose prompt asks for a photo with
-/// a back control over it, and photos whose scene merely contains a map.
-#[test]
-fn a_photo_prompt_never_turns_its_image_into_a_map() {
-    for (name, query, prompt) in [
-        (
-            "Portra 400 黄昏街景扫描",
-            "dusk street film",
-            "A photographic Kodak Portra 400 film scan of a quiet street at dusk, leaving room for a back navigation button",
-        ),
-        (
-            "trail-hero",
-            "hiker mountain trail",
-            "photo of a hiker reading a paper map on a mountain trail",
-        ),
-        (
-            "城市漫步封面",
-            "城市街道",
-            "实拍城市街角，行人手持地图",
-        ),
-    ] {
-        let node: PenNode = serde_json::from_value(json!({
-            "type": "image", "id": "hero", "name": name, "src": "", "width": 375, "height": 300,
-            "imageSearchQuery": query, "imagePrompt": prompt
-        }))
-        .expect("valid image");
-        assert!(!is_map_placeholder_candidate(&node), "{name} is a photo");
-    }
-    // A slot whose name or query asks for a map is still one, photo words or not.
-    for (name, query, prompt) in [
-        (
-            "store-location-map",
-            "",
-            "photo-real map of the neighbourhood",
-        ),
-        ("门店位置", "city map", "photographic aerial view"),
-        ("route-preview", "", "illustrated city map with a route"),
-    ] {
-        let node: PenNode = serde_json::from_value(json!({
-            "type": "image", "id": "map", "name": name, "src": "", "width": 327, "height": 200,
-            "imageSearchQuery": query, "imagePrompt": prompt
-        }))
-        .expect("valid image");
-        assert!(is_map_placeholder_candidate(&node), "{name} is a map");
-    }
-}
-
-/// "Mapo tofu" and "maple" start with "map" but are food. Measured 0923-0924:
-/// every 麻婆豆腐 dish photo and a Sichuan store hero became fake street maps.
-#[test]
-fn food_words_that_start_with_map_are_not_maps() {
-    for (name, query, prompt) in [
-        (
-            "dish-photo-2",
-            "mapo tofu",
-            "overhead food photography of mapo tofu in a clay bowl",
-        ),
-        (
-            "store-hero-image",
-            "sichuan restaurant",
-            "warm restaurant table with mapo tofu and chili oil",
-        ),
-        (
-            "pancake-photo",
-            "maple syrup pancakes",
-            "stack of pancakes with maple syrup",
-        ),
-    ] {
-        let node: PenNode = serde_json::from_value(json!({
-            "type": "image", "id": name, "name": name, "src": "", "width": 88, "height": 88,
-            "imageSearchQuery": query, "imagePrompt": prompt
-        }))
-        .expect("valid image");
-        assert!(
-            !is_map_placeholder_candidate(&node),
-            "{name} is food, not a map"
-        );
-    }
-    let real: PenNode = serde_json::from_value(json!({
-        "type": "image", "id": "store-map", "name": "store-location-map", "src": "",
-        "width": 327, "height": 160, "imageSearchQuery": "city map"
-    }))
-    .expect("valid image");
-    assert!(is_map_placeholder_candidate(&real));
-}
-
-fn authored_layers_button(width: Value) -> Value {
-    json!({"type":"frame","id":"authored-layers","name":"图层切换按钮",
-        "x":275,"y":12,"width":width,"height":40,"layout":"horizontal",
-        "fill":[{"type":"solid","color":"#FFFFFF"}],"cornerRadius":20,
-        "children":[{"type":"icon_font","id":"authored-icon","iconFontName":"layers",
-            "width":18,"height":18,"fill":[{"type":"solid","color":"#284339"}]}]})
-}
-
-#[test]
-fn map_with_authored_sibling_layer_control_uses_one_compact_control() {
-    for width in [json!(40), json!("fill_container")] {
-        let needs_repair = width.is_string();
-        let button = authored_layers_button(width);
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"viewport",
-            "name":"地图视口","layout":"none","width":327,"height":280,
-            "children":[button,{"type":"text","id":"eta","content":"预计12分钟送达"},
-                {"type":"image","id":"slot","name":"Map","src":"","width":327,"height":280,
-                    "imageSearchQuery":"map-template:delivery"}]}))
-        .unwrap();
-        let patches = map_placeholder(&source, &HashMap::new(), Theme::Light);
-        let control = patches.iter().find(|p| p.node_id == "authored-layers");
-        if needs_repair {
-            let control = patch_value(control.unwrap());
-            assert_eq!(control["width"], 40.0);
-            assert_eq!(control["height"], 40.0);
-            assert_eq!(control["padding"], 0);
-            assert!(
-                control.get("children").is_none(),
-                "preserve authored icon and events"
-            );
-            assert!(control.get("fill").is_none(), "preserve authored styling");
-        } else {
-            assert!(
-                control.is_none(),
-                "an already compact control stays untouched"
-            );
-        }
-        let map = patch_value(patches.iter().find(|p| p.node_id == "slot").unwrap());
-        assert!(!map["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Map layer control"));
-        assert!(map["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "map-pin"));
-    }
-}
-
-#[test]
-fn map_preserves_and_compacts_its_own_authored_layer_control() {
-    let button = authored_layers_button(json!("fill_container"));
-    let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"map",
-        "name":"Map","width":327,"height":280,"children":[button]}))
-    .unwrap();
-    let original_button = serde_json::to_value(&source.children().unwrap()[0]).unwrap();
-    let map = build_map_placeholder(&source, 327.0, 280.0, Theme::Light);
-    let children = map["children"].as_array().unwrap();
-    assert_eq!(children[0]["id"], "authored-layers");
-    assert_eq!(children[0]["width"], 40.0);
-    assert_eq!(children[0]["height"], 40.0);
-    assert_eq!(children[0]["children"], original_button["children"]);
-    assert_eq!(children[0]["fill"], original_button["fill"]);
-    assert!(!children.iter().any(|n| n["name"] == "Map layer control"));
-}
-
-#[test]
-fn compact_authored_map_controls_keep_size_shape_and_spacing() {
-    for size in [40, 44, 48] {
-        let mut button = authored_layers_button(json!(size));
-        button["height"] = json!(size);
-        button["cornerRadius"] = json!(size / 2);
-        button["padding"] = json!(8);
-        button["events"] = json!({"onTap":[{"toast":"Layers"}]});
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"map",
-            "name":"Map","width":327,"height":280,"layout":"none",
-            "children":[button]}))
-        .unwrap();
-        let original = serde_json::to_value(&source.children().unwrap()[0]).unwrap();
-        let map = build_map_placeholder(&source, 327.0, 280.0, Theme::Light);
-        assert_eq!(map["children"][0], original);
-
-        let viewport: PenNode = serde_json::from_value(json!({"type":"frame",
-            "id":"viewport","layout":"none","width":327,"height":280,
-            "children":[original,{"type":"image","id":"slot","name":"Map","src":"",
-                "width":327,"height":280,"imageSearchQuery":"map-template:running"}]}))
-        .unwrap();
-        let patches = map_placeholder(&viewport, &HashMap::new(), Theme::Light);
-        assert!(!patches.iter().any(|p| p.node_id == "authored-layers"));
-        assert_eq!(patches.len(), 1, "only the map placeholder needs replacing");
-    }
-}
-
-#[test]
-fn stretched_layer_bar_uses_its_existing_compact_height() {
-    let mut button = authored_layers_button(json!("fill_container"));
-    button["height"] = json!(44);
-    let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"map",
-        "name":"Map","width":327,"height":280,"children":[button]}))
-    .unwrap();
-    let map = build_map_placeholder(&source, 327.0, 280.0, Theme::Light);
-    assert_eq!(map["children"][0]["width"], 44.0);
-    assert_eq!(map["children"][0]["height"], 44.0);
-}
-
-#[test]
-fn layer_button_outside_map_viewport_does_not_suppress_template_control() {
-    let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"root",
-        "layout":"vertical","width":375,"height":812,
-        "children":[authored_layers_button(json!("fill_container")),
-            {"type":"frame","id":"viewport","layout":"none","width":327,"height":280,
-                "children":[{"type":"image","id":"slot","name":"Map","src":"",
-                    "width":327,"height":280,"imageSearchQuery":"map-template:location"}]}]}))
-    .unwrap();
-    let patches = map_placeholder(&source, &HashMap::new(), Theme::Light);
-    assert_eq!(
-        patches.len(),
-        1,
-        "unrelated layers button must stay untouched"
-    );
-    assert_eq!(patches[0].node_id, "slot");
-    assert!(patch_value(&patches[0])["children"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|n| n["name"] == "Map layer control"));
-}
-
-#[test]
-fn map_decoration_does_not_trigger_layer_control_repair() {
-    let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"viewport",
-        "layout":"none","width":327,"height":280,"children":[
-            authored_layers_button(json!("fill_container")),
-            {"type":"rectangle","id":"park","name":"map-park","width":40,"height":40}]}))
-    .unwrap();
-    let rects = HashMap::from([(
-        "park".into(),
-        ResolvedRect {
-            x: 0.0,
-            y: 0.0,
-            width: 40.0,
-            height: 40.0,
-        },
-    )]);
-    assert!(map_placeholder(&source, &rects, Theme::Light).is_empty());
-}
-
-#[test]
-fn hidden_authored_layers_does_not_remove_visible_template_control() {
-    for (hide_icon, hidden) in [
-        (false, json!({"visible":false})),
-        (false, json!({"opacity":0})),
-        (false, json!({"enabled":false})),
-        (true, json!({"visible":false})),
-        (true, json!({"opacity":0})),
-        (true, json!({"enabled":false})),
-    ] {
-        let mut button = authored_layers_button(json!(40));
-        let target = if hide_icon {
-            &mut button["children"][0]
-        } else {
-            &mut button
-        };
-        target
-            .as_object_mut()
-            .unwrap()
-            .extend(hidden.as_object().unwrap().clone());
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"viewport",
-            "layout":"none","width":327,"height":280,"children":[button,
-                {"type":"image","id":"slot","name":"Map","src":"","width":327,"height":280,
-                    "imageSearchQuery":"map-template:location"}]}))
-        .unwrap();
-        let patches = map_placeholder(&source, &HashMap::new(), Theme::Light);
-        assert_eq!(patches.len(), 1);
-        assert_eq!(patches[0].node_id, "slot");
-        assert!(patch_value(&patches[0])["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Map layer control"));
-    }
-}
-
-#[test]
-fn absolute_map_controls_with_default_zero_coordinates_do_not_get_a_duplicate() {
-    for missing in [vec!["x"], vec!["y"], vec!["x", "y"]] {
-        let mut button = authored_layers_button(json!(40));
-        for key in &missing {
-            button.as_object_mut().unwrap().remove(*key);
-        }
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"viewport",
-            "layout":"none","width":327,"height":380,"children":[button.clone(),
-                {"type":"image","id":"slot","name":"Map","src":"","width":327,"height":380,
-                "imageSearchQuery":"map-template:delivery"}]}))
-        .unwrap();
-        let patches = map_placeholder(&source, &HashMap::new(), Theme::Dark);
-        let map = patch_value(patches.iter().find(|p| p.node_id == "slot").unwrap());
-        assert!(!map["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Map layer control"));
-        // The same control must survive when it is directly inside the slot.
-        let slot: PenNode = serde_json::from_value(json!({"type":"frame","id":"slot",
-            "name":"Map","layout":"none","width":327,"height":380,"children":[button.clone()]}))
-        .unwrap();
-        let map = build_map_placeholder(&slot, 327.0, 380.0, Theme::Dark);
-        let original = serde_json::to_value(&slot.children().unwrap()[0]).unwrap();
-        let controls: Vec<_> = map["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|n| n["id"] == "authored-layers" || n["name"] == "Map layer control")
-            .collect();
-        assert_eq!(controls.len(), 1);
-        assert_eq!(controls[0]["id"], "authored-layers");
-        assert_eq!(controls[0]["children"], original["children"]);
-        assert_eq!(controls[0]["fill"], original["fill"]);
-    }
-}
-
-#[test]
-fn icon_only_map_toolbar_never_becomes_a_second_map() {
-    for name in [
-        "右侧地图控件",
-        "地图操作按钮",
-        "Map controls",
-        "map-toolbar",
-    ] {
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"tools",
-            "name":name,"layout":"vertical","width":375,"height":"fit_content",
-            "children":[authored_layers_button(json!(40))]}))
-        .unwrap();
-        assert!(
-            map_placeholder(&source, &HashMap::new(), Theme::Dark).is_empty(),
-            "{name}"
-        );
-    }
-}
-
-#[test]
-fn layer_toggle_with_map_glyph_or_nested_toolbar_suppresses_only_its_own_default() {
-    for nested in [false, true] {
-        let mut control = authored_layers_button(json!(44));
-        control["name"] = json!("layer-toggle-button");
-        control["children"][0]["iconFontName"] = json!("map");
-        if nested {
-            control = json!({"type":"frame","id":"toolbar","layout":"vertical",
-                "width":44,"height":"fit_content","children":[control,
-                    {"type":"frame","id":"locate","width":44,"height":44,
-                     "children":[{"type":"icon_font","id":"locate-icon","iconFontName":"crosshair"}]}]});
-        }
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"viewport",
-            "layout":"none","width":375,"height":734,"children":[control,
-                {"type":"image","id":"map","src":"","width":375,"height":734,
-                 "imageSearchQuery":"map-template:running"}]}))
-        .unwrap();
-        let patches = map_placeholder(&source, &HashMap::new(), Theme::Dark);
-        assert!(!patches.iter().any(|p| p.node_id == "authored-layers"));
-        assert!(!patches
-            .iter()
-            .any(|p| matches!(p.node_id.as_str(), "toolbar" | "locate")));
-        let map = patch_value(patches.iter().find(|p| p.node_id == "map").unwrap());
-        assert!(!map["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Map layer control"));
-    }
-}
-
-#[test]
-fn nested_other_map_or_hidden_toolbar_never_steals_the_maps_default_control() {
-    for other_map in [false, true] {
-        let mut toolbar = json!({"type":"frame","id":"toolbar","layout":"none","width":327,"height":300,
-            "children":[authored_layers_button(json!(44))]});
-        if other_map {
-            toolbar["children"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"type":"image","id":"other-map",
-                "src":"","width":327,"height":300,"imageSearchQuery":"map-template:location"}));
-        } else {
-            toolbar["visible"] = json!(false);
-        }
-        let source: PenNode = serde_json::from_value(json!({"type":"frame","id":"viewport",
-            "layout":"none","width":375,"height":734,"children":[toolbar,
-                {"type":"image","id":"map","src":"","width":375,"height":734,
-                 "imageSearchQuery":"map-template:running"}]}))
-        .unwrap();
-        let patches = map_placeholder(&source, &HashMap::new(), Theme::Dark);
-        let map = patch_value(patches.iter().find(|p| p.node_id == "map").unwrap());
-        assert!(map["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["name"] == "Map layer control"));
-    }
 }

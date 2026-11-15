@@ -253,7 +253,7 @@ pub enum BuiltinModelMenuTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSettings {
     pub tab: AgentSettingsTab,
-    pub connected: [bool; 8],
+    pub connected: [bool; 7],
     /// The embedding host's real MCP endpoint (e.g. the VS Code
     /// extension's McpProxy URL), delivered via the bridge `init`
     /// message. When set, the MCP tab's client-config card displays
@@ -263,7 +263,7 @@ pub struct AgentSettings {
     pub embed_mcp_url: Option<String>,
     /// Probe-derived per-provider connect status, indexed like
     /// `connected`. Runtime-only — not persisted.
-    pub provider_connection: [ProviderConnection; 8],
+    pub provider_connection: [ProviderConnection; 7],
     /// Connect-press request seam — the desktop host drains this
     /// into the async provider probe (`provider_probe_host.rs`).
     pub pending_provider_connect: Option<AgentProvider>,
@@ -289,8 +289,7 @@ pub struct AgentSettings {
     /// NOT persisted. These agents are re-derived from their source file
     /// on every launch, so persisting them would silently duplicate the
     /// source's API keys into OpenPencil's own settings.json; the host's
-    /// save path skips any agent whose id is in this set. Explicit edits
-    /// remove the id so the customized card becomes locally persisted.
+    /// save path skips any agent whose id is in this set.
     pub imported_agent_ids: BTreeSet<String>,
     pub acp_agents: Vec<AcpAgentConfig>,
     pub acp_agent_draft: Option<AcpAgentConfig>,
@@ -309,9 +308,6 @@ pub struct AgentSettings {
     pub scroll_y: jian_core::scroll::ScrollState,
     pub mcp_server: McpServer,
     pub mcp_cli_enabled: [bool; 13],
-    /// Install the lean six-tool MCP profile (`/mcp/lean`) into terminal
-    /// integrations instead of the full catalog. Persisted.
-    pub mcp_lean_profile: bool,
     pub mcp_client_config_copied_at_ms: Option<u64>,
     pub hover_agent_settings_close: bool,
     pub hover_mcp_server_button: bool,
@@ -329,14 +325,6 @@ pub struct AgentSettings {
     pub openverse_credential_owner: Option<String>,
     pub image_gen_profiles: Vec<ImageGenProfile>,
     pub active_image_gen_profile_id: Option<String>,
-    /// Chat-panel image-generation toggle. Off by default; it only takes
-    /// effect while a usable profile exists, so consumers gate on
-    /// [`AgentSettings::image_gen_active`] rather than the raw flag.
-    pub image_gen_enabled: bool,
-    /// Workbench test-button request seam: the profile id whose Test press
-    /// still needs the host's `GET /workbench-api/qwen-image/status`
-    /// probe. Runtime-only — never persisted.
-    pub pending_image_gen_test: Option<String>,
     pub image_gen_provider_menu_open: Option<usize>,
     pub hover_image_gen_provider_option: Option<(usize, ImageGenProvider)>,
     pub hover_image_gen_profile_header: Option<usize>,
@@ -367,18 +355,13 @@ pub struct AgentSettings {
     /// Latest browser→daemon credential-sync failure worth showing (web
     /// host only; transient, never persisted). `None` = last sync ok.
     pub web_credential_sync_error: Option<String>,
-    /// The serving daemon's model catalog lists at least one model it
-    /// answers with its own server-held key (web host only; transient,
-    /// never persisted). Those models are usable although no provider is
-    /// configured in this browser.
-    pub web_served_models: bool,
 }
 
 impl Default for AgentSettings {
     fn default() -> Self {
         Self {
             tab: AgentSettingsTab::Agents,
-            connected: [false; 8],
+            connected: [false; 7],
             embed_mcp_url: None,
             provider_connection: Default::default(),
             pending_provider_connect: None,
@@ -405,7 +388,6 @@ impl Default for AgentSettings {
             scroll_y: Default::default(),
             mcp_server: McpServer::default(),
             mcp_cli_enabled: [false; 13],
-            mcp_lean_profile: false,
             mcp_client_config_copied_at_ms: None,
             hover_agent_settings_close: false,
             hover_mcp_server_button: false,
@@ -421,8 +403,6 @@ impl Default for AgentSettings {
             openverse_credential_owner: None,
             image_gen_profiles: Vec::new(),
             active_image_gen_profile_id: None,
-            image_gen_enabled: false,
-            pending_image_gen_test: None,
             image_gen_provider_menu_open: None,
             hover_image_gen_provider_option: None,
             hover_image_gen_profile_header: None,
@@ -441,7 +421,6 @@ impl Default for AgentSettings {
             hover_acp_preset: None,
             hover_nav: None,
             web_credential_sync_error: None,
-            web_served_models: false,
         }
     }
 }

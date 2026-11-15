@@ -79,15 +79,6 @@ impl Phase {
     /// `{offset, values}` shape; the extra room keeps that line (and the
     /// rest of the schema tail) inside the mixed generation prompt.
     ///
-    /// Generation moved again 17150 → 20300 (2026-09-24): a mobile brief that
-    /// also asks for motion and interaction (the measured delivery-app brief)
-    /// resolved 16421 tokens with `scroll-orchestration` (2809),
-    /// `interactivity` (1886) and `kinetic-typography` (944) in, and dropped
-    /// `mobile-app` (2536) for budget on EVERY subtask — the screen's own
-    /// domain rules never reached the model while its motion rules did. The
-    /// new `food-delivery` domain skill (~1070) would have been dropped the
-    /// same way. 20300 fits both with ~250 tokens of margin.
-    ///
     /// Generation moved again 13200 → 13500 (2026-08-11): nine new style guides
     /// and the projector-board corpus additions grew the deck set, so a deck
     /// prompt now resolves 13293 tokens with `design-principles` (438) included.
@@ -135,14 +126,14 @@ impl Phase {
     /// planner now carries its lead "Key aesthetics" label so the planner can
     /// pick by mood instead of by name; ~60 guides × a few tokens each.
     /// Planning moved again 6300 → 6500 (2026-09-06) when the mobile screen
-    /// archetype corpus replaced the pre-design step, and 6500 → 6700
-    /// (2026-09-21) when decomposition gained the covers backfill rule; both
-    /// times the archetype table was otherwise tail-cut in the phone planning
-    /// prompt, removing the ARCHETYPE handoff contract.
+    /// archetype corpus replaced the pre-design step. Its 591-token body was
+    /// otherwise cut to 452 tokens in the phone planning prompt, removing the
+    /// ARCHETYPE handoff contract; the extra headroom keeps the selected table
+    /// byte-complete.
     pub fn default_budget(self) -> u32 {
         match self {
-            Phase::Planning => 6740,
-            Phase::Generation => 20300,
+            Phase::Planning => 6600,
+            Phase::Generation => 17150,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -154,18 +145,12 @@ impl Phase {
 /// schema/interactivity corpus; the phase total grows with those contracts.
 /// Generation 17100 → 17150 (2026-09-11): schema.md gained a concrete mount
 /// keyframe example (~46 tokens) and its per-skill budget 2250 → 2300.
-/// Generation 17150 → 20300 (2026-09-24): `mobile-app` was dropped for budget
-/// from every motion-bearing mobile subtask; it and `food-delivery` now fit.
 /// Planning 6500 → 6600 (2026-09-07): the style-guide catalog line now carries
 /// two signature-recipe names per guide, which pushed the runtime-augmented
-/// style-guide-selector to 1528 tokens (budget 1500 → 1600). 6600 → 6700
-/// (2026-09-21): decomposition's covers backfill rule re-cut the archetypes.
-/// 6700 → 6740 (2026-09-24): decomposition gained the food/takeout category
-/// rule (+38 tokens) after planners wrote "icon tile" into every food
-/// category grid and GLM followed the plan over the food-delivery skill.
+/// style-guide-selector to 1528 tokens (budget 1500 → 1600).
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
-    (Phase::Planning, 6740),
-    (Phase::Generation, 20300),
+    (Phase::Planning, 6600),
+    (Phase::Generation, 17150),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -446,8 +431,8 @@ mod tests {
 
     #[test]
     fn default_budget_table() {
-        assert_eq!(Phase::Planning.default_budget(), 6740);
-        assert_eq!(Phase::Generation.default_budget(), 20300);
+        assert_eq!(Phase::Planning.default_budget(), 6600);
+        assert_eq!(Phase::Generation.default_budget(), 17150);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.

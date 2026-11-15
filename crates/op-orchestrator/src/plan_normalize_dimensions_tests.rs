@@ -32,14 +32,12 @@ fn subtask(id: &str, label: &str, width: f64, height: f64) -> Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
 
 fn plan(name: &str, subtasks: Vec<Subtask>) -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: name.into(),
@@ -52,7 +50,6 @@ fn plan(name: &str, subtasks: Vec<Subtask>) -> OrchestratorPlan {
         },
         subtasks,
         style_guide_name: None,
-        palette: None,
     }
 }
 

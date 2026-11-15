@@ -13,25 +13,8 @@
 //! apart in the first place.
 
 use super::home::{HomeFamily, TaskDraft};
-
-#[path = "workspace_drawer.rs"]
-pub mod drawer;
-#[path = "workspace_reader.rs"]
-mod reader;
-#[path = "workspace_variants.rs"]
-mod variants;
-use super::{EditorUiState, EntrySurface, LeftPanelTab};
-use crate::quality_report::QualityReport;
+use super::{EditorUiState, LeftPanelTab};
 use crate::tool::Tool;
-pub use reader::{
-    infer_reading_family, reader_is_paged, reads_as_long_page, PageEditRetry, PageEditTarget,
-    ReaderHit,
-};
-pub use variants::{
-    clamp_variant_count, pick_workspace_variant, pin_home_brief_route, pin_workspace_retry_route,
-    use_workspace_variant, variant_letter, variant_pick_commands, WorkspaceVariant,
-    DEFAULT_VARIANT_COUNT, MAX_VARIANT_COUNT,
-};
 
 /// Workspace header height (back button, doc tile, title, actions).
 pub const WORKSPACE_HEADER_H: f32 = 64.0;
@@ -105,10 +88,6 @@ pub enum WorkspaceHit {
     ZoomOut,
     ZoomFit,
     ZoomIn,
-    /// Restore the previous work without entering the professional canvas.
-    Undo,
-    /// Reapply an undone work change.
-    Redo,
     /// One thumbnail in the deck strip.
     Thumb(usize),
     /// The strip's 总览 toggle.
@@ -119,29 +98,6 @@ pub enum WorkspaceHit {
     Retry,
     /// The failed-phase banner's 返回修改 button.
     ReturnEdit,
-    /// The header's 质检 chip (toggles the quality-report panel).
-    QualityChip,
-    /// Anywhere on the open quality-report panel that is not an item —
-    /// swallowed so the canvas underneath never sees the press.
-    QualityPanel,
-    /// A remaining-issue row of the quality-report panel: indices into
-    /// `QualityReport::topics` and that topic's `remaining` list.
-    QualityItem {
-        topic: usize,
-        item: usize,
-    },
-    /// The template draft banner's action: 接入模型 while no model can
-    /// answer, 让 AI 细化 once one can.
-    DraftAction,
-    /// The variants bar's "use this" button for direction `index`.
-    UseVariant(usize),
-    /// Anywhere below the header outside the open chat drawer (narrow
-    /// windows): the press closes the drawer and goes no further.
-    DrawerScrim,
-    /// The header's 分享 button: export the self-contained share page.
-    Share,
-    /// The shared-document banner's Make-one-like-this action.
-    MakeSame,
 }
 
 /// Transient state for the generation workspace. Never persisted.
@@ -153,8 +109,6 @@ pub struct WorkspaceState {
     /// The workspace chrome is painted and the canvas is docked.
     pub visible: bool,
     pub family: HomeFamily,
-    /// Whether the family came from declared intent, rather than reading geometry.
-    pub family_known: bool,
     /// The brief that launched this run (retried verbatim, shown as the
     /// title fallback).
     pub brief: String,
@@ -186,49 +140,6 @@ pub struct WorkspaceState {
     /// content without adding a board, and the stale fit then left the
     /// deck off-centre and clipped (measured 2026-09-13).
     pub fitted_bounds: Option<(f32, f32, f32, f32)>,
-    /// The run's quality report: folded from the run's progress while it
-    /// streams, audited on the final document when it ends. `None` until
-    /// the run reports its first quality check.
-    pub quality: Option<QualityReport>,
-    /// The header chip's report panel is expanded.
-    pub quality_open: bool,
-    /// The scene template a one-click (empty-box) start loaded as this
-    /// workspace's instant first draft. `Some` makes the run a REFINE of
-    /// those boards: Retry re-runs the refine in place instead of
-    /// generating a fresh design over the draft.
-    pub draft_template: Option<&'static str>,
-    /// The template draft is still waiting for its AI refinement — no
-    /// model was connected when it loaded. The draft banner offers the
-    /// connect (or, once connected, the refine) action while this holds.
-    pub draft_awaiting_refine: bool,
-    /// The board a phone 改这一页 staged for the NEXT send, if any.
-    pub page_edit: Option<PageEditTarget>,
-    /// The board the running follow-up turn is bound to. Set when the
-    /// staged edit launches; cleared when that run settles.
-    pub page_edit_running: Option<PageEditTarget>,
-    /// Original instruction and board for retry; never the generation brief.
-    pub page_edit_retry: Option<PageEditRetry>,
-    /// Pressed feedback for the phone reader's chrome.
-    pub reader_pressed: Option<ReaderHit>,
-    /// Directions a variants run asked for; `0` = an ordinary run.
-    pub variant_count: u8,
-    /// The directions that have landed so far, in slot order.
-    pub variants: Vec<WorkspaceVariant>,
-    /// The window is narrow enough that the chat is a drawer over the
-    /// canvas instead of a docked column (see `workspace_drawer.rs`).
-    /// Synced from the viewport width by the host.
-    pub drawer_mode: bool,
-    /// The drawer is open (only meaningful in `drawer_mode`).
-    pub drawer_open: bool,
-    /// Wall-clock instant of the last open/shut, for the slide; `0` means
-    /// settled.
-    pub drawer_moved_at_ms: u64,
-    /// The chrome target the keyboard (Tab / Shift+Tab) moved to; Enter /
-    /// Space activate it. Any pointer press drops it.
-    pub key_focus: Option<WorkspaceHit>,
-    /// The workspace presents an opened document that carries a share
-    /// recipe (no run of its own): the Make-one-like-this banner is up.
-    pub shared_view: bool,
 }
 
 impl Default for WorkspaceState {
@@ -237,7 +148,6 @@ impl Default for WorkspaceState {
             active: false,
             visible: false,
             family: HomeFamily::AppUi,
-            family_known: false,
             brief: String::new(),
             options: TaskDraft::default(),
             view: WorkspaceView::default_for(HomeFamily::AppUi),
@@ -250,21 +160,6 @@ impl Default for WorkspaceState {
             shown_at_ms: 0,
             fitted_board_count: 0,
             fitted_bounds: None,
-            quality: None,
-            quality_open: false,
-            draft_template: None,
-            draft_awaiting_refine: false,
-            page_edit: None,
-            page_edit_running: None,
-            page_edit_retry: None,
-            reader_pressed: None,
-            variant_count: 0,
-            variants: Vec::new(),
-            drawer_mode: false,
-            drawer_open: false,
-            drawer_moved_at_ms: 0,
-            key_focus: None,
-            shared_view: false,
         }
     }
 }
@@ -285,7 +180,6 @@ impl WorkspaceState {
         self.active = true;
         self.visible = true;
         self.family = family;
-        self.family_known = true;
         self.brief = brief.into();
         self.options = options;
         self.view = WorkspaceView::default_for(family);
@@ -298,62 +192,6 @@ impl WorkspaceState {
         self.shown_at_ms = now_ms.max(1);
         self.fitted_board_count = 0;
         self.fitted_bounds = None;
-        self.clear_quality();
-        self.draft_template = None;
-        self.draft_awaiting_refine = false;
-        self.page_edit = None;
-        self.page_edit_running = None;
-        self.page_edit_retry = None;
-        self.reader_pressed = None;
-        self.clear_variants();
-        // A new run in a narrow window gives the design the width; the
-        // conversation is one toggle away.
-        self.drawer_open = false;
-        self.drawer_moved_at_ms = 0;
-        self.shared_view = false;
-    }
-
-    /// Record that this workspace's boards are the instant draft loaded
-    /// from `template`. With `refine_now` the refine turn is queued
-    /// right away (a model is connected) and the phase stays
-    /// Generating; without it the draft IS the result for now — the phase
-    /// settles Done at once and the draft banner offers the connect path.
-    pub fn adopt_template_draft(&mut self, template: &'static str, refine_now: bool) {
-        self.draft_template = Some(template);
-        self.draft_awaiting_refine = !refine_now;
-        self.phase = if refine_now {
-            WorkspacePhase::Generating
-        } else {
-            WorkspacePhase::Done
-        };
-    }
-
-    /// Whether the draft banner (connect / refine) is up: a template
-    /// draft that has not been refined yet, and no run in flight.
-    pub fn draft_banner_visible(&self) -> bool {
-        self.active
-            && self.draft_template.is_some()
-            && self.draft_awaiting_refine
-            && self.phase == WorkspacePhase::Done
-    }
-
-    /// Whether the Make-one-like-this banner is up: a shared document on
-    /// show, and no run of the viewer's own in flight.
-    pub fn make_same_banner_visible(&self) -> bool {
-        self.active && self.shared_view && self.phase == WorkspacePhase::Done
-    }
-
-    /// A refine turn of the template draft is being queued: the banner
-    /// retires and the workspace generates again. `run_epoch` resets to
-    /// unstamped until the launch identifies the new run.
-    pub fn begin_draft_refine(&mut self) -> bool {
-        if !self.active || self.draft_template.is_none() {
-            return false;
-        }
-        self.draft_awaiting_refine = false;
-        self.phase = WorkspacePhase::Generating;
-        self.run_epoch = 0;
-        true
     }
 
     /// 专业编辑: drop the chrome (rails come back, the previous tool is
@@ -363,7 +201,6 @@ impl WorkspaceState {
         self.visible = false;
         self.hover = None;
         self.pressed = None;
-        self.key_focus = None;
     }
 
     /// 回到工作区: take the chrome back after Home or the professional
@@ -393,8 +230,6 @@ impl WorkspaceState {
             return false;
         }
         self.phase = WorkspacePhase::Done;
-        self.page_edit_running = None;
-        self.page_edit_retry = None;
         true
     }
 
@@ -405,7 +240,6 @@ impl WorkspaceState {
             return false;
         }
         self.phase = WorkspacePhase::Stopped;
-        self.page_edit_running = None;
         true
     }
 
@@ -415,7 +249,6 @@ impl WorkspaceState {
             return false;
         }
         self.phase = WorkspacePhase::Failed;
-        self.page_edit_running = None;
         true
     }
 
@@ -426,27 +259,6 @@ impl WorkspaceState {
         }
         self.phase = WorkspacePhase::Generating;
         self.run_epoch = run_epoch;
-        self.clear_quality();
-    }
-
-    /// Drop the previous run's quality report — a new run is judged on its
-    /// own facts, never on a finished run's leftovers.
-    pub fn clear_quality(&mut self) {
-        self.quality = None;
-        self.quality_open = false;
-    }
-
-    /// The finished run's audited report, when there is one to show: the
-    /// run is Done and the end-of-run audit ran over something that was
-    /// actually checked. A stopped / failed / still-running workspace shows
-    /// no chip rather than a half-built verdict.
-    pub fn finished_quality(&self) -> Option<&QualityReport> {
-        if self.phase != WorkspacePhase::Done {
-            return None;
-        }
-        self.quality
-            .as_ref()
-            .filter(|report| report.audited && !report.is_empty())
     }
 
     /// Step the deck selection, clamped into `board_count`. Returns
@@ -498,18 +310,6 @@ impl WorkspaceState {
         self.fitted_board_count = 0;
         self.fitted_bounds = None;
         self.selected = 0;
-        self.clear_quality();
-        self.draft_template = None;
-        self.draft_awaiting_refine = false;
-        self.page_edit = None;
-        self.page_edit_running = None;
-        self.page_edit_retry = None;
-        self.reader_pressed = None;
-        self.clear_variants();
-        self.drawer_open = false;
-        self.drawer_moved_at_ms = 0;
-        self.key_focus = None;
-        self.shared_view = false;
     }
 
     /// The next frame instant the entrance motion still needs, or
@@ -524,22 +324,6 @@ impl WorkspaceState {
 }
 
 impl EditorUiState {
-    /// Open the professional canvas from Home on every host. Home may
-    /// cover a live desktop workspace or a touch reader, so both must
-    /// release the canvas. An already-professional tool stays selected;
-    /// only leaving a normal workspace restores its saved tool.
-    pub fn enter_professional_from_home(&mut self, current_tool: Tool) -> Tool {
-        self.home.hide();
-        self.entry_surface = EntrySurface::Canvas;
-        if self.workspace.visible {
-            let restore = self.workspace.previous_tool.unwrap_or(Tool::Select);
-            self.workspace.enter_professional();
-            restore
-        } else {
-            current_tool
-        }
-    }
-
     /// Whether the AI chat panel is pinned into a left column right
     /// now — the workspace's dock while the workspace is up, else the
     /// professional editor's Chat tab. THE one predicate answering "is
@@ -552,11 +336,6 @@ impl EditorUiState {
             return false;
         }
         if self.workspace.visible {
-            // A narrow window's chat is a drawer: pinned while it is open,
-            // regardless of the docked column's own flag.
-            if self.workspace.drawer_mode {
-                return self.workspace.drawer_open;
-            }
             return self.sidebar_open;
         }
         self.sidebar_open && self.slides_panel.tab == LeftPanelTab::Chat
@@ -571,13 +350,9 @@ impl EditorUiState {
     /// is a launcher: type into it, or open it, and the rail switches to
     /// the Agent tab where the conversation actually happens.
     pub fn chat_composer_only(&self) -> bool {
-        if self.touch_chrome() || self.preview.mode {
+        if self.touch_chrome() || self.workspace.visible || self.preview.mode {
             return false;
         }
-        // A workspace whose dock is SHUT used to fall through to the
-        // floating panel — the one desktop state that still had two
-        // homes for the conversation. It gets the composer card like
-        // every other unpinned desktop state.
         !self.chat_pinned()
     }
 
@@ -594,7 +369,6 @@ impl EditorUiState {
         now_ms: u64,
         previous_tool: Option<Tool>,
     ) {
-        self.home.work_family = Some(family);
         self.workspace.open_for_generation(
             family,
             brief,
@@ -603,11 +377,6 @@ impl EditorUiState {
             now_ms,
             previous_tool,
         );
-        // The touch reader (phone or tablet) pages through the boards
-        // instead of fitting them all into its stage.
-        if self.touch_chrome() {
-            self.workspace.view = WorkspaceView::default_for_reader(family);
-        }
         self.sidebar_open = true;
         self.enter_chat_tab();
     }

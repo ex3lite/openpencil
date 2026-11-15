@@ -5,8 +5,6 @@
 //! `buildFallbackPlanFromPrompt`)。
 
 use crate::design_type::{detect_design_type, DesignType, DesignTypePreset};
-pub use crate::plan_palette::PlanPalette;
-pub use crate::plan_shared_context::{PlanSharedContext, SharedExampleEntity};
 use crate::types::DesignRequest;
 use serde::{Deserialize, Serialize};
 
@@ -90,17 +88,6 @@ pub struct Subtask {
     /// port of TS `SubTask.existingSectionLabels` (`ai-types.ts:134`)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_section_labels: Option<Vec<String>>,
-    /// Brief sections this subtask covers, backfilled by the planner by
-    /// copying the brief's OWN wording verbatim (no translation, no
-    /// rewriting). The plan-coverage gate trusts these via normalized
-    /// equality before falling back to its legacy substring match.
-    /// `None` = the planner did not backfill (old models / old prompt).
-    #[serde(
-        default,
-        deserialize_with = "deserialize_covers",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub covers: Option<Vec<String>>,
     /// Set by the retry ladder (`concurrent::run_subtask_retry_ladder`) to
     /// echo a reason back into the SAME-tier retry prompt instead of
     /// silently narrowing the skill set — see [`RetryFeedback`] for the two
@@ -111,18 +98,8 @@ pub struct Subtask {
     pub retry_feedback: Option<RetryFeedback>,
 }
 
-/// Deserialize `covers` so an empty array means "no backfill" (`None`), the
-/// same contract the repair path's `coerce_covers` enforces — the gate treats
-/// a present-but-empty claim as absent, never as a vacuous coverage claim.
-fn deserialize_covers<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let raw = Option::<Vec<String>>::deserialize(deserializer)?;
-    Ok(raw.filter(|entries| !entries.is_empty()))
-}
-
-/// Why a subtask is being retried WITH its rejection reason echoed into the/// prompt (as opposed to a plain zero-node retry, which carries no
+/// Why a subtask is being retried WITH its rejection reason echoed into the
+/// prompt (as opposed to a plain zero-node retry, which carries no
 /// feedback) — drives the exact wording `prompt.rs`'s `retry_feedback`
 /// block injects, so the model can tell "geometry problem in real content
 /// you should keep" apart from "structural problem caught before your
@@ -140,8 +117,6 @@ pub enum RetryFeedback {
     Completeness(String),
     /// Generated copy was in a different language than the brief.
     Language(String),
-    /// The assembled document leaves a local interactive binding uninitialized.
-    InitialBinding(String),
 }
 
 /// 规划阶段的完整产物。字段对齐规划语料 `decomposition.md`。
@@ -150,25 +125,10 @@ pub struct OrchestratorPlan {
     #[serde(rename = "rootFrame")]
     pub root_frame: RootFrameSpec,
     pub subtasks: Vec<Subtask>,
-    /// Catalog guide used for seeded tokens and sub-agent style guidance.
+    /// 规划选中的 style guide 名(catalog 引用)。S3b-1a 写进 plan
+    /// 但暂无消费方(变量播种入眠、sub-agent 注入推迟)。
     #[serde(rename = "styleGuideName", default)]
     pub style_guide_name: Option<String>,
-    /// A user-directed palette overrides catalog colors without changing the
-    /// selected guide's typography, shape, or composition guidance.
-    #[serde(
-        default,
-        deserialize_with = "crate::plan_palette::deserialize_palette",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub palette: Option<PlanPalette>,
-    /// Immutable content decisions, shared before concurrent sections begin.
-    #[serde(
-        rename = "sharedContext",
-        default,
-        deserialize_with = "crate::plan_shared_context::deserialize_shared_context",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub shared_context: Option<PlanSharedContext>,
 }
 
 /// plan 解析错误。
@@ -188,16 +148,8 @@ impl std::fmt::Display for PlanParseError {
 pub fn parse_plan(text: &str) -> Result<OrchestratorPlan, PlanParseError> {
     let json =
         extract_json_object(text).ok_or_else(|| PlanParseError("no JSON object found".into()))?;
-    let mut plan: OrchestratorPlan =
+    let plan: OrchestratorPlan =
         serde_json::from_str(json).map_err(|e| PlanParseError(format!("deserialize: {e}")))?;
-    // Some otherwise valid plans put the palette beside root dimensions.
-    // Preserve those explicit role colors instead of silently seeding the
-    // style guide's unrelated accent. A valid canonical palette always wins.
-    if plan.palette.is_none() {
-        let value: serde_json::Value =
-            serde_json::from_str(json).map_err(|e| PlanParseError(format!("deserialize: {e}")))?;
-        plan.palette = PlanPalette::from_plan_value(&value);
-    }
     if plan.subtasks.is_empty() {
         return Err(PlanParseError("plan has no subtasks".into()));
     }
@@ -205,7 +157,7 @@ pub fn parse_plan(text: &str) -> Result<OrchestratorPlan, PlanParseError> {
 }
 
 /// 抽第一个平衡的 `{...}`(忽略字符串内的花括号)。
-pub(crate) fn extract_json_object(text: &str) -> Option<&str> {
+fn extract_json_object(text: &str) -> Option<&str> {
     let start = text.find('{')?;
     let bytes = text.as_bytes();
     let mut depth = 0i32;
@@ -241,10 +193,6 @@ pub(crate) fn extract_json_object(text: &str) -> Option<&str> {
 /// 启发式兜底 plan —— 规划 LLM 不可用 / 解析失败时用,保证编排器
 /// 仍能跑出点东西。对齐 TS `buildFallbackPlanFromPrompt`:固定宽度
 /// 根 frame + 按 prompt 规模切 1-3 个等高区块。
-///
-/// A brief that enumerates its own sections (`plan_coverage::required_sections`)
-/// gets one subtask per section instead, on both the generic and the mobile
-/// branch (`plan_fallback_brief`).
 pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
     const WIDTH: f64 = 1200.0;
     const SECTION_HEIGHT: f64 = 360.0;
@@ -280,7 +228,7 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
                     )),
                     screen: Some(screen_name.clone()),
                     generated_root_id: None,
-                    existing_section_labels: None, covers: None,
+                    existing_section_labels: None,
                     retry_feedback: None,
                 }
             })
@@ -301,8 +249,6 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
             },
             subtasks,
             style_guide_name: None,
-            palette: None,
-            shared_context: None,
         };
     }
 
@@ -314,26 +260,16 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
         return crate::plan_fallback_card::build_fallback_card_plan(req, preset);
     }
     if preset.type_ == DesignType::MobileScreen {
-        return crate::plan_fallback_mobile::build_fallback_mobile_plan(req, preset);
-    }
-
-    // The brief's own section list beats a length-sliced skeleton.
-    let requested = crate::request_dimensions::requested_root_dimensions(&req.prompt);
-    let root_width = requested.map_or(WIDTH, |dims| dims.width);
-    let requested_height = requested.and_then(|dims| dims.height);
-    if let Some((subtasks, stacked_height)) = crate::plan_fallback_brief::brief_section_subtasks(
-        &req.prompt,
-        root_width,
-        requested_height,
-        true,
-        None,
-    ) {
+        let (width, height) = explicit_mobile_size(&req.prompt)
+            .unwrap_or((preset.width, preset.root_height.max(preset.height)));
+        let top_h = (height * 0.24).round().clamp(140.0, 220.0);
+        let main_h = (height - top_h).max(320.0);
         return OrchestratorPlan {
             root_frame: RootFrameSpec {
-                id: "root".into(),
-                name: "Design".into(),
-                width: root_width,
-                height: requested_height.unwrap_or(stacked_height),
+                id: "page".into(),
+                name: "Page".into(),
+                width,
+                height,
                 layout: Some("vertical".into()),
                 gap: Some(0.0),
                 padding: Some(0.0),
@@ -342,10 +278,53 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
                     color: "#FFFFFF".into(),
                 }]),
             },
-            subtasks,
+            subtasks: vec![
+                Subtask {
+                    id: "top-summary".into(),
+                    label: "Top Summary".into(),
+                    region: Region {
+                        width,
+                        height: top_h,
+                    },
+                    bleed_hero: false,
+                    id_prefix: "top-summary".into(),
+                    parent_frame_id: Some("page".into()),
+                    insert_after_sibling_id: None,
+                    elements: Some(
+                        "the screen's header / context for this product (title or greeting, \
+                         and the key top-level action[s] this app needs); no status bar. \
+                         Choose what fits the prompt — not a fixed delivery-app header."
+                            .into(),
+                    ),
+                    screen: None,
+                    generated_root_id: None,
+                    existing_section_labels: None,
+                    retry_feedback: None,
+                },
+                Subtask {
+                    id: "main-content".into(),
+                    label: "Main Content".into(),
+                    region: Region {
+                        width,
+                        height: main_h,
+                    },
+                    bleed_hero: false,
+                    id_prefix: "main-content".into(),
+                    parent_frame_id: Some("page".into()),
+                    insert_after_sibling_id: None,
+                    elements: Some(
+                        "this screen's primary content for the product — the main job-to-be-done \
+                         and whatever modules genuinely fit it; do not repeat the top summary. \
+                         Vary the composition per prompt, not a fixed search + banner + card stack."
+                            .into(),
+                    ),
+                    screen: None,
+                    generated_root_id: None,
+                    existing_section_labels: None,
+                    retry_feedback: None,
+                },
+            ],
             style_guide_name: None,
-            palette: None,
-            shared_context: None,
         };
     }
 
@@ -374,7 +353,6 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
                 screen: None,
                 generated_root_id: None,
                 existing_section_labels: None,
-                covers: None,
                 retry_feedback: None,
             }
         })
@@ -396,8 +374,6 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
         },
         subtasks,
         style_guide_name: None,
-        palette: None,
-        shared_context: None,
     }
 }
 
@@ -448,7 +424,6 @@ fn build_fallback_deck_plan(req: &DesignRequest, preset: DesignTypePreset) -> Or
                 screen: Some(title),
                 generated_root_id: None,
                 existing_section_labels: None,
-                covers: None,
                 retry_feedback: None,
             }
         })
@@ -470,8 +445,6 @@ fn build_fallback_deck_plan(req: &DesignRequest, preset: DesignTypePreset) -> Or
         },
         subtasks,
         style_guide_name: None,
-        palette: None,
-        shared_context: None,
     }
 }
 
@@ -521,7 +494,7 @@ fn fallback_slide_elements(title: &str) -> &'static str {
 /// Bounded to a plausible deck size so an unrelated number in the prompt (a
 /// year, a pixel size, a price) cannot turn into a 2026-slide plan — the unit
 /// word right after the digits is what qualifies it as a slide count at all.
-pub(crate) fn explicit_slide_count(prompt: &str) -> Option<usize> {
+fn explicit_slide_count(prompt: &str) -> Option<usize> {
     const UNITS: [&str; 5] = ["slides", "slide", "pages", "page", "页"];
     let lower = prompt.to_lowercase();
     let bytes = lower.as_bytes();
@@ -554,7 +527,7 @@ pub(crate) fn explicit_slide_count(prompt: &str) -> Option<usize> {
     None
 }
 
-pub(crate) fn explicit_mobile_size(prompt: &str) -> Option<(f64, f64)> {
+fn explicit_mobile_size(prompt: &str) -> Option<(f64, f64)> {
     let normalized = prompt.replace('×', "x").to_lowercase();
     let bytes = normalized.as_bytes();
     for (i, b) in bytes.iter().enumerate() {
@@ -600,12 +573,196 @@ pub(crate) fn explicit_mobile_size(prompt: &str) -> Option<(f64, f64)> {
 #[path = "plan_fallback_deck_tests.rs"]
 mod fallback_deck_tests;
 
-// covers-backfill parse/repair passthrough tests live in a sibling to keep
-// this file below the 800-line budget.
 #[cfg(test)]
-#[path = "plan_covers_tests.rs"]
-mod covers_tests;
+mod tests {
+    use super::*;
 
-#[cfg(test)]
-#[path = "plan_tests.rs"]
-mod tests;
+    fn req(prompt: &str) -> DesignRequest {
+        DesignRequest {
+            prompt: prompt.into(),
+            model: None,
+            provider: None,
+            design_md: None,
+            concurrency: 1,
+            continuation_context: None,
+            append_context: None,
+            validation_enabled: true,
+
+            visual_ref_enabled: false,
+            pinned_style_guide: None,
+            reference_skeleton: None,
+        }
+    }
+
+    #[test]
+    fn parse_plan_reads_ts_native_shape() {
+        // decomposition.md FORMAT 行的形状:rootFrame / fill 数组 / styleGuideName
+        let text = r##"```json
+{
+  "rootFrame": { "id": "page", "name": "Page", "width": 1200, "height": 0,
+                 "layout": "vertical", "gap": 0,
+                 "fill": [{ "type": "solid", "color": "#0A0F1C" }] },
+  "styleGuideName": "terminal-minimal-dark",
+  "subtasks": [
+    { "id": "hero", "label": "Hero", "elements": "headline, CTA",
+      "region": { "width": 1200, "height": 560 } }
+  ]
+}
+```"##;
+        let plan = parse_plan(text).expect("parse");
+        assert_eq!(plan.root_frame.id, "page");
+        assert_eq!(
+            plan.style_guide_name.as_deref(),
+            Some("terminal-minimal-dark")
+        );
+        // fill 数组 → first_solid_hex 取首个 solid 色
+        assert_eq!(
+            plan.root_frame.first_solid_hex().as_deref(),
+            Some("#0A0F1C")
+        );
+        // 未知字段 elements 被 serde 忽略,不报错
+        assert_eq!(plan.subtasks.len(), 1);
+    }
+
+    #[test]
+    fn parse_plan_rejects_no_subtasks() {
+        let text = r#"{ "rootFrame": { "id": "r", "name": "P", "width": 1, "height": 1 }, "subtasks": [] }"#;
+        assert!(parse_plan(text).is_err());
+    }
+
+    #[test]
+    fn parse_plan_rejects_garbage() {
+        assert!(parse_plan("the model refused to answer").is_err());
+    }
+
+    #[test]
+    fn fallback_plan_is_usable() {
+        let short = build_fallback_plan(&req("a button"));
+        assert_eq!(short.subtasks.len(), 1);
+        assert!(short.root_frame.width > 0.0);
+
+        let long = build_fallback_plan(&req(&"x".repeat(300)));
+        assert_eq!(long.subtasks.len(), 3);
+        assert!(!long.subtasks.is_empty());
+    }
+
+    #[test]
+    fn fallback_plan_honors_mobile_type_and_explicit_size() {
+        let mobile = build_fallback_plan(&req("Design a 390x844 mobile food delivery home screen"));
+        assert_eq!(mobile.root_frame.width, 390.0);
+        assert_eq!(mobile.root_frame.height, 844.0);
+        assert_eq!(mobile.subtasks.len(), 2);
+        assert_eq!(mobile.subtasks[0].label, "Top Summary");
+        assert_eq!(mobile.subtasks[1].label, "Main Content");
+    }
+
+    #[test]
+    fn fallback_continuation_keeps_promised_screens_and_existing_artboard() {
+        let mut request = req("继续生成 星图、观测计划、我的3个界面");
+        request.continuation_context = Some(crate::types::ContinuationContext {
+            screen_width: 390.0,
+            screen_height: 844.0,
+            background_color: Some("#050508".into()),
+            screen_names: vec!["星图".into(), "观测计划".into(), "我的".into()],
+        });
+
+        let plan = build_fallback_plan(&request);
+
+        assert_eq!(
+            (plan.root_frame.width, plan.root_frame.height),
+            (390.0, 844.0)
+        );
+        assert_eq!(
+            plan.root_frame.first_solid_hex().as_deref(),
+            Some("#050508")
+        );
+        assert_eq!(
+            plan.subtasks
+                .iter()
+                .filter_map(|subtask| subtask.screen.as_deref())
+                .collect::<Vec<_>>(),
+            ["星图", "观测计划", "我的"]
+        );
+        assert!(plan
+            .subtasks
+            .iter()
+            .all(|subtask| subtask.label != "Section 1"));
+    }
+
+    // ── Task A1: Subtask.existing_section_labels ──────────────────────────────
+
+    /// Subtask accepts existing_section_labels: None without breaking compilation.
+    #[test]
+    fn subtask_existing_section_labels_none_compiles() {
+        let st = Subtask {
+            id: "hero".into(),
+            label: "Hero".into(),
+            region: Region {
+                width: 1200.0,
+                height: 400.0,
+            },
+            bleed_hero: false,
+            id_prefix: "hero".into(),
+            parent_frame_id: None,
+            insert_after_sibling_id: None,
+            elements: None,
+            screen: None,
+            generated_root_id: None,
+            existing_section_labels: None,
+            retry_feedback: None,
+        };
+        assert!(st.existing_section_labels.is_none());
+    }
+
+    /// Subtask accepts a populated existing_section_labels vec.
+    #[test]
+    fn subtask_existing_section_labels_some_compiles() {
+        let st = Subtask {
+            id: "features".into(),
+            label: "Features".into(),
+            region: Region {
+                width: 1200.0,
+                height: 400.0,
+            },
+            bleed_hero: false,
+            id_prefix: "features".into(),
+            parent_frame_id: None,
+            insert_after_sibling_id: None,
+            elements: None,
+            screen: None,
+            generated_root_id: None,
+            existing_section_labels: Some(vec!["Hero".into(), "About".into()]),
+            retry_feedback: None,
+        };
+        let labels = st.existing_section_labels.as_ref().unwrap();
+        assert_eq!(labels[0], "Hero");
+        assert_eq!(labels[1], "About");
+    }
+
+    /// Subtask with existing_section_labels = Some([]) serializes without the field.
+    #[test]
+    fn subtask_existing_section_labels_omitted_when_none() {
+        let st = Subtask {
+            id: "hero".into(),
+            label: "Hero".into(),
+            region: Region {
+                width: 1200.0,
+                height: 400.0,
+            },
+            bleed_hero: false,
+            id_prefix: "hero".into(),
+            parent_frame_id: None,
+            insert_after_sibling_id: None,
+            elements: None,
+            screen: None,
+            generated_root_id: None,
+            existing_section_labels: None,
+            retry_feedback: None,
+        };
+        let json = serde_json::to_string(&st).expect("serialize");
+        assert!(
+            !json.contains("existingSectionLabels"),
+            "existingSectionLabels should be omitted when None, got: {json}"
+        );
+    }
+}

@@ -8,23 +8,7 @@ impl WidgetHost {
     /// Whether the browser's hidden IME capture input should own DOM focus.
     /// A generate popup without a configured provider has no visible editor,
     /// even though the popup still swallows canvas shortcuts.
-    ///
-    /// Twin of the native host's `ime.rs::text_input_focus_active` (keep
-    /// both in sync): the desktop Home surface IS the composer and always
-    /// owns the keyboard, while a touch shell's software keyboard follows
-    /// the composer's own focus or it could never be dismissed.
     pub(crate) fn text_input_focus_active(&self) -> bool {
-        if self.editor_state.editor_ui.home.visible {
-            if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
-                return self.editor_state.active_text_input().is_some()
-                    || (self.editor_state.editor_ui.agent_settings_open
-                        && self.editor_state.editor_ui.font_picker.open);
-            }
-            if !self.editor_state.editor_ui.touch_chrome() {
-                return true;
-            }
-            return self.editor_state.editor_ui.home.composer_focused;
-        }
         let panel = &self.editor_state.editor_ui.image_panel;
         if panel.search_open || panel.generate_open {
             let configured = self
@@ -41,9 +25,6 @@ impl WidgetHost {
     /// and chat expose exact geometry; older fields fall back to the last
     /// pointer position so browser candidates never anchor at viewport (0, 0).
     pub(crate) fn ime_anchor_rect(&self) -> Option<Rect> {
-        if self.home_composer_owns_keyboard() {
-            return self.home_ime_anchor_rect();
-        }
         let configured = self
             .editor_state
             .editor_ui
@@ -115,17 +96,6 @@ impl WidgetHost {
     pub fn apply_paste_text(&mut self, text: &str) -> bool {
         if self.editor_state.editor_ui.agent_settings.focus.is_some() {
             return self.apply_settings_text_payload(text);
-        }
-        if self.editor_state.editor_ui.home_composer_owns_keyboard() {
-            let changed = self
-                .editor_state
-                .editor_ui
-                .home
-                .paste_text(text, self.now_ms);
-            if changed {
-                self.mark_dirty();
-            }
-            return changed;
         }
         let mut consumed = false;
         for c in text.chars() {
@@ -226,27 +196,5 @@ mod tests {
                 .text(),
             "Hero photo"
         );
-    }
-
-    #[test]
-    fn home_keyboard_focus_matches_the_native_twin() {
-        let mut host = WidgetHost::new();
-        host.editor_state.editor_ui.home.visible = true;
-
-        // Desktop web mirrors the native desktop reading: the surface IS
-        // the composer, so the hidden input owns focus before any press.
-        assert!(host.text_input_focus_active());
-
-        // Touch follows the composer's own focus bit — the software
-        // keyboard must be dismissable by pressing anywhere else.
-        host.editor_state.editor_ui.touch = true;
-        assert!(
-            !host.text_input_focus_active(),
-            "an untouched touch Home must not raise the keyboard"
-        );
-        host.editor_state.editor_ui.home.composer_focused = true;
-        assert!(host.text_input_focus_active());
-        host.editor_state.editor_ui.home.composer_focused = false;
-        assert!(!host.text_input_focus_active());
     }
 }

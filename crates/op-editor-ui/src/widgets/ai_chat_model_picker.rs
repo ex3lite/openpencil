@@ -13,7 +13,7 @@
 //! single picker entry.
 
 use crate::widgets::brand_icons::{
-    paint_brand_logo, paint_deepseek_harness_logo, paint_kimi_logo, paint_opencode_logo, BrandLogo,
+    paint_brand_logo, paint_deepseek_harness_logo, paint_opencode_logo, BrandLogo,
 };
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect};
@@ -57,35 +57,9 @@ pub fn picker_view_height(models: &[ModelEntry], search: &str) -> f32 {
 /// the footer are fixed chrome, so only the list band between them
 /// scrolls.
 pub fn max_picker_scroll(models: &[ModelEntry], search: &str) -> f32 {
-    max_picker_scroll_in_rect(
-        models,
-        search,
-        Rect::xywh(0.0, 0.0, 0.0, picker_view_height(models, search)),
-    )
-}
-
-/// Scroll range for the actual card, including keyboard-constrained cards.
-pub fn max_picker_scroll_in_rect(models: &[ModelEntry], search: &str, rect: Rect) -> f32 {
-    (picker_list_height(models, search) - model_list_rect(rect).size.y).max(0.0)
-}
-
-/// Keep fixed search/footer chrome and the scrolling list inside the visible
-/// surface. Paint, hit-testing and scrolling must all consume this same card.
-pub fn fit_picker_to_bounds(card: Rect, bounds: Rect) -> Rect {
-    let width = card.size.x.max(0.0).min(bounds.size.x.max(0.0));
-    let height = card.size.y.max(0.0).min(bounds.size.y.max(0.0));
-    Rect::xywh(
-        card.origin.x.clamp(
-            bounds.origin.x,
-            bounds.origin.x + bounds.size.x.max(0.0) - width,
-        ),
-        card.origin.y.clamp(
-            bounds.origin.y,
-            bounds.origin.y + bounds.size.y.max(0.0) - height,
-        ),
-        width,
-        height,
-    )
+    let view_list_h =
+        (picker_view_height(models, search) - MODEL_SEARCH_H - MODEL_FOOTER_H).max(0.0);
+    (picker_list_height(models, search) - view_list_h).max(0.0)
 }
 
 /// One laid-out row in the dropdown.
@@ -115,9 +89,6 @@ fn is_acp(entry: &ModelEntry) -> bool {
 }
 
 fn same_group(a: &ModelEntry, b: &ModelEntry) -> bool {
-    if a.hosted_route_id().is_some() || b.hosted_route_id().is_some() {
-        return a.hosted_route_id().is_some() && b.hosted_route_id().is_some();
-    }
     if is_acp(a) || is_acp(b) {
         return is_acp(a) && is_acp(b) && a.value == b.value;
     }
@@ -132,9 +103,6 @@ fn model_matches(entry: &ModelEntry, q: &str) -> bool {
 }
 
 fn searchable_group_label(entry: &ModelEntry) -> Option<String> {
-    if entry.hosted_route_id().is_some() {
-        return Some(group_label_for_entry(entry));
-    }
     if is_acp(entry) {
         return Some(group_label_for_entry(entry));
     }
@@ -285,11 +253,7 @@ pub fn model_picker_hit(
     walk_rows(
         models,
         search,
-        list_rect.origin.y
-            - state
-                .scroll
-                .offset
-                .clamp(0.0, max_picker_scroll_in_rect(models, search, rect)),
+        list_rect.origin.y - state.scroll.offset,
         |row, y, h| {
             if point.y >= y
                 && point.y < y + h
@@ -306,34 +270,8 @@ pub fn model_picker_hit(
     hit
 }
 
-/// The fixed footer action row at the card's bottom edge.
-fn footer_rect(rect: Rect) -> Rect {
-    // Preserve the search field when the keyboard leaves too little room
-    // for both fixed controls. The footer returns when space is available.
-    let height = if rect.size.y >= MODEL_SEARCH_H + MODEL_FOOTER_H {
-        MODEL_FOOTER_H
-    } else {
-        0.0
-    };
-    Rect {
-        origin: Point2D::new(rect.origin.x, rect.origin.y + rect.size.y - height),
-        size: Point2D::new(rect.size.x, height),
-    }
-}
-
-/// Whether `point` lands on the picker's 接入更多模型 footer action.
-///
-/// Separate from [`model_picker_hit`], which answers "which MODEL row"
-/// and folds every piece of chrome into `Inside`. The footer is chrome
-/// by that reckoning, so a caller that only asked the row question
-/// painted a blue action that did nothing when clicked.
-pub fn footer_action_hit(rect: Rect, point: Point2D) -> bool {
-    let footer = footer_rect(rect);
-    footer.size.y > 0.0 && rect.contains(point) && footer.contains(point)
-}
-
 pub fn search_clear_hit(rect: Rect, point: Point2D, search: &str) -> bool {
-    !search.is_empty() && rect.contains(point) && search_clear_rect(rect).contains(point)
+    !search.is_empty() && search_clear_rect(rect).contains(point)
 }
 
 /// The scrollable list band between the fixed search strip and the
@@ -418,29 +356,6 @@ pub fn paint_provider_logo(
         AgentProvider::DeepSeekHarness => {
             paint_deepseek_harness_logo(cx.backend, top_left, size, color)
         }
-        AgentProvider::Kimi => paint_kimi_logo(cx.backend, top_left, size, color),
-    }
-}
-
-/// Runtime Hosted routes carry the product mark rather than their protocol hint.
-pub fn paint_model_logo(
-    cx: &mut PaintCx<'_>,
-    entry: &ModelEntry,
-    top_left: Point2D,
-    size: f32,
-    color: Color,
-) {
-    if entry.hosted_route_id().is_some() {
-        crate::widgets::icons::draw_icon(
-            cx.backend,
-            crate::widgets::icons::Icon::Sparkles,
-            top_left,
-            size,
-            color,
-            1.4,
-        );
-    } else {
-        paint_provider_logo(cx, entry.provider, top_left, size, color);
     }
 }
 
@@ -455,7 +370,6 @@ pub(super) fn provider_label(provider: AgentProvider) -> &'static str {
         AgentProvider::Antigravity => "ANTIGRAVITY",
         AgentProvider::GrokBuild => "GROK BUILD",
         AgentProvider::DeepSeekHarness => "DEEPSEEK HARNESS",
-        AgentProvider::Kimi => "KIMI CODE",
     }
 }
 
@@ -469,7 +383,6 @@ fn group_label(provider: AgentProvider, builtin: bool) -> &'static str {
             AgentProvider::Antigravity => "ANTIGRAVITY API KEY",
             AgentProvider::GrokBuild => "GROK BUILD API KEY",
             AgentProvider::DeepSeekHarness => "DEEPSEEK API KEY",
-            AgentProvider::Kimi => "KIMI API KEY",
         }
     } else {
         provider_label(provider)
@@ -477,9 +390,6 @@ fn group_label(provider: AgentProvider, builtin: bool) -> &'static str {
 }
 
 pub(super) fn group_label_for_entry(entry: &ModelEntry) -> String {
-    if entry.hosted_route_id().is_some() {
-        return "OPENPENCIL HOSTED".to_string();
-    }
     if is_acp(entry) {
         let name = entry.display_name.trim();
         if name.is_empty() {

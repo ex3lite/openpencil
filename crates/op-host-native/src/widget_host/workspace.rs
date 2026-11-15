@@ -10,7 +10,7 @@
 
 use super::WidgetHostNative;
 use op_editor_core::preview_slideshow::active_page_boards;
-use op_editor_core::{EntrySurface, WorkspaceHit, WorkspacePhase, WorkspaceView};
+use op_editor_core::{EntrySurface, Tool, WorkspaceHit, WorkspacePhase, WorkspaceView};
 use op_editor_ui::widgets::host_overlay_geometry::{
     status_bar_zoom, zoom_to_fit, zoom_to_fit_node,
 };
@@ -26,46 +26,9 @@ pub(in crate::widget_host) struct WorkspaceDockDrag {
     pub(in crate::widget_host) start_w: f32,
 }
 
-/// Narrowest the generation workspace's conversation dock may be dragged.
-const WORKSPACE_DOCK_MIN_WIDTH: f32 = 280.0;
-
 impl WidgetHostNative {
-    /// Professional editing cannot retain a preview runtime: the chrome and
-    /// input owner change together, so no merge animation may outlive them.
-    pub(in crate::widget_host) fn enter_professional_canvas(&mut self) {
-        self.drop_preview_runtime();
-        self.editor_state.tool = self
-            .editor_state
-            .editor_ui
-            .enter_professional_from_home(self.editor_state.tool);
-    }
-
-    pub(in crate::widget_host) fn refit_work_after_history(&mut self) {
-        let count = active_page_boards(&self.editor_state).len();
-        let workspace = &mut self.editor_state.editor_ui.workspace;
-        workspace.selected = workspace.selected.min(count.saturating_sub(1));
-        if matches!(workspace.view, WorkspaceView::Single { .. }) {
-            workspace.view = WorkspaceView::Single {
-                index: workspace.selected,
-            };
-        }
-        self.refresh_layout_scene();
-        let (w, h) = (self.last_viewport_w, self.last_viewport_h);
-        if w > 0.0 && h > 0.0 {
-            if self.works_reader_visible() {
-                self.frame_reader_board(w, h);
-            } else {
-                self.apply_workspace_fit(w, h);
-            }
-        }
-    }
-
-    /// The generation workspace is a pointer surface: its presses are
-    /// dropped under touch chrome, so it must not paint there either — a
-    /// phone or tablet showed a desktop workspace nobody could tap. Touch
-    /// keeps the mobile chrome until the phone reader lands.
     pub fn workspace_visible(&self) -> bool {
-        self.editor_state.editor_ui.workspace.visible && !self.editor_state.editor_ui.touch_chrome()
+        self.editor_state.editor_ui.workspace.visible
     }
 
     /// The chrome tier — runs after Home and the modal tiers, ahead of
@@ -80,41 +43,9 @@ impl WidgetHostNative {
         if !self.workspace_visible() || self.editor_state.editor_ui.touch_chrome() {
             return None;
         }
-        self.sync_workspace_drawer(viewport_width);
-        // A pointer press ends keyboard navigation (keyboard activation
-        // restores the focus after its synthetic press).
-        self.editor_state.editor_ui.workspace.key_focus = None;
         let surface = WorkspaceSurface::for_editor_at(&self.editor_state, self.now_ms)?;
         let layout = surface.layout(viewport_width, viewport_height);
-        let hit = surface.hit_test_layout(&layout, Point2D::new(x, y));
-        // Any press outside the open drawer shuts it; a press on the
-        // scrim does nothing else (it is a dismissal, not a canvas click).
-        if layout
-            .drawer
-            .is_some_and(|drawer| !drawer.contains(Point2D::new(x, y)))
-        {
-            self.set_workspace_drawer_open(false);
-            if hit == Some(WorkspaceHit::DrawerScrim) {
-                self.mark_dirty();
-                return Some(true);
-            }
-        }
-        // An open report panel closes on any press outside it (the press
-        // itself still reaches whatever is underneath).
-        if self.editor_state.editor_ui.workspace.quality_open
-            && !matches!(
-                hit,
-                Some(
-                    WorkspaceHit::QualityChip
-                        | WorkspaceHit::QualityPanel
-                        | WorkspaceHit::QualityItem { .. }
-                )
-            )
-        {
-            self.editor_state.editor_ui.workspace.quality_open = false;
-            self.mark_dirty();
-        }
-        let hit = hit?;
+        let hit = surface.hit_test_layout(&layout, Point2D::new(x, y))?;
         self.editor_state.editor_ui.workspace.pressed = Some(hit);
         self.run_workspace_action(hit, &layout, x);
         self.mark_dirty();
@@ -141,22 +72,16 @@ impl WidgetHostNative {
                 self.editor_state.editor_ui.open_export_dialog();
             }
             WorkspaceHit::Professional => {
-                self.enter_professional_canvas();
+                let workspace = &mut self.editor_state.editor_ui.workspace;
+                let restore = workspace.previous_tool;
+                workspace.enter_professional();
+                self.editor_state.tool = restore.unwrap_or(Tool::Select);
             }
             WorkspaceHit::ToggleDock => {
-                if self.editor_state.editor_ui.workspace_drawer_active() {
-                    // Narrow window: the toggle slides the drawer.
-                    let open = !self.editor_state.editor_ui.workspace.drawer_open;
-                    self.set_workspace_drawer_open(open);
-                } else {
-                    // The dock's collapse toggle collapses the LEFT PANEL:
-                    // one column, one open flag.
-                    self.editor_state.editor_ui.sidebar_open =
-                        !self.editor_state.editor_ui.sidebar_open;
-                }
-            }
-            WorkspaceHit::DrawerScrim => {
-                self.set_workspace_drawer_open(false);
+                // The dock's collapse toggle collapses the LEFT PANEL:
+                // one column, one open flag.
+                self.editor_state.editor_ui.sidebar_open =
+                    !self.editor_state.editor_ui.sidebar_open;
             }
             WorkspaceHit::DockResize => {
                 self.workspace_dock_drag = Some(WorkspaceDockDrag {
@@ -198,16 +123,6 @@ impl WidgetHostNative {
             WorkspaceHit::ZoomFit => {
                 self.apply_workspace_fit(viewport_w, viewport_h);
             }
-            WorkspaceHit::Undo | WorkspaceHit::Redo => {
-                // An explicit work action is independent of the composer caret.
-                // Keep its unsent text intact while releasing keyboard ownership.
-                self.editor_state.chat.focused = false;
-                if hit == WorkspaceHit::Undo {
-                    self.apply_undo();
-                } else {
-                    self.apply_redo();
-                }
-            }
             WorkspaceHit::Thumb(index) => {
                 let moved = {
                     let workspace = &mut self.editor_state.editor_ui.workspace;
@@ -234,149 +149,15 @@ impl WidgetHostNative {
                 self.toggle_preview_with_cached_viewport();
             }
             WorkspaceHit::Retry => {
-                // A template draft's run is a refine of those boards:
-                // retrying it refines them again in place rather than
-                // generating a second design over the draft.
-                if self
-                    .editor_state
-                    .editor_ui
-                    .workspace
-                    .draft_template
-                    .is_some()
-                {
-                    self.queue_draft_refine();
-                } else {
-                    self.retry_workspace_brief();
-                }
-            }
-            WorkspaceHit::DraftAction => {
-                self.run_workspace_draft_action();
-            }
-            WorkspaceHit::QualityChip => {
-                let workspace = &mut self.editor_state.editor_ui.workspace;
-                workspace.quality_open = !workspace.quality_open;
-            }
-            WorkspaceHit::QualityPanel => {}
-            WorkspaceHit::QualityItem { topic, item } => {
-                self.focus_quality_item(topic, item, viewport_w, viewport_h);
-            }
-            WorkspaceHit::UseVariant(index) => {
-                self.use_workspace_variant(index, viewport_w, viewport_h);
-            }
-            WorkspaceHit::Share => {
-                // The desktop runner owns the save picker; the export runs
-                // on its next file-action drain, like File ▸ Share….
-                self.editor_state.editor_ui.pending_file_action =
-                    Some(op_editor_core::FileAction::Share);
-            }
-            WorkspaceHit::MakeSame => {
-                self.editor_state.editor_ui.begin_make_same(self.now_ms);
+                self.retry_workspace_brief();
             }
         }
     }
 
-    /// Keep direction `index` of a side-by-side run as the working
-    /// design: the others move to their own page (see
-    /// `op_editor_core::pick_workspace_variant`) and the camera refits
-    /// the one that stayed.
-    pub(in crate::widget_host) fn use_workspace_variant(
-        &mut self,
-        index: usize,
-        viewport_w: f32,
-        viewport_h: f32,
-    ) -> bool {
-        let Some(changed) = op_editor_core::use_workspace_variant(&mut self.editor_state, index)
-        else {
-            return false;
-        };
-        self.mark_dirty();
-        self.apply_workspace_fit(viewport_w, viewport_h);
-        changed
-    }
-
-    /// Re-derive the chat drawer mode from the window width (every frame
-    /// and every press see the same answer). Returns whether it changed.
-    pub(in crate::widget_host) fn sync_workspace_drawer(&mut self, viewport_w: f32) -> bool {
-        let changed = self
-            .editor_state
-            .editor_ui
-            .workspace
-            .sync_drawer_mode(viewport_w);
-        if changed {
-            self.mark_dirty();
-        }
-        changed
-    }
-
-    /// Open or shut the narrow-window chat drawer with its slide. Shutting
-    /// it also releases the chat input, so keystrokes never land in a
-    /// conversation the user can no longer see.
-    pub(in crate::widget_host) fn set_workspace_drawer_open(&mut self, open: bool) -> bool {
-        let now_ms = self.now_ms.max(1);
-        if !self
-            .editor_state
-            .editor_ui
-            .workspace
-            .set_drawer_open(open, now_ms)
-        {
-            return false;
-        }
-        if !open {
-            self.editor_state.chat.blur_input(self.now_ms);
-        }
-        self.mark_dirty();
-        true
-    }
-
-    /// A remaining-issue row was clicked: select the node it names and
-    /// frame it. Rows without a node (document-level findings) and nodes
-    /// that no longer exist do nothing.
-    fn focus_quality_item(&mut self, topic: usize, item: usize, viewport_w: f32, viewport_h: f32) {
-        let Some(node_id) = self
-            .editor_state
-            .editor_ui
-            .workspace
-            .quality
-            .as_ref()
-            .and_then(|report| report.remaining_item(topic, item))
-            .and_then(|entry| entry.node_id.clone())
-        else {
-            return;
-        };
-        let selected = self
-            .editor_state
-            .apply(op_editor_core::EditorCommand::SetSelection {
-                node_id: op_editor_core::NodeId::new(node_id.clone()),
-            });
-        if !selected {
-            return;
-        }
-        self.refresh_layout_scene();
-        zoom_to_fit_node(
-            &mut self.editor_state,
-            &self.layout_scene,
-            &node_id,
-            viewport_w,
-            viewport_h,
-        );
-    }
-
-    /// Retry a captured page edit in place; otherwise re-send the stored
-    /// generation brief through the same route Home uses.
-    pub(in crate::widget_host) fn retry_workspace_brief(&mut self) {
-        if self
-            .editor_state
-            .editor_ui
-            .workspace
-            .page_edit_retry
-            .is_some()
-        {
-            if op_editor_core::workspace_page_edit::retry_page_edit(&mut self.editor_state) {
-                self.editor_state.chat.focused = false;
-                self.mark_dirty();
-            }
-            return;
-        }
+    /// Re-send the stored brief through the orchestrator route — the
+    /// same three-call pattern Home's send uses, without leaving the
+    /// workspace.
+    fn retry_workspace_brief(&mut self) {
         let workspace = &self.editor_state.editor_ui.workspace;
         let family = workspace.family;
         let brief = workspace.brief.trim().to_string();
@@ -385,29 +166,10 @@ impl WidgetHostNative {
         let Some(prompt) = family.generation_prompt(&options) else {
             return;
         };
-        // A stopped run may have drawn part of the design. Retrying on top of
-        // it would stack a second attempt over the first; start on a fresh
-        // page instead and hand the partial one to the shell like any
-        // design a new Home brief replaces.
-        if self.editor_state.editor_ui.workspace.phase == op_editor_core::WorkspacePhase::Stopped
-            && !op_editor_core::blank_starter::active_page_is_blank_starter(&self.editor_state)
-        {
-            // The page swap resets the workspace like any document swap;
-            // this is the same run on a new page, so carry it across.
-            let workspace = self.editor_state.editor_ui.workspace.clone();
-            if self.start_fresh_document_for_home() {
-                let restored = &mut self.editor_state.editor_ui.workspace;
-                *restored = workspace;
-                restored.fitted_board_count = 0;
-                restored.fitted_bounds = None;
-                restored.selected = 0;
-            }
-        }
         self.editor_state.editor_ui.workspace.resume_generating(0);
         self.editor_state.chat.focus_input_at_end(self.now_ms);
         self.editor_state.chat.set_input_text(prompt);
-        // A side-by-side run retries as one: the same number of directions.
-        op_editor_core::pin_workspace_retry_route(&mut self.editor_state);
+        self.editor_state.chat.launch_route = op_editor_core::LaunchRoute::Orchestrator;
         let sent = self.editor_state.chat.begin_send();
         self.editor_state.chat.focused = false;
         if sent {
@@ -434,12 +196,6 @@ impl WidgetHostNative {
 
     /// Apply the camera fit for the workspace's current view mode.
     pub fn apply_workspace_fit(&mut self, viewport_w: f32, viewport_h: f32) {
-        // The phone reader frames one board (or a long page's width) in
-        // its stage whatever the desktop view mode says.
-        if self.editor_state.editor_ui.works_reader_visible() {
-            self.frame_reader_board(viewport_w, viewport_h);
-            return;
-        }
         self.refresh_layout_scene();
         let view = self.editor_state.editor_ui.workspace.view;
         let boards = active_page_boards(self.editor_state());
@@ -492,13 +248,7 @@ impl WidgetHostNative {
         if bounds.size.x <= 0.0 {
             return;
         }
-        let (_, canvas_y, _, _) = self.canvas_region(viewport_w, viewport_h);
-        let fit = op_editor_ui::widgets::missing_fonts_notice::fit_canvas_rect(
-            &self.editor_state,
-            viewport_w,
-            viewport_h,
-        );
-        let (canvas_w, canvas_h) = (fit.size.x, fit.size.y);
+        let (_, _, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
         let viewport = &mut self.editor_state.viewport;
         viewport.zoom = ((canvas_w - 48.0) / bounds.size.x).clamp(
             op_editor_core::Viewport::MIN_ZOOM,
@@ -507,7 +257,7 @@ impl WidgetHostNative {
         let centre_x = bounds.origin.x + bounds.size.x / 2.0;
         let centre_y = bounds.origin.y + bounds.size.y / 2.0;
         viewport.pan_x = canvas_w / 2.0 - centre_x * viewport.zoom;
-        viewport.pan_y = fit.origin.y - canvas_y + canvas_h / 2.0 - centre_y * viewport.zoom;
+        viewport.pan_y = canvas_h / 2.0 - centre_y * viewport.zoom;
     }
 
     /// ← / → paging in the deck (desktop keyboard arm).
@@ -550,14 +300,9 @@ impl WidgetHostNative {
         }
         // A live dock drag follows the cursor even off the handle.
         if let Some(drag) = self.workspace_dock_drag {
-            // The Studio spec keeps the conversation at 280–440: under 280 its
-            // composer and model chip start to clip. The professional layers
-            // panel shares the width field but keeps its own 240 floor.
-            let width = (drag.start_w + (x - drag.start_x)).clamp(
-                WORKSPACE_DOCK_MIN_WIDTH,
-                op_editor_core::LAYER_PANEL_MAX_WIDTH,
-            );
-            self.editor_state.editor_ui.set_layer_panel_width(width);
+            self.editor_state
+                .editor_ui
+                .set_layer_panel_width(drag.start_w + (x - drag.start_x));
             self.mark_dirty();
             return Some(true);
         }
@@ -677,10 +422,6 @@ impl WidgetHostNative {
             return false;
         }
         self.editor_state.editor_ui.workspace.selected = selected;
-        if refit_due && self.editor_state.editor_ui.works_reader_visible() {
-            self.pump_reader_generation(count, bounds, viewport_w, viewport_h);
-            return true;
-        }
         if refit_due {
             self.editor_state.editor_ui.workspace.fitted_board_count = count;
             self.editor_state.editor_ui.workspace.fitted_bounds = bounds;
@@ -696,31 +437,6 @@ impl WidgetHostNative {
             );
         }
         true
-    }
-
-    /// The phone reader's camera during a run. A 390 px stage cannot show
-    /// every board at once, so a NEW board takes the stage as it lands
-    /// (the pager counts up with it); a board that only grew keeps the
-    /// user's page and reframes it. A page edit in flight never moves
-    /// the reader off the page being edited.
-    fn pump_reader_generation(
-        &mut self,
-        count: usize,
-        bounds: Option<(f32, f32, f32, f32)>,
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
-        let workspace = &mut self.editor_state.editor_ui.workspace;
-        let new_board = count > workspace.fitted_board_count;
-        workspace.fitted_board_count = count;
-        workspace.fitted_bounds = bounds;
-        if workspace.page_edit_running.is_none()
-            && new_board
-            && !op_editor_core::reads_as_long_page(workspace.family)
-        {
-            workspace.select_board(count - 1, count);
-        }
-        self.frame_reader_board(viewport_w, viewport_h);
     }
 
     /// Resolve the workspace phase from real chat/orchestrator state.
@@ -761,23 +477,3 @@ impl WidgetHostNative {
 #[cfg(test)]
 #[path = "workspace_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "workspace_focus_tests.rs"]
-mod focus_tests;
-
-#[cfg(test)]
-#[path = "workspace_quality_tests.rs"]
-mod quality_tests;
-
-#[cfg(test)]
-#[path = "workspace_variants_tests.rs"]
-mod variants_tests;
-
-#[cfg(test)]
-#[path = "workspace_drawer_tests.rs"]
-mod drawer_tests;
-
-#[cfg(test)]
-#[path = "workspace_history_tests.rs"]
-mod history_tests;

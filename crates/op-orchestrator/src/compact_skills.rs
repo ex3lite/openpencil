@@ -4,8 +4,8 @@
 //! (`compactSubAgentSkills` + the `retryAllowed` set).
 //!
 //! Two filtering modes:
-//! - **`minimal_skills`** — keep `schema` and any intent-matched `interactivity`
-//!   skill, so a smaller prompt can still express the requested behavior.
+//! - **`minimal_skills`** — keep only `schema` (the bare-minimum skill set for
+//!   models whose safety scanner times out on a full-size system prompt).
 //! - **`reduced_complexity` + `ModelTier::Basic`** — keep the retry
 //!   `retryAllowed` set (drops `elements` and all non-essential skills
 //!   so the retry has the smallest viable prompt).
@@ -40,7 +40,7 @@ use crate::model_profile::ModelTier;
 ///   `noStyleGuideMatch` case would inject `design-system`'s conflicting
 ///   "output ONLY a JSON token object" header alongside `style-defaults`
 ///   (Codex review 2026-06-06).
-/// * `minimal_skills`         — Keep `schema` and already-matched `interactivity`.
+/// * `minimal_skills`         — When `true`, keep only `schema`.
 /// * `reduced_complexity`     — When `true` AND `tier == Basic`, narrow to the
 ///   `retryAllowed` set (excludes `elements`).
 pub fn apply_skill_filter<T: SkillNamed>(
@@ -57,12 +57,11 @@ pub fn apply_skill_filter<T: SkillNamed>(
     let before: Vec<String> = skills.iter().map(|s| s.skill_name().to_string()).collect();
 
     let next = if minimal_skills {
-        // Narrow styling, not the grammar needed for requested behavior. Do
-        // not add interactivity to static briefs: the resolver owns matching.
-        // Prompt assembly appends SCRIPT_FORMAT separately.
+        // Last-ditch fallback: only the schema. Prompt assembly appends
+        // SCRIPT_FORMAT separately, so the output protocol remains script-gen.
         skills
             .into_iter()
-            .filter(|s| matches!(s.skill_name(), "schema" | "interactivity"))
+            .filter(|s| s.skill_name() == "schema")
             .collect()
     } else {
         compact_subagent_skills(
@@ -178,11 +177,6 @@ fn compact_subagent_skills<T: SkillNamed>(
             "mobile-app",
             "mobile-ui",
             "interactivity",
-            // Food-delivery anatomy (home feed, store page, dish rows, cart
-            // bar). Keyword-gated at the resolve layer (外卖 / takeout /
-            // restaurant words), so a no-op off a food brief; on one it is the
-            // only domain teaching a weak model gets for that product.
-            "food-delivery",
             // Deck teaching. Keyword-gated at the resolve layer (deck words
             // only), so a no-op on every non-deck prompt. Required on a deck:
             // the allow-set used to drop `slides` unconditionally, so a
@@ -328,7 +322,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn minimal_skills_keeps_only_schema_when_interactivity_was_not_matched() {
+    fn minimal_skills_keeps_only_schema() {
         let input = skills(&[
             "schema",
             "jsonl-format",
@@ -339,22 +333,6 @@ mod tests {
         ]);
         let out = filter(input, ModelTier::Full, true, false);
         assert_eq!(names(&out), vec!["schema"]);
-    }
-
-    #[test]
-    fn minimal_skills_preserves_matched_interaction_grammar_on_every_tier() {
-        for tier in [ModelTier::Basic, ModelTier::Standard, ModelTier::Full] {
-            let (out, dropped) = apply_skill_filter(
-                skills(&["schema", "interactivity", "layout", "jsonl-format"]),
-                tier,
-                true,
-                false,
-                true,
-                true,
-            );
-            assert_eq!(names(&out), vec!["schema", "interactivity"]);
-            assert!(!dropped.iter().any(|(name, _)| name == "interactivity"));
-        }
     }
 
     #[test]

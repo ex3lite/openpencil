@@ -1,20 +1,25 @@
 //! Deterministic map placeholders for image slots.
 //!
-//! Authored vector maps and resolved images remain intact. Empty map slots
-//! become an editable fallback scene before image targets are collected.
-//! The pure builder returns a shallow patch preserving the slot's id/geometry.
+//! Maps are authored as image intent by the model, but they are not stock
+//! photography. This module turns map intent into a small vector-like scene
+//! before image targets are collected. The builder is pure and returns a
+//! shallow patch, which preserves the original node's id and geometry.
 
 use std::collections::HashMap;
 
 use crate::image_fallback_policy::ResolvedRect;
 use crate::role_defaults::Theme;
-use jian_ops_schema::node::{base::NumberOrExpression, container::LayoutMode, PenNode};
+use jian_ops_schema::node::PenNode;
 use op_editor_core::PenNodeExt;
 use serde_json::{json, Value};
 
 const MAP_PLACEHOLDER_NAME_SUFFIX: &str = " (map placeholder)";
 const MAP_PLACEHOLDER_WIDTH: f64 = 327.0;
 const MAP_PLACEHOLDER_HEIGHT: f64 = 300.0;
+const GRID_COLUMNS: usize = 4;
+const GRID_ROWS: usize = 3;
+const STREET_WIDTH: f64 = 12.0;
+const ROAD_WIDTH: f64 = 10.0;
 
 /// One pure map-placeholder rewrite.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,7 +36,7 @@ pub fn map_placeholder(
     theme: Theme,
 ) -> Vec<MapPlaceholderPatch> {
     let mut patches = Vec::new();
-    collect_patches(root, rects, theme, false, false, "", &mut patches);
+    collect_patches(root, rects, theme, false, &mut patches);
     patches
 }
 
@@ -45,8 +50,6 @@ fn collect_patches(
     rects: &HashMap<String, ResolvedRect>,
     theme: Theme,
     inside_map_named: bool,
-    sibling_layer_control: bool,
-    context: &str,
     patches: &mut Vec<MapPlaceholderPatch>,
 ) {
     if node
@@ -64,58 +67,15 @@ fn collect_patches(
     // An explicit image slot is a slot wherever it sits; only shapes are
     // demoted to decorations inside a map-named container.
     if !inside_map_named || matches!(node, PenNode::Image(_)) {
-        if let Some(patch) = map_patch(node, rects, theme, sibling_layer_control, context) {
+        if let Some(patch) = map_patch(node, rects, theme) {
             patches.push(patch);
             return;
         }
     }
-    let context = format!(
-        "{context} {}",
-        node.base().name.as_deref().unwrap_or_default()
-    );
-    let map_named = inside_map_named || node.base().name.as_deref().is_some_and(has_map_word);
+    let map_named = inside_map_named || node.base().name.as_deref().is_some_and(has_map_name_word);
     if let Some(children) = node.children() {
-        // A map image can sit behind authored controls in its owning viewport.
-        // A sibling toolbar may wrap its buttons. Never cross into another
-        // map viewport or coordinate controls when multiple maps are ambiguous.
-        let shared_viewport = matches!(node, PenNode::Frame(frame)
-            if frame.container.layout == Some(LayoutMode::None))
-            && children
-                .iter()
-                .filter(|child| {
-                    (!map_named || matches!(child, PenNode::Image(_)))
-                        && eligible_map_dimensions(child, rects).is_some()
-                })
-                .count()
-                == 1;
-        let mut controls = Vec::new();
-        if shared_viewport {
-            for child in children {
-                collect_layer_controls(child, rects, &mut controls);
-            }
-        }
-        let has_layers = !controls.is_empty();
-        if has_layers {
-            for control in controls {
-                let patch = compact_layer_control_patch(control);
-                let current = serde_json::to_value(control).unwrap_or(Value::Null);
-                if patch
-                    .as_object()
-                    .unwrap()
-                    .iter()
-                    .any(|(key, value)| current[key] != *value)
-                {
-                    patches.push(MapPlaceholderPatch {
-                        node_id: control.id_str().to_string(),
-                        patch_json: patch.to_string(),
-                    });
-                }
-            }
-        }
         for child in children {
-            collect_patches(
-                child, rects, theme, map_named, has_layers, &context, patches,
-            );
+            collect_patches(child, rects, theme, map_named, patches);
         }
     }
 }
@@ -124,182 +84,44 @@ fn map_patch(
     node: &PenNode,
     rects: &HashMap<String, ResolvedRect>,
     theme: Theme,
-    sibling_layer_control: bool,
-    context: &str,
 ) -> Option<MapPlaceholderPatch> {
-    let (width, height) = eligible_map_dimensions(node, rects)?;
-    let patch = build_map_placeholder_with_controls(
-        node,
-        width,
-        height,
-        theme,
-        sibling_layer_control,
-        context,
-    );
+    if !is_map_placeholder_candidate(node) {
+        return None;
+    }
+
+    let (width, height) = dimensions(node, rects);
+    if !matches!(node, PenNode::Image(_)) && width < MIN_SHAPE_MAP_WIDTH {
+        return None;
+    }
+    let patch = build_map_placeholder(node, width, height, theme);
     Some(MapPlaceholderPatch {
         node_id: node.id_str().to_string(),
         patch_json: patch.to_string(),
     })
 }
 
-fn eligible_map_dimensions(
-    node: &PenNode,
-    rects: &HashMap<String, ResolvedRect>,
-) -> Option<(f64, f64)> {
-    if !is_map_placeholder_candidate(node)
-        || node
-            .base()
-            .name
-            .as_deref()
-            .is_some_and(|name| name.ends_with(MAP_PLACEHOLDER_NAME_SUFFIX))
-    {
-        return None;
-    }
-    let size = dimensions(node, rects);
-    (matches!(node, PenNode::Image(_)) || size.0 >= MIN_SHAPE_MAP_WIDTH).then_some(size)
-}
-
 fn is_map_placeholder_candidate(node: &PenNode) -> bool {
     match node {
         PenNode::Image(image) => {
-            (image.src.is_empty() || image.src.starts_with("placeholder:"))
-                && is_map_image_intent(
-                    node.base().name.as_deref(),
-                    image.image_search_query.as_deref(),
-                    image.image_prompt.as_deref(),
-                )
+            node.base().name.as_deref().is_some_and(has_map_word)
+                || image
+                    .image_search_query
+                    .as_deref()
+                    .is_some_and(has_map_word)
+                || image.image_prompt.as_deref().is_some_and(has_map_word)
         }
         PenNode::Frame(_) | PenNode::Rectangle(_) => {
-            node.base().name.as_deref().is_some_and(has_map_word)
-                && !node
-                    .base()
-                    .name
-                    .as_deref()
-                    .is_some_and(is_map_control_group)
+            node.base().name.as_deref().is_some_and(has_map_name_word)
                 && !contains_protected_descendant(node)
         }
         _ => false,
     }
 }
 
-fn is_map_control_group(name: &str) -> bool {
-    // Icon-only toolbars have no protected text descendants. They are still
-    // functional controls, never empty map slots to replace with terrain.
-    let lower = name.to_lowercase();
-    ["控件", "按钮", "工具栏"]
-        .iter()
-        .any(|part| lower.contains(part))
-        || lower
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .any(|word| {
-                matches!(
-                    word,
-                    "controls" | "control" | "toolbar" | "tools" | "buttons" | "button"
-                )
-            })
-}
-
-/// Share map intent with photo-only cleanup before the image becomes a frame.
-///
-/// The slot's name and search query say what it is; its generation prompt
-/// only describes a picture. A prompt that asks for a photograph is a photo
-/// even when the scene holds a map ("a hiker reading a paper map"), so the
-/// prompt counts only when it is not photographic.
-pub(crate) fn is_map_image_intent(
-    name: Option<&str>,
-    query: Option<&str>,
-    prompt: Option<&str>,
-) -> bool {
-    [name, query].into_iter().flatten().any(has_map_word)
-        || prompt.is_some_and(|prompt| has_map_word(prompt) && !is_photographic(prompt))
-}
-
-/// Words a photo prompt uses for itself; no map prompt needs them.
-fn is_photographic(prompt: &str) -> bool {
-    let lower = prompt.to_lowercase();
-    ["照片", "实拍", "摄影", "photograph", "film scan", "shot on"]
-        .iter()
-        .any(|word| lower.contains(word))
-        || lower
-            .split(|character: char| !character.is_ascii_alphanumeric())
-            .any(|word| matches!(word, "photo" | "photos" | "photographic" | "photography"))
-}
-
-fn is_authored_layer_control(node: &PenNode) -> bool {
-    // An absolute viewport defaults missing x/y to zero. Requiring both
-    // coordinates missed visible authored controls and added a second one.
-    // Callers must establish the shared absolute viewport or explicit position.
-    if !matches!(node, PenNode::Frame(_)) || !is_visible(node) {
-        return false;
-    }
-    let Some([icon]) = node.children().map(Vec::as_slice) else {
-        return false;
-    };
-    let named_layers = node.base().name.as_deref().is_some_and(|name| {
-        name.contains("图层")
-            || name
-                .to_lowercase()
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .any(|word| matches!(word, "layer" | "layers"))
-    });
-    is_visible(icon)
-        && matches!(icon, PenNode::IconFont(icon)
-            if icon.icon_font_name.rsplit(':').next().is_some_and(|glyph|
-                glyph == "layers" || (glyph == "map" && named_layers)))
-}
-
-fn collect_layer_controls<'a>(
-    node: &'a PenNode,
-    rects: &HashMap<String, ResolvedRect>,
-    out: &mut Vec<&'a PenNode>,
-) {
-    if !is_visible(node) || eligible_map_dimensions(node, rects).is_some() {
-        return;
-    }
-    if is_authored_layer_control(node) {
-        out.push(node);
-        return;
-    }
-    let Some(children) = node.children() else {
-        return;
-    };
-    if children
-        .iter()
-        .any(|child| eligible_map_dimensions(child, rects).is_some())
-    {
-        return;
-    }
-    for child in children {
-        collect_layer_controls(child, rects, out);
-    }
-}
-
-fn is_visible(node: &PenNode) -> bool {
-    op_design_lint::node_util::is_node_visible(node)
-        && !matches!(&node.base().opacity, Some(NumberOrExpression::Number(value)) if *value <= 0.0)
-}
-
-fn compact_layer_control_patch(node: &PenNode) -> Value {
-    let compact = |size: Option<f64>| size.filter(|s| (40.0..=48.0).contains(s));
-    let width = compact(node.width_px());
-    let height = compact(node.height_px());
-    // A correctly sized authored button already belongs to its control family.
-    // Shrinking only the layer toggle made it smaller than the location button.
-    if width.is_some() && height.is_some() {
-        return json!({});
-    }
-    // Repair full-width bars and tiny/oversized controls, retaining an authored
-    // compact dimension when available. Do not touch position, paint or events.
-    let side = height.or(width).unwrap_or(40.0);
-    json!({"width":side,"height":side,"layout":"horizontal","padding":0,
-        "justifyContent":"center","alignItems":"center"})
-}
-
 fn contains_protected_descendant(node: &PenNode) -> bool {
     node.children().is_some_and(|children| {
         children
             .iter()
-            .filter(|child| is_visible(child) && !is_authored_layer_control(child))
             .any(|child| is_protected_node(child) || contains_protected_descendant(child))
     })
 }
@@ -307,13 +129,7 @@ fn contains_protected_descendant(node: &PenNode) -> bool {
 fn is_protected_node(node: &PenNode) -> bool {
     matches!(
         node,
-        PenNode::Path(_)
-            | PenNode::Line(_)
-            | PenNode::Ellipse(_)
-            | PenNode::Polygon(_)
-            | PenNode::Rectangle(_)
-            | PenNode::IconFont(_)
-            | PenNode::Text(_)
+        PenNode::Text(_)
             | PenNode::Image(_)
             | PenNode::TextInput(_)
             | PenNode::Select(_)
@@ -326,10 +142,6 @@ fn is_protected_node(node: &PenNode) -> bool {
     )
 }
 
-/// `navigation` used to count here too, but in an App brief it names the
-/// back control laid over a hero photo: astra-new2's film-lab detail page
-/// (back button on its dusk street scan) lost the photo to a fake street map
-/// in both drafts.
 fn has_map_word(value: &str) -> bool {
     let lower = value.to_lowercase();
     lower.contains("地图")
@@ -337,15 +149,17 @@ fn has_map_word(value: &str) -> bool {
         || lower.contains("route map")
         || lower
             .split(|character: char| !character.is_ascii_alphanumeric())
-            .any(is_map_token)
+            .any(|word| word == "navigation" || word.starts_with("map"))
 }
 
-/// A whole word that names a map. Matching on the `map` PREFIX turned every
-/// "mapo tofu" dish photo — and a Sichuan store hero whose prompt mentioned
-/// it — into a fake street map on GLM-5.3-Flash and Opus 5.5 delivery pages
-/// (0923-0924); "maple" and "mapping" read the same way.
-fn is_map_token(word: &str) -> bool {
-    matches!(word, "map" | "maps" | "mapview" | "mapbox" | "minimap")
+fn has_map_name_word(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    lower.contains("地图")
+        || lower.contains("路线图")
+        || lower.contains("route map")
+        || lower
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .any(|word| word.starts_with("map"))
 }
 
 fn dimensions(node: &PenNode, rects: &HashMap<String, ResolvedRect>) -> (f64, f64) {
@@ -366,57 +180,126 @@ fn dimensions(node: &PenNode, rects: &HashMap<String, ResolvedRect>) -> (f64, f6
     (width.max(1.0), height.max(1.0))
 }
 
-/// Build an editable map from a fixed scene selected by image intent.
+/// Build the vector-like map scene with a fixed 4-by-3 block grid.
 pub fn build_map_placeholder(node: &PenNode, width: f64, height: f64, theme: Theme) -> Value {
-    build_map_placeholder_with_controls(node, width, height, theme, false, "")
-}
+    let id = node.id_str();
+    let width = width.max(1.0);
+    let height = height.max(1.0);
+    let block_width = ((width - 5.0 * STREET_WIDTH) / GRID_COLUMNS as f64).max(1.0);
+    let block_height = ((height - 4.0 * STREET_WIDTH) / GRID_ROWS as f64).max(1.0);
 
-fn build_map_placeholder_with_controls(
-    node: &PenNode,
-    width: f64,
-    height: f64,
-    theme: Theme,
-    sibling_layer_control: bool,
-    context: &str,
-) -> Value {
-    let mut hint = node.base().name.clone().unwrap_or_default();
-    if let PenNode::Image(image) = node {
-        hint.push_str(image.image_prompt.as_deref().unwrap_or_default());
-        hint.push_str(image.image_search_query.as_deref().unwrap_or_default());
+    let mut blocks = Vec::with_capacity(GRID_COLUMNS * GRID_ROWS + 7);
+    for index in 0..(GRID_COLUMNS * GRID_ROWS) {
+        let column = index % GRID_COLUMNS;
+        let row = index / GRID_COLUMNS;
+        let x = STREET_WIDTH + column as f64 * (block_width + STREET_WIDTH);
+        let y = STREET_WIDTH + row as f64 * (block_height + STREET_WIDTH);
+        blocks.push(json!({
+            "type": "rectangle",
+            "id": format!("{id}-map-block-{}", index + 1),
+            "name": format!("map-block-{}", index + 1),
+            "x": x,
+            "y": y,
+            "width": block_width,
+            "height": block_height,
+            "cornerRadius": 6,
+            "fill": solid_fill("$--accent")
+        }));
     }
-    let kind = crate::map_templates::MapTemplate::from_hint_with_context(&hint, context);
-    let mut blocks = crate::map_templates::children(node.id_str(), width, height, theme, kind);
-    let absolute_viewport = matches!(node, PenNode::Frame(frame)
-        if frame.container.layout == Some(LayoutMode::None));
-    let preserved_control = |child: &PenNode| {
-        is_authored_layer_control(child) && (absolute_viewport || has_numeric_position(child))
-    };
-    if sibling_layer_control || node.children().into_iter().flatten().any(preserved_control) {
-        blocks.retain(|block| block["name"] != "Map layer control");
-    }
-    for block in &mut blocks {
-        block["explain"] = json!(format!(
-            "map-template-part:{}",
-            block["name"].as_str().unwrap_or_default()
-        ));
-    }
+
+    let road_y = STREET_WIDTH + block_height + STREET_WIDTH / 2.0;
+    let road_x = STREET_WIDTH + block_width + STREET_WIDTH / 2.0;
+    blocks.push(json!({
+        "type": "rectangle",
+        "id": format!("{id}-map-road-h"),
+        "name": "map-road-h",
+        "x": 0,
+        "y": road_y,
+        "width": width,
+        "height": ROAD_WIDTH,
+        "fill": solid_fill("$--background")
+    }));
+    blocks.push(json!({
+        "type": "rectangle",
+        "id": format!("{id}-map-road-v"),
+        "name": "map-road-v",
+        "x": road_x,
+        "y": 0,
+        "width": ROAD_WIDTH,
+        "height": height,
+        "fill": solid_fill("$--background")
+    }));
+
+    let lower_left = &blocks[(GRID_ROWS - 1) * GRID_COLUMNS];
+    // End on the middle row so the pin stays clear of the top band where
+    // models pin search bars and back buttons.
+    let upper_right = &blocks[GRID_COLUMNS * (GRID_ROWS / 2) + GRID_COLUMNS - 1];
+    let start = block_center(lower_left);
+    let end = block_center(upper_right);
+    blocks.push(json!({
+        "type": "path",
+        "id": format!("{id}-map-route"),
+        "name": "map-route",
+        "x": 0,
+        "y": 0,
+        "width": width,
+        "height": height,
+        "d": format!("M {} {} L {} {} L {} {}", start.0, start.1, end.0, start.1, end.0, end.1),
+        "stroke": {
+            "thickness": 5,
+            "cap": "round",
+            "join": "round",
+            "fill": solid_fill("$--primary")
+        }
+    }));
+
+    let pin_x = clamp(end.0 - 14.0, 0.0, (width - 28.0).max(0.0));
+    let pin_y = clamp(end.1 - 28.0, 0.0, (height - 28.0).max(0.0));
+    blocks.push(json!({
+        "type": "icon_font",
+        "id": format!("{id}-map-pin"),
+        "name": "map-pin",
+        "x": pin_x,
+        "y": pin_y,
+        "width": 28,
+        "height": 28,
+        "iconFontFamily": "lucide",
+        "iconFontName": "map-pin",
+        "fill": solid_fill("$--primary")
+    }));
+
+    let origin_x = clamp(start.0 - 7.0, 0.0, (width - 14.0).max(0.0));
+    let origin_y = clamp(start.1 - 7.0, 0.0, (height - 14.0).max(0.0));
+    let halo_x = clamp(start.0 - 14.0, 0.0, (width - 28.0).max(0.0));
+    let halo_y = clamp(start.1 - 14.0, 0.0, (height - 28.0).max(0.0));
+    blocks.push(json!({
+        "type": "ellipse",
+        "id": format!("{id}-map-origin-halo"),
+        "name": "map-origin-halo",
+        "x": halo_x,
+        "y": halo_y,
+        "width": 28,
+        "height": 28,
+        "fill": solid_fill_with_opacity("$--primary", 0.2)
+    }));
+    blocks.push(json!({
+        "type": "ellipse",
+        "id": format!("{id}-map-origin"),
+        "name": "map-origin",
+        "x": origin_x,
+        "y": origin_y,
+        "width": 14,
+        "height": 14,
+        "fill": solid_fill("$--primary")
+    }));
+
     let preserved = node
         .children()
         .into_iter()
         .flatten()
-        .filter(|child| has_numeric_position(child) || preserved_control(child))
-        .filter_map(|child| {
-            let mut value = serde_json::to_value(child).ok()?;
-            if is_authored_layer_control(child) {
-                value
-                    .as_object_mut()?
-                    .extend(compact_layer_control_patch(child).as_object()?.clone());
-            }
-            Some(value)
-        });
-    // Authored controls remain above the deterministic map composition.
-    let mut children: Vec<Value> = preserved.collect();
-    children.append(&mut blocks);
+        .filter(|child| has_numeric_position(child))
+        .filter_map(|child| serde_json::to_value(child).ok());
+    blocks.extend(preserved);
 
     let map_name = format!(
         "{}{}",
@@ -431,14 +314,13 @@ fn build_map_placeholder_with_controls(
     let mut patch = json!({
         "type": "frame",
         "name": map_name,
-        "role": "map",
         "layout": "none",
         "clipContent": true,
         "fill": solid_fill(if theme == Theme::Dark { "$--secondary" } else { "$--muted" }),
         "imageSearchQuery": null,
         "imagePrompt": null,
-        "children": children,
-        "explain": format!("map-template:{}; illustrative, not geographic data; viewport:{width}x{height}", kind.key())
+        "children": blocks,
+        "explain": "map placeholder"
     });
     if height_needs_placeholder_size(node) {
         patch["height"] = json!(MAP_PLACEHOLDER_HEIGHT);
@@ -457,6 +339,14 @@ fn height_needs_placeholder_size(node: &PenNode) -> bool {
     }
 }
 
+fn block_center(value: &Value) -> (f64, f64) {
+    let x = value["x"].as_f64().unwrap_or(0.0);
+    let y = value["y"].as_f64().unwrap_or(0.0);
+    let width = value["width"].as_f64().unwrap_or(1.0);
+    let height = value["height"].as_f64().unwrap_or(1.0);
+    (x + width / 2.0, y + height / 2.0)
+}
+
 fn has_numeric_position(node: &PenNode) -> bool {
     node.base().x.is_some_and(|value| value.is_finite())
         && node.base().y.is_some_and(|value| value.is_finite())
@@ -466,10 +356,14 @@ fn solid_fill(color: &str) -> Value {
     json!([{ "type": "solid", "color": color }])
 }
 
+fn solid_fill_with_opacity(color: &str, opacity: f64) -> Value {
+    json!([{ "type": "solid", "color": color, "opacity": opacity }])
+}
+
+fn clamp(value: f64, low: f64, high: f64) -> f64 {
+    value.max(low).min(high)
+}
+
 #[cfg(test)]
 #[path = "map_placeholder_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "map_regression_tests.rs"]
-mod regression_tests;

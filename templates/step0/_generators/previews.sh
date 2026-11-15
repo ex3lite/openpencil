@@ -2,9 +2,8 @@
 # 渲染场景模板的预览图：每帧一张（scale 2）+ 整页拼合总览（scale 1）
 # 卡片缩略图由 scene_preview_cards.py 从这些渲染产物再烤一层。
 set -euo pipefail
-R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-# OP_BIN_DIR points at another profile (e.g. target/debug).
-BIN="${OP_BIN_DIR:-$R/target/release}/openpencil-desktop"
+R=/Users/fini/workspace/openpencil
+BIN=$R/target/release/openpencil-desktop
 OUT=$R/templates/step0/previews
 TMP=$(mktemp -d)
 mkdir -p "$OUT"
@@ -63,13 +62,7 @@ DEFAULT_TEMPLATES=(screenshot-tutorial knowledge-carousel before-after slide-dec
          course-enroll-card conference-agenda-card product-launch-card \
          annual-report-card music-fest-poster-card book-club-invite-card \
          ai-support-pitch-deck quarterly-review-deck quicksort-lecture-deck \
-         compound-effect-card analytics-metric-card \
-         coffee-order-app budget-ledger-app habit-fitness-app \
-         coffee-counter-desktop sales-dashboard-web \
-         onboarding-training-deck research-findings-deck \
-         daybreak-coffee-site openpencil-intro-deck openpencil-intro-deck-43 \
-         coffee-world-carousel focus-mode-tutorial weekly-review-infographic \
-         idea-to-publish-flow blank-vs-example-contrast city-music-fest-poster)
+         compound-effect-card analytics-metric-card)
 
 if [ "$#" -gt 0 ]; then
   templates=("$@")
@@ -102,13 +95,10 @@ PY
   # 多帧模板再导一张整页总览（export_item 把所有顶层 frame 合成一张画布）
   n=$(python3 -c "import json;d=json.load(open('$op'));print(len(d.get('children') or d['pages'][0]['children']))")
   if [ "$n" -gt 1 ]; then
-    # `--mcp <file>` finalizes and WRITES BACK to the file; export from a copy.
-    scratch_op=$(mktemp -d)/$t.op
-    cp "$op" "$scratch_op"
     printf '%s\n' \
       '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
       '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"export_item","arguments":{"itemId":"page-1","format":"png","scale":1}}}' \
-    | "$BIN" --mcp "$scratch_op" 2>/dev/null | tail -1 \
+    | "$BIN" --mcp "$op" 2>/dev/null | tail -1 \
     | python3 -c "
 import sys, json, base64
 t = json.loads(json.load(sys.stdin)['result']['content'][0]['text'])

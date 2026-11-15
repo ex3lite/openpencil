@@ -133,7 +133,6 @@ fn bottom_toolbar_min_width_rects_do_not_overlap() {
     let ordered = [
         footer.model,
         footer.prompt_center,
-        footer.image_gen,
         footer.speed,
         footer.attach,
         footer.send,
@@ -430,10 +429,6 @@ fn thinking_toggle_is_dropped_before_the_model_pill_becomes_unreadable() {
         smallest.thinking.size.x > 0.0,
         "the toggle must survive down to the minimum panel width"
     );
-    assert_eq!(
-        smallest.image_gen.size.x, 0.0,
-        "one 24 px slot had to go at the minimum width — the image-gen toggle pays first"
-    );
 
     let narrow = Rect::xywh(0.0, 0.0, 240.0, AI_CHAT_HEIGHT);
     let dropped = footer_at(240.0);
@@ -449,18 +444,12 @@ fn thinking_toggle_is_dropped_before_the_model_pill_becomes_unreadable() {
         Some(AIChatHit::CycleThinking),
         "a dropped slot must not be clickable"
     );
-    // The row closes the hole rather than leaving gaps in it: at this
-    // width BOTH toggles have dropped (image-gen pays first), so the
-    // library button sits against the ⚡ chip again…
-    assert_eq!(
-        dropped.image_gen.size.x, 0.0,
-        "the image-gen toggle is the first control to drop"
-    );
+    // The row closes the hole rather than leaving a 24 px gap in it…
     assert!(
         (dropped.prompt_center.origin.x + dropped.prompt_center.size.x - dropped.speed.origin.x)
             .abs()
             <= 4.01,
-        "library button must sit against the ⚡ chip once both toggles are gone"
+        "library button must sit against the ⚡ chip once the toggle is gone"
     );
     // …and the width it gave up went back to the model pill.
     assert!(
@@ -612,82 +601,5 @@ fn the_zero_width_agent_team_slot_is_not_a_live_target() {
         panel.hit_test(rect, column),
         Some(AIChatHit::CycleAgentTeam),
         "a dropped slot must not be clickable"
-    );
-}
-
-/// The composer-only card measures itself, then paint measures again
-/// with the card's own height — and the composer sizes its text area
-/// against the panel it sits in. When the two disagreed, the gap showed
-/// as a dead band above a long draft (measured 2026-09-17: a two-line
-/// brief with a header, most of the card empty).
-#[test]
-fn the_composer_card_height_is_what_paint_lays_out() {
-    for draft in [
-        "",
-        "\u{6362}\u{4e2a}\u{989c}\u{8272}",
-        "\u{8bbe}\u{8ba1}\u{4e00}\u{4e2a}\u{540d}\u{4e3a} Wander \u{7684}\u{65c5}\u{884c}\u{884c}\u{7a0b} App\u{ff0c}\u{5171} 3 \u{4e2a}\u{9875}\u{9762}\u{ff1a}\u{884c}\u{7a0b}\u{603b}\u{89c8}\u{9875}\u{ff08}\u{5373}\u{5c06}\u{51fa}\u{53d1}\u{7684}\u{65c5}\u{7a0b}\u{5361}\u{7247}\u{3001}\u{5012}\u{8ba1}\u{65f6}\u{3001}\u{5929}\u{6c14}\u{4e00}\u{77a5}\u{3001}\u{6309}\u{5929}\u{6298}\u{53e0}\u{7684}\u{884c}\u{7a0b}\u{ff09}",
-    ] {
-        for focused in [false, true] {
-            let mut s = EditorState::new();
-            s.chat.input.set_text(draft);
-            s.chat.focused = focused;
-            let panel = AIChatPlaceholder::from_editor(&s);
-            assert!(panel.composer_only, "desktop default is composer-only");
-            let width = 420.0_f32;
-            let height = panel.composer_only_height(width);
-            let rect = Rect::xywh(0.0, 0.0, width, height);
-            // What paint uses for the composer block, plus the header it
-            // draws when focused, must fill the card exactly.
-            let painted = panel.input_height_for_rect(rect)
-                + if focused {
-                    crate::widgets::ai_chat_panel::COMPOSER_HEADER_HEIGHT
-                } else {
-                    0.0
-                };
-            assert!(
-                (painted - height).abs() < 0.5,
-                "card {height} vs painted {painted} (focused={focused}, draft len {})",
-                draft.chars().count()
-            );
-        }
-    }
-}
-
-/// A long prompt must be readable in the composer card, not shown one
-/// row at a time. The card used to measure how far it may grow against
-/// its OWN height, which settled at a single visible line (measured
-/// 2026-09-17: a paragraph pasted in showed its last line only).
-#[test]
-fn the_composer_card_grows_with_a_long_prompt_up_to_its_ceiling() {
-    use crate::widgets::ai_chat_input_text::INPUT_MAX_LINES;
-    let width = 420.0_f32;
-    let one_line = {
-        let mut s = EditorState::new();
-        s.chat.input.set_text("\u{6362}\u{4e2a}\u{989c}\u{8272}");
-        AIChatPlaceholder::from_editor(&s).composer_only_height(width)
-    };
-    let mut s = EditorState::new();
-    s.chat.input.set_text(
-        "\u{5f27}\u{3001}\u{6052}\u{6e29}\u{5668}\u{5e26}\u{6e29}\u{5ea6}\u{73af}\u{3001}\u{95e8}\u{9501}\u{3001}\u{6444}\u{50cf}\u{5934}\u{7f29}\u{7565}\u{ff09}\u{3001}\u{80fd}\u{8017}\u{4eca}\u{65e5}\u{66f2}\u{7ebf}\u{3002}\u{8bbe}\u{8ba1}\u{4e00}\u{4e2a}\u{540d}\u{4e3a} Wander \u{7684}\u{65c5}\u{884c}\u{884c}\u{7a0b} App\u{ff0c}\u{5171} 3 \u{4e2a}\u{9875}\u{9762}\u{ff1a}\u{884c}\u{7a0b}\u{603b}\u{89c8}\u{9875}\u{ff0c}\u{5012}\u{8ba1}\u{65f6}\u{ff0c}\u{5929}\u{6c14}\u{4e00}\u{77a5}\u{ff0c}\u{6309}\u{5929}\u{6298}\u{53e0}\u{7684}\u{884c}\u{7a0b}\u{3002}",
-    );
-    let panel = AIChatPlaceholder::from_editor(&s);
-    let grown = panel.composer_only_height(width);
-    assert!(
-        grown > one_line + 20.0,
-        "a paragraph must be taller than one line: {grown} vs {one_line}"
-    );
-    // ...and it stops at the shared ceiling instead of eating the canvas.
-    let ceiling = {
-        let mut tall = EditorState::new();
-        tall.chat.input.set_text("\u{5b57}".repeat(4000));
-        AIChatPlaceholder::from_editor(&tall).composer_only_height(width)
-    };
-    assert_eq!(grown.min(ceiling), grown.min(ceiling));
-    assert!(
-        ceiling
-            <= one_line
-                + crate::widgets::ai_chat_input_text::INPUT_LINE_H * (INPUT_MAX_LINES - 1) as f32
-                + 1.0,
-        "capped at INPUT_MAX_LINES: {ceiling} vs one line {one_line}"
     );
 }

@@ -58,7 +58,6 @@ pub struct CodegenSession {
     pub model: Option<String>,
     pub cancel: Arc<AtomicBool>,
     pub run_epoch: u64,
-    pub hosted_session_epoch: Option<u64>,
 }
 
 impl CodegenSession {
@@ -145,7 +144,6 @@ impl CodegenSession {
     where
         F: FnOnce(CodegenWorker) -> std::io::Result<()>,
     {
-        let hosted_session_epoch = provider.hosted_session_epoch();
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
@@ -177,48 +175,7 @@ impl CodegenSession {
             model,
             cancel,
             run_epoch: NEXT_RUN_EPOCH.fetch_add(1, Ordering::Relaxed),
-            hosted_session_epoch,
         })
-    }
-
-    /// Run a deterministic target (`Framework::is_deterministic`) without
-    /// a provider or worker thread: the pipeline finishes on its first
-    /// step, and the result is queued exactly like a worker would stream
-    /// it (final progress, then `Done` / `Failed`) so hosts fold it
-    /// through their usual pump.
-    pub fn start_deterministic(input: CodegenInput, framework: Framework) -> Self {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut pipe = CodegenPipeline::new(input);
-        let step = pipe.step();
-        let _ = tx.send(CodegenDelta::Progress(pipe.progress()));
-        let _ = tx.send(match step {
-            PipelineStep::Done {
-                code,
-                degraded,
-                assets,
-            } => CodegenDelta::Done {
-                code,
-                degraded,
-                assets,
-            },
-            PipelineStep::Failed { message } => CodegenDelta::Failed(message),
-            PipelineStep::Dispatch(_) | PipelineStep::Waiting => CodegenDelta::Failed(format!(
-                "{} is not a deterministic code target",
-                framework.display_name()
-            )),
-        });
-        drop(tx);
-        CodegenSession {
-            rx,
-            finished: false,
-            framework,
-            document_identity: (0, 0, 0),
-            selection_snapshot: Vec::new(),
-            model: None,
-            cancel: Arc::new(AtomicBool::new(false)),
-            run_epoch: NEXT_RUN_EPOCH.fetch_add(1, Ordering::Relaxed),
-            hosted_session_epoch: None,
-        }
     }
 
     fn failed_start_session(
@@ -238,7 +195,6 @@ impl CodegenSession {
             model,
             cancel: Arc::new(AtomicBool::new(false)),
             run_epoch: NEXT_RUN_EPOCH.fetch_add(1, Ordering::Relaxed),
-            hosted_session_epoch: None,
         }
     }
 }

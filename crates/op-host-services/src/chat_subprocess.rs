@@ -26,7 +26,6 @@ use tokio::sync::mpsc;
 
 use crate::chat_runtime::{prompt_with_system_prompt, shared_runtime, BlockingRecvIter};
 use crate::chat_spawn::{build_command, find_binary, runtime_path_for_binary};
-use crate::chat_subprocess_antigravity_log::timeout_message;
 use crate::chat_subprocess_lifecycle::{child_env_for_cli, wait_for_terminal_exit};
 use crate::chat_subprocess_quirks as quirks;
 use crate::chat_subprocess_quirks::codex_reasoning_effort;
@@ -163,14 +162,7 @@ impl SubprocessProvider {
             // (`chat_copilot.rs`); the old `gh-copilot suggest`
             // template was a stale dead end. OpenCode chats over its
             // local HTTP server (`chat_http_server.rs`).
-            CliName::Kimi if turn_purpose == safety::TurnPurpose::Generation => (
-                crate::chat_subprocess_kimi::kimi_args(),
-                PromptMode::FlagArg("-p"),
-                Some("-m"),
-                Vec::new(),
-            ),
-            // Kimi has no canvas-agent MCP wiring yet: generation only.
-            CliName::Copilot | CliName::OpenCode | CliName::Kimi => return None,
+            CliName::Copilot | CliName::OpenCode => return None,
         };
         let binary = find_binary(cli.default_binary());
         if cli == CliName::Codex {
@@ -245,16 +237,10 @@ impl SubprocessProvider {
         let mut args = self.args.clone();
         if let (Some(flag), Some(model)) = (self.model_flag, request.model_id()) {
             let provider_default = model == "default"
-                && matches!(
-                    self.cli,
-                    Some(CliName::Antigravity | CliName::GrokBuild | CliName::Kimi)
-                );
+                && matches!(self.cli, Some(CliName::Antigravity | CliName::GrokBuild));
             if !provider_default {
                 args.push(flag.into());
-                args.push(match self.cli {
-                    Some(CliName::Kimi) => crate::chat_subprocess_kimi::model_alias(model),
-                    _ => model.into(),
-                });
+                args.push(model.into());
             }
         }
         if self.native_effort_config {
@@ -424,10 +410,9 @@ impl SubprocessProvider {
         safety::append_isolated_env(&mut env_pairs, isolation.as_ref());
         let turn_timeout = match cli {
             Some(CliName::Codex) => Some(quirks::CODEX_TURN_TIMEOUT),
-            Some(CliName::Antigravity) => Some(safety::antigravity_timeout()),
+            Some(CliName::Antigravity) => Some(safety::ANTIGRAVITY_TIMEOUT),
             Some(CliName::GrokBuild) => Some(safety::GROK_TIMEOUT),
             Some(CliName::Dsh) => Some(crate::chat_subprocess_dsh::DSH_TIMEOUT),
-            Some(CliName::Kimi) => Some(crate::chat_subprocess_kimi::KIMI_TIMEOUT),
             _ => None,
         };
         let label = self.label.clone();
@@ -441,8 +426,6 @@ impl SubprocessProvider {
             let mut cmd = build_command(&binary, &args);
             if let Some(turn) = &_isolation {
                 cmd.current_dir(turn.cwd());
-            } else if cli == Some(CliName::Kimi) {
-                cmd.current_dir(crate::chat_subprocess_kimi::workspace_dir());
             }
             // Set the child's env from the per-CLI policy. We
             // env_clear first because tokio::process Command
@@ -498,7 +481,9 @@ impl SubprocessProvider {
                 })
             });
 
-            // Stdin shares stdout's deadline and cancellation contract.
+            // Bound both a backpressured prompt write and EOF delivery by the
+            // same receiver/deadline contract as stdout. Dropping this future
+            // releases its child borrow before tree-aware cleanup below.
             let stdin_result = {
                 let prepare_stdin = async {
                     if prompt_mode == PromptMode::Stdin {
@@ -513,8 +498,9 @@ impl SubprocessProvider {
                     _ = tx.closed() => None,
                     _ = tokio::time::sleep_until(deadline), if turn_timeout.is_some() => {
                         let secs = turn_timeout.map(|d| d.as_secs()).unwrap_or_default();
-                        let message = timeout_message(&label, secs, _isolation.as_ref());
-                        let _ = tx.send(ChatDelta::Error(message)).await;
+                        let _ = tx.send(ChatDelta::Error(format!(
+                            "{label} request timed out after {secs}s."
+                        ))).await;
                         let _ = tx.send(ChatDelta::Done {
                             stop_reason: StopReason::Aborted,
                         }).await;
@@ -581,8 +567,11 @@ impl SubprocessProvider {
                     // (`codex-client.ts` rejects text).
                     _ = tokio::time::sleep_until(deadline), if turn_timeout.is_some() => {
                         let secs = turn_timeout.map(|d| d.as_secs()).unwrap_or_default();
-                        let message = timeout_message(&label, secs, _isolation.as_ref());
-                        let _ = tx.send(ChatDelta::Error(message)).await;
+                        let _ = tx
+                            .send(ChatDelta::Error(format!(
+                                "{label} request timed out after {secs}s."
+                            )))
+                            .await;
                         let _ = tx
                             .send(ChatDelta::Done {
                                 stop_reason: StopReason::Aborted,
@@ -614,7 +603,26 @@ impl SubprocessProvider {
                                 let _ = child.start_kill();
                                 break;
                             }
-                            let delta = crate::chat_subprocess_parse::parse_cli_line(cli, &line);
+                            // Per-CLI parse: Codex skips unparsed
+                            // lines (TS parity); generic
+                            // CLIs degrade them to raw text.
+                            let delta = match cli {
+                                Some(CliName::Codex) => quirks::parse_codex_line(&line),
+                                Some(CliName::GrokBuild) => {
+                                    crate::chat_grok_stream::parse_grok_stream_line(&line)
+                                }
+                                // dsh's whole stdout is the answer: every
+                                // line is text, never an event envelope.
+                                Some(CliName::Dsh) => {
+                                    Some(crate::chat_subprocess_dsh::parse_dsh_line(&line))
+                                }
+                                Some(CliName::ClaudeCode) => {
+                                    crate::chat_subprocess_claude_stream::parse_claude_stream_line(
+                                        &line,
+                                    )
+                                }
+                                _ => Some(parse_line(&line)),
+                            };
                             let Some(delta) = delta else { continue };
                             match &delta {
                                 ChatDelta::TextDelta(_) => emitted_text = true,
@@ -759,8 +767,9 @@ impl SubprocessProvider {
                 {
                     // TS `runCodexExec`: empty final text + no errors
                     // = explicit failure, not a silent empty bubble.
-                    let msg = crate::chat_subprocess_antigravity_log::no_output_message(&label, &stderr_tail, _isolation.as_ref());
-                    let _ = tx.send(ChatDelta::Error(msg)).await;
+                    let _ = tx
+                        .send(ChatDelta::Error(format!("{label} returned no output.")))
+                        .await;
                     let _ = tx
                         .send(ChatDelta::Done {
                             stop_reason: StopReason::Aborted,

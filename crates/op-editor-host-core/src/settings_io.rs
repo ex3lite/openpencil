@@ -55,24 +55,21 @@ struct AcpAgentPayload {
 /// dispatch; if it differs after, save the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
-    recent_files: Vec<RecentFile>,
     theme: ThemeMode,
     locale: Locale,
     port: u16,
     cli: [bool; 13],
-    mcp_lean_profile: bool,
     images_adv: bool,
     openverse_client_id: String,
     openverse_client_secret: String,
     openverse_credential_owner: Option<String>,
     auto_update_enabled: bool,
     experimental_features_enabled: bool,
-    connected: [bool; 8],
+    connected: [bool; 7],
     builtin_agents: Vec<BuiltinAgentConfig>,
     acp_agents: Vec<AcpAgentConfig>,
     image_gen_profiles: Vec<ImageGenProfile>,
     active_image_gen_profile_id: Option<String>,
-    image_gen_enabled: bool,
     preferred_agent_team_size: u32,
     entry_surface: op_editor_core::EntrySurface,
     chat_agent: String,
@@ -82,12 +79,10 @@ pub struct Fingerprint {
 pub fn fingerprint(state: &EditorState) -> Fingerprint {
     let eui = &state.editor_ui;
     Fingerprint {
-        recent_files: eui.recent_files.clone(),
         theme: eui.theme_mode,
         locale: eui.locale,
         port: eui.agent_settings.mcp_server.port,
         cli: eui.agent_settings.mcp_cli_enabled,
-        mcp_lean_profile: eui.agent_settings.mcp_lean_profile,
         images_adv: eui.agent_settings.images_advanced_open,
         openverse_client_id: eui.agent_settings.openverse_client_id.clone(),
         openverse_client_secret: eui.agent_settings.openverse_client_secret.clone(),
@@ -99,7 +94,6 @@ pub fn fingerprint(state: &EditorState) -> Fingerprint {
         acp_agents: eui.agent_settings.acp_agents.clone(),
         image_gen_profiles: eui.agent_settings.image_gen_profiles.clone(),
         active_image_gen_profile_id: eui.agent_settings.active_image_gen_profile_id.clone(),
-        image_gen_enabled: eui.agent_settings.image_gen_enabled,
         preferred_agent_team_size: eui.preferred_agent_team_size,
         entry_surface: eui.entry_surface,
         chat_agent: selected_chat_agent_name(eui),
@@ -173,8 +167,6 @@ struct SettingsPayload {
     #[serde(default)]
     mcp_cli_enabled: Option<Vec<bool>>,
     #[serde(default)]
-    mcp_lean_profile: Option<bool>,
-    #[serde(default)]
     images_advanced_open: Option<bool>,
     #[serde(default)]
     openverse_oauth: Option<OpenverseOAuthPayload>,
@@ -196,9 +188,6 @@ struct SettingsPayload {
     image_gen_profiles: Option<Vec<ImageGenProfilePayload>>,
     #[serde(default)]
     active_image_gen_profile_id: Option<String>,
-    /// Chat-panel image-generation toggle; older files default to off.
-    #[serde(default)]
-    image_gen_enabled: Option<bool>,
     #[serde(default)]
     recent_files: Option<Vec<RecentFilePayload>>,
     /// User's last-set ⚡Nx parallel-agents team size — seeds tab 0's
@@ -241,15 +230,24 @@ fn settings_path() -> Option<PathBuf> {
     Some(base.join(APP_DIR).join(FILE_NAME))
 }
 
-#[path = "settings_io_test_process.rs"]
-mod test_process;
-
+/// A cargo test binary (`target/…/deps/<crate>-<hash>`) never touches the
+/// user's real settings file. A desktop test once called the public
+/// `save` on a fixture state and silently replaced the founder's
+/// settings.json — API keys included — on every `cargo test`; every test
+/// process now writes under its own temp directory instead. Explicit
+/// config roots (`op_config_store::configured_user_root`) still win, so
+/// tests that stage their own root keep working.
 fn test_process_settings_dir() -> Option<PathBuf> {
-    test_process::settings_dir(
-        &std::env::current_exe().ok()?,
-        &std::env::temp_dir(),
-        std::process::id(),
-    )
+    let exe = std::env::current_exe().ok()?;
+    let under_deps = exe
+        .components()
+        .any(|component| component.as_os_str() == "deps");
+    let under_target = exe
+        .components()
+        .any(|component| component.as_os_str() == "target");
+    (under_deps && under_target).then(|| {
+        std::env::temp_dir().join(format!("openpencil-test-settings-{}", std::process::id()))
+    })
 }
 
 /// Snapshot the live `EditorState` preferences into a serializable
@@ -262,7 +260,6 @@ fn to_payload(state: &EditorState) -> SettingsPayload {
         locale: Some(eui.locale.code().into()),
         mcp_port: Some(eui.agent_settings.mcp_server.port),
         mcp_cli_enabled: Some(eui.agent_settings.mcp_cli_enabled.to_vec()),
-        mcp_lean_profile: Some(eui.agent_settings.mcp_lean_profile),
         images_advanced_open: Some(eui.agent_settings.images_advanced_open),
         openverse_oauth: openverse_oauth_to_payload(&eui.agent_settings),
         openverse_credential_owner: eui.agent_settings.openverse_credential_owner.clone(),
@@ -296,7 +293,6 @@ fn to_payload(state: &EditorState) -> SettingsPayload {
                 .collect(),
         ),
         active_image_gen_profile_id: eui.agent_settings.active_image_gen_profile_id.clone(),
-        image_gen_enabled: Some(eui.agent_settings.image_gen_enabled),
         recent_files: Some(
             eui.recent_files
                 .iter()
@@ -338,9 +334,6 @@ fn apply_payload_with_options(
     }
     if let Some(flags) = payload.mcp_cli_enabled {
         eui.agent_settings.mcp_cli_enabled = migrate_mcp_cli_flags(flags);
-    }
-    if let Some(lean) = payload.mcp_lean_profile {
-        eui.agent_settings.mcp_lean_profile = lean;
     }
     if let Some(b) = payload.images_advanced_open {
         eui.agent_settings.images_advanced_open = b;
@@ -410,9 +403,6 @@ fn apply_payload_with_options(
             .first()
             .map(|profile| profile.id.clone());
     }
-    if let Some(enabled) = payload.image_gen_enabled {
-        eui.agent_settings.image_gen_enabled = enabled;
-    }
     if let Some(list) = payload.recent_files {
         eui.recent_files = list
             .into_iter()
@@ -467,25 +457,23 @@ fn apply_payload_with_options(
 /// Remove the retired Gemini CLI slot from positional v1 settings without
 /// shifting the providers that followed it. Released settings used either
 /// five slots (through Gemini) or seven slots (Gemini + Antigravity + Grok);
-/// the current layout omits Gemini and appends DeepSeek Harness, then Kimi
-/// Code, at the tail (see `chat::models::AgentProvider::ALL` — append-only,
-/// so persisted indices never shift).
+/// the current seven-slot layout omits Gemini and appends DeepSeek Harness
+/// at the tail (see `chat::models::AgentProvider::ALL` — append-only, so
+/// persisted indices never shift).
 ///
-/// Length disambiguation: 7 is the pre-Kimi layout and 8 the current one,
-/// so both are copied verbatim (a round-trip must be lossless); a 7-entry
-/// file simply leaves Kimi disconnected. The one casualty is a
+/// Length disambiguation: 7 is the CURRENT layout, so a 7-entry file is
+/// copied verbatim (a round-trip must be lossless). The one casualty is a
 /// legacy Gemini-era 7-entry file that was never opened since the
 /// retirement — its index-4 Gemini flag reads as Antigravity — but the
 /// startup reconnect replay re-probes every remembered provider, so an
 /// uninstalled / unauthenticated CLI honestly degrades back to
 /// disconnected on first launch. Treating 7 as legacy instead would
 /// corrupt EVERY current file on every load, which is far worse.
-fn migrate_connected_provider_flags(flags: Vec<bool>) -> [bool; 8] {
-    let mut migrated = [false; 8];
+fn migrate_connected_provider_flags(flags: Vec<bool>) -> [bool; 7] {
+    let mut migrated = [false; 7];
     match flags.len() {
         // Current layout (or a longer one written by a newer build).
-        8.. => migrated.copy_from_slice(&flags[..8]),
-        7 => migrated[..7].copy_from_slice(&flags),
+        7.. => migrated.copy_from_slice(&flags[..7]),
         6 => migrated[..6].copy_from_slice(&flags),
         5 => migrated[..4].copy_from_slice(&flags[..4]),
         _ => {

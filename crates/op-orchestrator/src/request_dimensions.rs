@@ -23,29 +23,16 @@ const ROOT_CONTEXT_TERMS: &[&str] = &[
     "page",
     "screen",
     "canvas",
-    "interface",
-    "poster",
-    "slide",
     // "desktop dashboard" is the catalog's natural-language shorthand for
     // one desktop screen, including the accepted "1440x900 desktop dashboard"
     // form where no literal "screen" token is present.
     "desktop",
     "dashboard",
-    // CJK counterparts of "desktop" / "dashboard" above: "运营数据看板
-    // （1440×900，桌面）" names its root with exactly these words.
-    "桌面",
-    "看板",
-    "仪表盘",
     "根画板",
     "画板",
     "页面",
     "屏幕",
     "画布",
-    "界面",
-    "首页",
-    "海报",
-    "每张",
-    "每页",
 ];
 const NESTED_CONTEXT_TERMS: &[&str] = &[
     "hero",
@@ -119,49 +106,7 @@ fn nearest_term_distance(
         .min()
 }
 
-/// Longest design name (in chars) a heading parenthetical may follow.
-const HEADING_NAME_MAX_CHARS: usize = 32;
-
-/// Sentence / list punctuation that ends a heading: a pair behind any of it is
-/// in the body, not in the design's title.
-fn is_heading_break(ch: char) -> bool {
-    matches!(
-        ch,
-        '，' | '。' | '：' | '；' | '、' | '！' | '？' | ',' | '.' | ':' | ';' | '!' | '?' | '\n'
-    )
-}
-
-/// `<design name>（W×H…）` / `<design name> (W×H…)` opening the prompt: the
-/// pair is the first thing inside a parenthetical that directly follows the
-/// design's own name, so it sizes the design itself. The name must open the
-/// prompt with no sentence or list punctuation (an item later in the body
-/// never qualifies), and a name carrying a nested-item word ("页面包含卡片")
-/// is left to the distance rule.
-fn is_heading_parenthetical(text: &str, candidate: DimensionCandidate) -> bool {
-    let before = text[..candidate.start].trim_end();
-    let Some(open) = before.chars().next_back() else {
-        return false;
-    };
-    if open != '（' && open != '(' {
-        return false;
-    }
-    let name = before[..before.len() - open.len_utf8()].trim();
-    if name.is_empty()
-        || name.chars().count() > HEADING_NAME_MAX_CHARS
-        || name.chars().any(is_heading_break)
-    {
-        return false;
-    }
-    !NESTED_CONTEXT_TERMS.iter().any(|term| {
-        name.match_indices(term)
-            .any(|(start, _)| term_has_boundaries(name, start, term))
-    })
-}
-
 fn is_root_scoped(text: &str, candidate: DimensionCandidate) -> bool {
-    if is_heading_parenthetical(text, candidate) {
-        return true;
-    }
     let Some(root_distance) = nearest_term_distance(text, candidate, ROOT_CONTEXT_TERMS) else {
         return false;
     };
@@ -244,26 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_chinese_delivery_terms_keep_explicit_dimensions() {
-        for prompt in [
-            "手机App点单首页，只要1页，390×844，中文界面。",
-            "活动海报，1080×1440，信息清楚。",
-            "做4张知识卡，每张1080×1440。",
-        ] {
-            let expected = if prompt.contains("390") {
-                dimensions(390.0, Some(844.0))
-            } else {
-                dimensions(1080.0, Some(1440.0))
-            };
-            assert_eq!(requested_root_dimensions(prompt), expected, "{prompt}");
-        }
-        assert_eq!(
-            requested_root_dimensions("后台里每张卡片500×600，图片640×480。"),
-            None
-        );
-    }
-
-    #[test]
     fn parses_explicit_root_and_artboard_pairs() {
         assert_eq!(
             requested_root_dimensions("Use a root frame sized 1366 x 768px."),
@@ -318,43 +243,6 @@ mod tests {
             ),
             dimensions(1440.0, Some(900.0))
         );
-    }
-
-    #[test]
-    fn heading_parenthetical_after_design_name_is_root_scoped() {
-        // arena d01 (0927a/run-3): this prompt's root stayed at the planner's
-        // 1200 wide because neither "看板" nor "桌面" counted as root context.
-        assert_eq!(
-            requested_root_dimensions(
-                "运营数据看板（1440×900，桌面）：左侧栏（品牌+六个导航项+底部用户）、顶部工具栏、四个 KPI 卡、折线图+柱图并排、下方数据表 8 行 6 列带分页。"
-            ),
-            dimensions(1440.0, Some(900.0))
-        );
-        // The heading rule alone, without any root-context word.
-        assert_eq!(
-            requested_root_dimensions("咖啡品牌官网（1280×2400）：首屏大图、三栏特色、页脚"),
-            dimensions(1280.0, Some(2400.0))
-        );
-        assert_eq!(
-            requested_root_dimensions("Crm workspace (1366x768): pipeline board, activity feed"),
-            dimensions(1366.0, Some(768.0))
-        );
-    }
-
-    #[test]
-    fn in_body_item_pairs_are_not_the_root() {
-        for prompt in [
-            "运营数据看板：四个 KPI 卡片 320×200、下方数据表",
-            "健身记录：顶部问候、卡片（320×200）展示今日目标",
-            "页面包含卡片（320×200）和一个表格",
-            "Team hub: a hero image (1200x600), then a list",
-        ] {
-            assert_eq!(
-                requested_root_dimensions(prompt),
-                None,
-                "an item size in the body must not become the root: {prompt}"
-            );
-        }
     }
 
     #[test]

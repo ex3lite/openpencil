@@ -20,9 +20,9 @@ public source context used when the private matrix was produced; they are
 provenance, not an allowlist for later public commits.
 
 `../AUTH-RELEASE-POLICY` is the source-reviewed adoption lock. It pins the
-trusted Ed25519 public key, exact complete release-manifest SHA-256, adopted ABI
-(3 or 4), private source revision, and immutable build id. This prevents rollback
-to a different older matrix that is still validly signed by the same historical
+trusted Ed25519 public key, exact complete release-manifest SHA-256, ABI 3,
+private source revision, and immutable build id. This prevents rollback to a
+different older matrix that is still validly signed by the same historical
 key. The policy is deliberately outside the artifact root and has no
 OpenPencil workspace version field.
 
@@ -31,7 +31,7 @@ The reusable artifacts remain independently inspectable:
 - Their bytes are pinned by the adjacent `SHA256` and signed `PROVENANCE`.
 - Their target, artifact release version, ABI, private revision, build id, and
   hardening declaration are covered by the repository release public key.
-- Their exposed `op_auth_*` names match the validated ABI allowlist.
+- Their exposed `op_auth_*` names match the ABI-v3 allowlist.
 - Mach-O and ELF use the hardened profile. A signed Windows pass-through may
   declare the lower `op-auth-signed-unobfuscated-v1` anti-reversing profile.
 
@@ -50,7 +50,7 @@ host toolchain's own personality routine. The transformation happens only
 after provenance validation, preserves archive layout, and rejects ambiguous
 input; it never weakens the linker's duplicate-symbol checks.
 
-Every production matrix is an atomic, complete ten-target set (ABI v3 or v4):
+Every production matrix is an atomic, complete ten-target ABI-v3 set:
 
 ```text
 aarch64-apple-darwin       aarch64-apple-ios
@@ -64,16 +64,16 @@ The signed release manifest binds all ten targets to the same artifact release
 version, recorded public build context, private source revision, and immutable
 build id. Release and TestFlight verify the complete matrix in the source they
 build. They fail closed on a missing target, invalid signature, mismatched
-digest, ABI different from the source adoption lock, inconsistent metadata, or unrecognized hardening
+digest, ABI other than 3, inconsistent metadata, or unrecognized hardening
 profile. Unsigned local mobile archives belong only in the explicit Debug
 override and must never be copied into this directory.
 
-## Signed artifact provenance
+## ABI-v2 / ABI-v3 signed provenance
 
 Every production target directory must contain:
 
 ```text
-ABI_VERSION       exactly the adopted production ABI (3 or 4)
+ABI_VERSION       exactly 3 for production
 VERSION           private artifact release identifier
 SHA256            lowercase digest of the archive
 PROVENANCE        signed key/value manifest
@@ -90,12 +90,7 @@ over the exact
 archive digest, hardening profile, source revision, or build id.
 
 ABI v3 appends relay-token minting to the ABI-v2 login and collaboration-ticket
-surface. ABI v4 appends Hosted access begin/poll/cancel and session epochs. The
-build bridge gates each appended symbol set by the validated ABI. Shipping
-Hosted requires a complete signed ABI-v4 matrix and a reviewed adoption lock
-for that matrix. ABI v3 supports login and collaboration but cannot enable
-Hosted. Consumer support for v4 does not constitute a signed release or
-authorize changing the adoption pins.
+surface. The build bridge gates each appended symbol set by the validated ABI.
 
 ## Private rebuild profile
 
@@ -144,9 +139,8 @@ candidate.
 Production matrix rebuilds use the established private-repository release path:
 
 1. The private `ZSeven-W/op-platform` `prebuilt-production` workflow rebuilds
-   and audits all ten targets for the chosen production ABI (v4 for Hosted),
-   and binds every candidate to the private source revision, recorded public
-   build context, and one immutable build id.
+   and audits all ten ABI-v3 targets, and binds every candidate to the private
+   source revision, recorded public build context, and one immutable build id.
 2. That protected private workflow uses its existing
    `OP_AUTH_PROVENANCE_SIGNING_KEY_PEM` secret to sign every target and the
    complete release matrix, then independently verifies the signed result

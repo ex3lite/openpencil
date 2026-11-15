@@ -300,7 +300,6 @@ final class OpPlayerView: UIView, UITextViewDelegate, UIDocumentPickerDelegate {
     func teardownEngine() {
         guard !didTearDown else { return }
         didTearDown = true
-        longPressWork?.cancel()
         viewportDisplayLink?.invalidate()
         viewportDisplayLink = nil
         nativeLoginController?.finishForTeardown(animated: false)

@@ -110,7 +110,6 @@ mod geometry_echo {
 
     fn plan() -> OrchestratorPlan {
         OrchestratorPlan {
-            shared_context: None,
             root_frame: RootFrameSpec {
                 id: "root".into(),
                 name: "Page".into(),
@@ -123,7 +122,6 @@ mod geometry_echo {
             },
             subtasks: vec![],
             style_guide_name: None,
-            palette: None,
         }
     }
 
@@ -143,7 +141,6 @@ mod geometry_echo {
             screen: None,
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         }
     }

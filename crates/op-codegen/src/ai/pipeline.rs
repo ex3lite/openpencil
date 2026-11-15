@@ -187,11 +187,7 @@ impl CodegenPipeline {
             return PipelineStep::Waiting;
         }
 
-        // (c) First entry: deterministic targets finish here; everything
-        // else dispatches the non-strict plan request.
-        if self.input.framework.is_deterministic() {
-            return self.finish_deterministic_target();
-        }
+        // (c) First entry: dispatch the non-strict plan request.
         let id = self.register_inflight(RequestKind::Planning);
         let req = plan_request(id, &self.input, false);
         if req.user_message.len() > MAX_USER_PROMPT_BYTES {

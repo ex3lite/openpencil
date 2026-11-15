@@ -184,19 +184,6 @@ fn every_task_wraps_a_non_empty_draft_with_its_key_phrase() {
 }
 
 #[test]
-fn poster_task_does_not_expand_a_single_requested_delivery_into_a_bundle() {
-    let prompt = HomeFamily::EventPoster
-        .generation_prompt(&TaskDraft {
-            text: "只要1张1080×1440主海报。".into(),
-            ..Default::default()
-        })
-        .unwrap();
-    assert!(prompt.contains("只要1张1080×1440主海报"));
-    assert!(prompt.contains("按用户指定的数量与尺寸交付"));
-    assert!(!prompt.contains("主海报竖版 + 社交方图"));
-}
-
-#[test]
 fn app_desktop_wrapper_names_the_desktop_contract() {
     let prompt = HomeFamily::AppUi.generation_prompt(&TaskDraft {
         text: "门店工作台".into(),
@@ -335,44 +322,4 @@ fn the_hover_stamp_names_the_leaving_card_and_schedules_frames() {
     home.hide();
     assert_eq!(home.card_hover_since_ms, 0);
     assert_eq!(home.card_hover_leaving, None);
-}
-
-#[test]
-fn app_page_choice_defaults_to_one_and_reaches_both_generation_contracts() {
-    use super::AppPages;
-    for device in [HomeDevice::Mobile, HomeDevice::Desktop] {
-        let mut draft = TaskDraft {
-            text: "咖啡点单".into(),
-            device,
-            ..Default::default()
-        };
-        assert_eq!(draft.app_pages, AppPages::Single);
-        let prompt = HomeFamily::AppUi.generation_prompt(&draft).unwrap();
-        assert!(prompt.contains("交付 1 页界面"));
-        assert!(!prompt.contains("默认 3 页"));
-        draft.app_pages = AppPages::Multiple;
-        let prompt = HomeFamily::AppUi.generation_prompt(&draft).unwrap();
-        assert!(prompt.contains("交付 3 页完整界面"));
-        assert!(prompt.contains("用户指定页面名称时遵从需求"));
-        draft.text = "设计包含 5 页的咖啡 App".into();
-        assert!(HomeFamily::AppUi
-            .generation_prompt(&draft)
-            .unwrap()
-            .contains("交付 5 页完整界面"));
-        draft.text = "跑步记录 App 两屏可交互（375×812）".into();
-        assert!(HomeFamily::AppUi
-            .generation_prompt(&draft)
-            .unwrap()
-            .contains("交付 2 页完整界面"));
-        draft.app_pages = AppPages::Single;
-        assert!(HomeFamily::AppUi
-            .generation_prompt(&draft)
-            .unwrap()
-            .contains("交付 1 页界面"));
-    }
-    let mut home = HomeState::default();
-    home.set_app_pages(AppPages::Multiple);
-    home.set_task(HomeFamily::Web, 1);
-    home.set_task(HomeFamily::AppUi, 2);
-    assert_eq!(home.task_draft().app_pages, AppPages::Multiple);
 }

@@ -6,199 +6,6 @@ use crate::types::SubtaskOutcome;
 use jian_ops_schema::variable::VariableDefinition;
 use std::collections::BTreeMap;
 
-#[test]
-fn operable_controls_load_interaction_guidance_in_the_actual_mobile_prompt() {
-    let mut request = req();
-    request.model = Some("glm-5.3-flash".into());
-    request.prompt = "设计一页手机骑行导航，右侧小型图层和定位按钮，按钮可操作，保持留白。".into();
-    let mut mobile = plan();
-    mobile.root_frame.width = 375.0;
-    mobile.root_frame.height = 812.0;
-    let mut section = subtask();
-    section.region.width = 375.0;
-    let (call, report) = bsp(&section, &mobile, &request, AbortFlag::new(), false, false);
-    assert!(
-        report.included.iter().any(|s| s.name == "interactivity"),
-        "{:?}",
-        report.dropped
-    );
-    assert!(call.system_prompt.contains("EVENTS — action handlers:"));
-    assert!(call.system_prompt.contains("events.onTap"));
-}
-
-#[test]
-fn source_facts_survive_all_subtask_complexity_levels() {
-    for (reduced, minimal) in [(false, false), (true, false), (true, true)] {
-        let mut request = req();
-        request.model = Some("glm-5.3-flash".into());
-        request.prompt = "晴日咖啡，静安店，到店自取；拿铁28元、美式22元、燕麦拿铁32元".into();
-        let (call, _) = bsp(
-            &subtask(),
-            &plan(),
-            &request,
-            AbortFlag::new(),
-            reduced,
-            minimal,
-        );
-        assert!(call.system_prompt.contains("SOURCE FACTS"));
-        assert!(call.user_prompt.contains(&request.prompt));
-    }
-}
-
-#[test]
-fn photo_archetype_cannot_override_a_separate_title_meta_owner_on_any_retry() {
-    let mut request = req();
-    request.model = Some("glm-5.3-flash".into());
-    request.prompt = "Workout detail: hero image and back button, then a title and meta row".into();
-    let mut mobile = plan();
-    mobile.root_frame.width = 375.0;
-    mobile.root_frame.height = 812.0;
-    let mut hero = subtask();
-    hero.id = "hero".into();
-    hero.label = "Hero Image with Back Button".into();
-    hero.region.width = 375.0;
-    hero.elements = Some("ARCHETYPE: image-led — photo, display 30px on scrim".into());
-    let mut title = hero.clone();
-    title.id = "title".into();
-    title.label = "Title and Meta Row".into();
-    title.elements = Some("Workout title, duration and equipment".into());
-    mobile.subtasks = vec![hero.clone(), title];
-    for (reduced, minimal) in [(false, false), (true, false), (true, true)] {
-        let (call, _) = bsp(&hero, &mobile, &request, AbortFlag::new(), reduced, minimal);
-        assert!(call.user_prompt.contains("Title and Meta Row"));
-        assert!(call
-            .user_prompt
-            .contains("Archetype typography is styling, not permission to add copy"));
-        assert!(call
-            .user_prompt
-            .contains("without repeated titles or invented stats"));
-    }
-}
-
-#[test]
-fn requested_thumbnails_cannot_be_downgraded_to_optional_icon_tiles_on_any_retry() {
-    let mut request = req();
-    request.model = Some("glm-5.3-flash".into());
-    request.prompt =
-        "Workout detail: an exercise list of six with thumbnail, name, sets and reps".into();
-    let mut mobile = plan();
-    mobile.root_frame.width = 375.0;
-    let mut section = subtask();
-    section.label = "Exercise List".into();
-    section.region.width = 375.0;
-    section.elements =
-        Some("Six rows, each with a rounded photo thumbnail, name, sets and reps".into());
-    for (reduced, minimal) in [(false, false), (true, false), (true, true)] {
-        let (call, _) = bsp(
-            &section,
-            &mobile,
-            &request,
-            AbortFlag::new(),
-            reduced,
-            minimal,
-        );
-        assert!(call
-            .user_prompt
-            .contains("requested photos/thumbnails as image nodes"));
-        assert!(call
-            .user_prompt
-            .contains("OP fills assets after generation"));
-        assert!(call
-            .user_prompt
-            .contains("Icon/illustration tiles are for optional media only"));
-        assert!(!call
-            .user_prompt
-            .contains("prefer cohesive icon or illustration tiles"));
-        if call.system_prompt.contains("NO BLANK PLACEHOLDERS:") {
-            assert!(call
-                .system_prompt
-                .contains("Icon tiles are for optional media only"));
-            assert!(!call
-                .system_prompt
-                .contains("If no real image asset is available"));
-        }
-    }
-}
-
-#[test]
-fn image_brief_contract_reaches_all_subtask_complexity_levels() {
-    // Assert the assembled prompt, not just the corpus: minimal retries keep
-    // only schema, and mobile skills can otherwise consume the prompt budget.
-    for (width, prompt) in [
-        (375.0, "A fitness app with six activity course cards"),
-        (
-            1440.0,
-            "A skincare website with product-only bottle photographs",
-        ),
-        (
-            1440.0,
-            "A travel website with place-only landscape photographs",
-        ),
-    ] {
-        let mut request = req();
-        request.model = Some("glm-5.3-flash".into());
-        request.prompt = prompt.into();
-        let mut image_plan = plan();
-        image_plan.root_frame.width = width;
-        let mut image_section = subtask();
-        image_section.region.width = width;
-        for (reduced, minimal) in [(false, false), (true, false), (true, true)] {
-            let (call, _) = bsp(
-                &image_section,
-                &image_plan,
-                &request,
-                AbortFlag::new(),
-                reduced,
-                minimal,
-            );
-            for required in [
-                "2-3 English keywords UNIQUE per image",
-                "BOTH image generation and stock-image acceptance",
-                "Put subject/action before style",
-                "Ground requirements in the brief or card copy",
-                "never invent a mandatory pose for a generic activity",
-                "imageSearchQuery and imagePrompt name the SAME required subject/action",
-                "show a participant doing that activity, not equipment or an empty venue",
-                "Product/place-only slots: do not add people",
-                "Sibling scenes must be independently recognizable",
-                "Linear angle: 0° bottom→top, 90° left→right, 180° top→bottom",
-                "keep overlay text on its dark end",
-            ] {
-                assert!(
-                    call.system_prompt.contains(required),
-                    "image brief missing {required:?}: width={width}, reduced={reduced}, minimal={minimal}"
-                );
-            }
-            assert!(!call
-                .system_prompt
-                .contains("otherwise imageSearchQuery drives the stock-search fallback"));
-        }
-    }
-}
-
-#[test]
-fn pinned_print_style_layer_order_reaches_all_generation_complexity_levels() {
-    let mut request = req();
-    request.model = Some("glm-5.3-flash".into());
-    request.pinned_style_guide = Some("leadprint-vermilion-light".into());
-    request.prompt = "做一张中文咖啡活动卡，采用错位套印标题".into();
-    let mut guide_plan = plan();
-    guide_plan.style_guide_name = request.pinned_style_guide.clone();
-    for (reduced, minimal) in [(false, false), (true, false), (true, true)] {
-        let (call, _) = bsp(
-            &subtask(),
-            &guide_plan,
-            &request,
-            AbortFlag::new(),
-            reduced,
-            minimal,
-        );
-        let delivered = format!("{}\n{}", call.system_prompt, call.user_prompt);
-        assert!(delivered.contains("earlier siblings paint on top"));
-        assert!(delivered.contains("black reading layer FIRST"));
-    }
-}
-
 /// Build a prompt for a document variable table using the same non-empty check
 /// as the production sub-agent runner.
 fn prompt_for_variables(
@@ -293,7 +100,8 @@ fn subagent_prompt_injects_exact_json_quoted_screen_route_inventory() {
     let expected = r#"DOCUMENT SCREEN ROUTES (use these exact route values in schema-encoded navigation actions; never invent another route):
 - "Home" -> "/"
 - "Movie \"Night\"\nDetail" -> "/movie-detail"
-"#;
+
+CRITICAL LAYOUT CONSTRAINTS:"#;
     assert!(
         call.user_prompt.contains(expected),
         "route inventory must be exact and JSON-quoted:\n{}",
@@ -367,7 +175,7 @@ fn full_bleed_instruction_is_scoped_to_the_marked_subtask() {
     hero.bleed_hero = true;
     let plan = plan();
     let req = req();
-    let exact = "This section is full-bleed:";
+    let exact = "This section is full-bleed: give the section frame no horizontal padding, let its first media node (image or colour block) span the full root width, and put every text or control that follows inside one inner frame with `padding: [0,24]`.";
 
     let (ordinary_call, _) = build_subagent_prompt(
         &ordinary,
@@ -390,11 +198,6 @@ fn full_bleed_instruction_is_scoped_to_the_marked_subtask() {
 
     assert!(!ordinary_call.user_prompt.contains(exact));
     assert!(hero_call.user_prompt.contains(exact));
-    assert!(hero_call.user_prompt.contains("BELOW the media"));
-    assert!(hero_call.user_prompt.contains("OVER the media"));
-    assert!(hero_call
-        .user_prompt
-        .contains("never stack overlay layers vertically"));
 }
 
 #[test]
@@ -431,7 +234,6 @@ fn subagent_prompt_honors_explicit_radius_and_spacing_numbers() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 
@@ -498,7 +300,6 @@ fn mobile_food_prompt_avoids_fixed_food_template() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 
@@ -582,7 +383,6 @@ fn chinese_mobile_food_prompt_carries_language_consistency_rule() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 

@@ -159,7 +159,7 @@ fn on_tap(state: &EditorState, id: &str) -> Option<Value> {
 }
 
 #[test]
-fn strict_back_is_wired_but_card_shapes_do_not_prove_entity_identity() {
+fn strict_back_and_isomorphic_cards_are_wired_and_echo_clears() {
     let mut sink = sink_from_value(document(vec![
         entry_screen(vec![card("movie-a"), card("movie-b")]),
         detail_screen("detail", "/detail", icon_back("back", 24.0, 80.0)),
@@ -183,19 +183,15 @@ fn strict_back_is_wired_but_card_shapes_do_not_prove_entity_identity() {
     for card_id in ["movie-a", "movie-b"] {
         assert_eq!(
             on_tap(&sink.state, card_id),
-            None,
-            "shape alone cannot prove which entity this detail represents"
+            Some(json!([{"push": "\"/detail\""}])),
+            "push must carry a Tier-1 quoted string literal"
         );
     }
     let after = crate::geometry_validation::geometry_diagnostics(&sink.state);
-    assert!(after
-        .iter()
-        .any(|line| line.starts_with("interaction-unwired-cards: 2")
-            && line.contains("selected entity")));
     assert!(
         after
             .iter()
-            .all(|line| !line.starts_with("interaction-unwired-back:")),
+            .all(|line| !line.starts_with("interaction-unwired-")),
         "{after:?}"
     );
 }
@@ -280,7 +276,7 @@ fn two_detail_candidates_abandon_all_card_pushes_without_guessing() {
 }
 
 #[test]
-fn authored_events_are_byte_stable_and_unwired_siblings_stay_unwired() {
+fn existing_events_are_byte_stable_and_clean_siblings_still_qualify() {
     let mut authored_card = card("movie-authored");
     authored_card["events"] = json!({
         "onTap": [{"custom_action": null}],
@@ -305,8 +301,14 @@ fn authored_events_are_byte_stable_and_unwired_siblings_stay_unwired() {
         node_value(&sink.state, "back")["events"],
         back_events_before
     );
-    assert_eq!(on_tap(&sink.state, "movie-a"), None);
-    assert_eq!(on_tap(&sink.state, "movie-b"), None);
+    assert_eq!(
+        on_tap(&sink.state, "movie-a"),
+        Some(json!([{"push": "\"/detail\""}]))
+    );
+    assert_eq!(
+        on_tap(&sink.state, "movie-b"),
+        Some(json!([{"push": "\"/detail\""}]))
+    );
 }
 
 #[test]
@@ -329,7 +331,7 @@ fn conflicting_back_action_is_not_a_detail_fact_and_never_routes_cards() {
 }
 
 #[test]
-fn exact_pop_detail_stays_navless_without_inventing_card_handoffs() {
+fn exact_pop_detail_stays_navless_before_backfill_and_routes_cards() {
     let mut entry = entry_screen(vec![card("movie-a"), card("movie-b")]);
     let entry_tabs = ["Home", "Search", "Library"]
         .into_iter()
@@ -376,8 +378,14 @@ fn exact_pop_detail_stays_navless_without_inventing_card_handoffs() {
             .len(),
         2
     );
-    assert_eq!(on_tap(&sink.state, "movie-a"), None);
-    assert_eq!(on_tap(&sink.state, "movie-b"), None);
+    assert_eq!(
+        on_tap(&sink.state, "movie-a"),
+        Some(json!([{"push": "\"/detail\""}]))
+    );
+    assert_eq!(
+        on_tap(&sink.state, "movie-b"),
+        Some(json!([{"push": "\"/detail\""}]))
+    );
 }
 
 #[test]
@@ -517,8 +525,14 @@ fn trailing_bottom_nav_uses_geometry_bottom_gap_predicate_for_detail_gate() {
 
     wire_interaction_backfill(&mut sink);
 
-    assert_eq!(on_tap(&sink.state, "movie-a"), None);
-    assert_eq!(on_tap(&sink.state, "movie-b"), None);
+    assert_eq!(
+        on_tap(&sink.state, "movie-a"),
+        Some(json!([{"push": "\"/actual-detail\""}]))
+    );
+    assert_eq!(
+        on_tap(&sink.state, "movie-b"),
+        Some(json!([{"push": "\"/actual-detail\""}]))
+    );
 }
 
 #[test]
@@ -550,25 +564,4 @@ fn single_page_without_screen_is_a_byte_exact_noop_and_pass_is_idempotent() {
         serde_json::to_value(multi.state.active_children()).unwrap(),
         once
     );
-}
-
-#[test]
-fn distinct_merchants_never_inherit_the_first_merchants_static_detail() {
-    let mut first = card("first");
-    first["children"][1]["content"] = json!("老王家常菜");
-    first["events"] = json!({"onTap":[{"push":"\"/detail\""}]});
-    let mut second = card("second");
-    second["children"][1]["content"] = json!("川香居麻辣香锅");
-    let mut third = card("third");
-    third["children"][1]["content"] = json!("状元粥铺");
-    let mut sink = sink_from_value(document(vec![
-        entry_screen(vec![first, second, third]),
-        detail_screen("detail", "/detail", icon_back("back", 24.0, 80.0)),
-    ]));
-    let before = node_value(&sink.state, "card-row");
-    wire_interaction_backfill(&mut sink);
-    assert_eq!(node_value(&sink.state, "card-row"), before);
-    assert!(on_tap(&sink.state, "second").is_none());
-    assert!(on_tap(&sink.state, "third").is_none());
-    assert_eq!(on_tap(&sink.state, "back"), Some(json!([{"pop":null}])));
 }

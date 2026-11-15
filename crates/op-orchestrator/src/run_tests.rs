@@ -77,7 +77,7 @@ fn req_basic() -> DesignRequest {
 }
 
 const PLAN_JSON: &str = r##"{
-  "sharedContext": {}, "rootFrame": { "id": "root", "name": "Page", "width": 1200, "height": 800,
+  "rootFrame": { "id": "root", "name": "Page", "width": 1200, "height": 800,
                  "layout": "vertical", "gap": 0,
                  "fill": [{ "type": "solid", "color": "#FFFFFF" }] },
   "subtasks": [
@@ -87,7 +87,7 @@ const PLAN_JSON: &str = r##"{
 }"##;
 
 const MOBILE_PLAN_JSON: &str = r##"{
-  "sharedContext": {}, "rootFrame": { "id": "root", "name": "Mobile Page", "width": 390, "height": 844,
+  "rootFrame": { "id": "root", "name": "Mobile Page", "width": 390, "height": 844,
                  "layout": "vertical", "gap": 0,
                  "fill": [{ "type": "solid", "color": "#FFF8F0" }] },
   "subtasks": [
@@ -191,8 +191,6 @@ fn sequential_subtask_prompt_receives_the_previous_section_headline() {
 
 // Cluster test modules — this file keeps the shared fixtures (plan JSON,
 // scripted LLM helpers); each child mounts with `use super::*`.
-#[path = "run_tests_authentication_retry.rs"]
-mod authentication_retry_tests;
 #[path = "run_tests_core.rs"]
 mod core_tests;
 #[path = "run_tests_dashboard.rs"]
@@ -201,18 +199,3 @@ mod dashboard_tests;
 mod geometry_salvage_tests;
 #[path = "run_tests_planning_retry.rs"]
 mod planning_retry_tests;
-#[path = "run_tests_right_rail.rs"]
-mod right_rail_tests;
-#[path = "run_tests_salvage_gates.rs"]
-mod salvage_gates_tests;
-#[path = "source_facts_retry_tests.rs"]
-mod source_facts_retry_tests;
-
-#[test]
-fn debug_plan_preview_is_one_line_and_capped() {
-    let raw = format!("  line one\nline two\r\n{}", "x".repeat(400));
-    let preview = debug_plan_preview(&raw);
-    assert!(!preview.contains('\n') && !preview.contains('\r'));
-    assert_eq!(preview.chars().count(), DEBUG_PLAN_PREVIEW_CHARS);
-    assert!(preview.starts_with("line one line two"));
-}

@@ -7,38 +7,6 @@
 use super::*;
 
 #[test]
-fn first_draft_contracts_survive_real_home_prompt_resolution() {
-    for (prompt, names) in [
-        ("做一个晴日咖啡手机App的点单首页，只要1页，390×844，中文界面。静安店，到店自取。拿铁28元、美式22元、燕麦拿铁32元。",
-         vec!["schema", "copywriting", "food-delivery"]),
-        ("把这篇普通用户AI设计入门文章做成4张中文图文卡片，1080×1440，包含标题、内容和交付步骤。",
-         vec!["schema", "copywriting", "text-rules"]),
-    ] {
-        let context = resolve_skills(Phase::Generation, prompt, &ResolveOptions::default());
-        for name in names {
-            let source = get_skill_by_name(name).expect("registered contract");
-            let resolved = context.skills.iter().find(|skill| skill.meta.name == name)
-                .unwrap_or_else(|| panic!("{prompt:?} dropped {name}"));
-            assert!(!resolved.truncated, "{name} was budget-truncated");
-            assert_eq!(resolved.content, source.content, "{name} lost contract bytes");
-        }
-    }
-}
-
-#[test]
-fn copywriting_never_asks_for_sample_data_labels() {
-    // Concept drafts carry no data-export disclaimers (regress-1019 F2):
-    // the corpus must not instruct the model to label requested mock data.
-    let source = get_skill_by_name("copywriting").expect("registered contract");
-    assert!(
-        !source.content.contains("label it as sample data"),
-        "{}",
-        source.content
-    );
-    assert!(source.content.contains("needs no sample-data label"));
-}
-
-#[test]
 fn embeds_the_skill_corpus() {
     // The TS package ships ~95 skill + style-guide markdown files;
     // the full corpus must travel with the crate.

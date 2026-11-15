@@ -116,11 +116,6 @@ fn slot_accepts(slot: ColorSlot, family: ColorFamily) -> bool {
 
 struct ColorRefs {
     candidates: Vec<ColorCandidate>,
-    /// Largest colour distance a literal may be from a variable's value
-    /// and still bind to it.
-    max_distance: f64,
-    /// Literals rewritten to a reference so far.
-    bound: std::cell::Cell<usize>,
 }
 
 struct ColorCandidate {
@@ -130,24 +125,7 @@ struct ColorCandidate {
 }
 
 pub(crate) fn bind_generated_color_variables(nodes: &mut [PenNode], state: &EditorState) {
-    bind_generated_color_variables_for_background(nodes, state, None);
-}
-
-pub(crate) fn bind_generated_color_variables_for_background(
-    nodes: &mut [PenNode],
-    state: &EditorState,
-    background: Option<&str>,
-) {
-    let mut refs = color_refs(state, NEAR_COLOR_MAX_DISTANCE);
-    // Binding is not allowed to attach an authored literal to a stock token
-    // whose value the shared cleanup will change. That would silently change
-    // white photo captions and intentionally light controls into dark surfaces.
-    let unstable = crate::loop_finalize::theme_variable_polarity_fixes(state, background);
-    refs.candidates.retain(|candidate| {
-        !unstable
-            .iter()
-            .any(|(name, _)| candidate.reference.strip_prefix('$') == Some(name.as_str()))
-    });
+    let refs = color_refs(state);
     if refs.candidates.is_empty() {
         return;
     }
@@ -156,32 +134,10 @@ pub(crate) fn bind_generated_color_variables_for_background(
     }
 }
 
-/// Bind only literals that EQUAL a colour variable's current value (same
-/// slot rules as [`bind_generated_color_variables`]). Used on authored
-/// input (a website import): the design renders exactly as before — each
-/// rewritten colour resolves to the value it already had — but now
-/// follows the variable when the palette changes. Returns how many
-/// literals were bound.
-pub fn bind_exact_color_variables(nodes: &mut [PenNode], state: &EditorState) -> usize {
-    let refs = color_refs(state, 0.0);
-    if refs.candidates.is_empty() {
-        return 0;
-    }
-    for node in nodes {
-        bind_node(node, &refs);
-    }
-    refs.bound.get()
-}
-
-fn color_refs(state: &EditorState, max_distance: f64) -> ColorRefs {
+fn color_refs(state: &EditorState) -> ColorRefs {
     let mut candidates = Vec::new();
-    let empty = |candidates| ColorRefs {
-        candidates,
-        max_distance,
-        bound: std::cell::Cell::new(0),
-    };
     let Some(variables) = state.doc.variables.as_ref() else {
-        return empty(candidates);
+        return ColorRefs { candidates };
     };
     for (name, def) in variables {
         if !matches!(def.kind, VariableKind::Color) {
@@ -199,7 +155,7 @@ fn color_refs(state: &EditorState, max_distance: f64) -> ColorRefs {
             reference: format!("${name}"),
         });
     }
-    empty(candidates)
+    ColorRefs { candidates }
 }
 
 /// Which slot a node's own `fill` occupies. Text and icon glyphs paint
@@ -289,46 +245,22 @@ fn bind_color_string(color: &mut String, refs: &ColorRefs, slot: ColorSlot) {
     };
     if let Some(reference) = nearest_ref(key, refs, slot) {
         *color = reference.clone();
-        refs.bound.set(refs.bound.get() + 1);
     }
 }
 
 /// Closest slot-compatible variable within [`NEAR_COLOR_MAX_DISTANCE`].
 ///
-/// An exact match scores distance 0 and therefore always wins. Palettes share
-/// values all the time (`--card-foreground` = `--foreground`, a chart colour
-/// = `--primary`), so a tie goes to the most general token — the one with
-/// the fewest name segments — and only then to variable-name order. Name
-/// order alone bound every body text to `--card-foreground` and every brand
-/// fill to `--chart-1`: correct today, wrong the moment the card or chart
-/// colour is changed on its own.
+/// An exact match scores distance 0 and therefore always wins, and ties keep
+/// the first candidate in variable-name order — the same resolution the
+/// previous exact-map-then-nearest lookup produced.
 fn nearest_ref(key: ColorKey, refs: &ColorRefs, slot: ColorSlot) -> Option<&String> {
     refs.candidates
         .iter()
         .filter(|candidate| slot_accepts(slot, candidate.family))
-        .map(|candidate| {
-            (
-                color_distance(key, candidate.key),
-                token_specificity(&candidate.reference),
-                &candidate.reference,
-            )
-        })
-        .filter(|(distance, _, _)| *distance <= refs.max_distance)
-        .min_by(|(a, a_rank, _), (b, b_rank, _)| {
-            a.partial_cmp(b)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a_rank.cmp(b_rank))
-        })
-        .map(|(_, _, reference)| reference)
-}
-
-/// How specialised a token is: its name segments once the `$`, the leading
-/// dashes and a `color-` namespace are stripped (`--foreground` = 1,
-/// `--card-foreground` = 2, `--color-chart-1` = 2).
-fn token_specificity(reference: &str) -> usize {
-    let name = reference.trim_start_matches('$').trim_start_matches('-');
-    let name = name.strip_prefix("color-").unwrap_or(name);
-    name.split('-').filter(|part| !part.is_empty()).count()
+        .map(|candidate| (color_distance(key, candidate.key), &candidate.reference))
+        .filter(|(distance, _)| *distance <= NEAR_COLOR_MAX_DISTANCE)
+        .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, reference)| reference)
 }
 
 fn color_distance(a: ColorKey, b: ColorKey) -> f64 {

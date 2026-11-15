@@ -12,26 +12,19 @@ pub struct LoadedDoc {
 /// running each page-root through jian-core's `LayoutEngine` so
 /// flex sizes resolve to absolute scene-coord rects before paint.
 pub fn pen_document_to_payload(doc: &PenDocument) -> LoadedDoc {
-    pen_document_to_payload_with_measure(doc, layout_measure_backend())
-}
-
-/// Convert a document using an explicit text backend, shared with its runtime.
-pub fn pen_document_to_payload_with_measure(
-    doc: &PenDocument,
-    measure: Rc<dyn MeasureBackend>,
-) -> LoadedDoc {
     let pages: Vec<PagePayload> = if let Some(pages) = &doc.pages {
         pages
             .iter()
-            .map(|p| build_page_with_measure(&p.id, &p.name, &p.children, Rc::clone(&measure)))
+            .enumerate()
+            .map(|(i, p)| build_page(&p.id, &p.name, &p.children, i))
             .collect()
     } else if !doc.children.is_empty() {
         // Single-page fallback (TS shape: top-level `children`).
-        vec![build_page_with_measure(
+        vec![build_page(
             "page-1",
             doc.name.as_deref().unwrap_or("Page 1"),
             &doc.children,
-            Rc::clone(&measure),
+            0,
         )]
     } else {
         vec![PagePayload {
@@ -109,7 +102,6 @@ pub fn pen_documents_to_payload_for_preview(
     paint_doc: &PenDocument,
     layout_doc: &PenDocument,
     preserve_authored_geometry: bool,
-    measure: Rc<dyn MeasureBackend>,
 ) -> LoadedDoc {
     let rects_for = |roots: &[PenNode]| -> BTreeMap<String, [f32; 4]> {
         if preserve_authored_geometry {
@@ -117,7 +109,7 @@ pub fn pen_documents_to_payload_for_preview(
         } else {
             let mut rects = BTreeMap::new();
             for root in roots {
-                compute_layout_with_measure(root, &mut rects, Rc::clone(&measure));
+                compute_layout(root, &mut rects);
             }
             rects
         }

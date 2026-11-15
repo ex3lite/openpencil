@@ -22,7 +22,6 @@
 //! - `messages` — `impl ChatState` per-message card state, per-turn
 //!   selectors and attachments
 
-mod instance;
 pub mod message;
 mod messages;
 pub mod models;
@@ -30,7 +29,6 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub use instance::ChatInstanceId;
 pub use message::{ChatImage, ChatMessage, ChatRole, ChatToolCall};
 pub use models::{AgentProvider, ModelEntry};
 
@@ -126,38 +124,13 @@ pub enum LaunchRoute {
     Auto,
     /// Skip the design-agent loop; run the orchestrator pipeline.
     Orchestrator,
-    /// Edit the SELECTED boards in place through the modify route.
-    ///
-    /// Studio Home's one-click start pins this after it loads a template
-    /// as the instant draft: the refine brief quotes the example, whose
-    /// wording ("做一份 5 页 PPT") reads to every keyword classifier as a
-    /// NEW design — which would draw a second deck beside the draft instead
-    /// of editing it. The route decides the intent, not the wording.
-    Refine,
-    /// Generate this many distinct design directions side by side.
-    ///
-    /// Studio Home's 3-directions toggle pins this: the orchestrator
-    /// pipeline runs once per direction, concurrently, each pinned to a
-    /// different style guide, and the results land next to each other.
-    /// Like [`Self::Orchestrator`] it is a whole-design request by
-    /// construction.
-    Variants(u8),
 }
 
 impl LaunchRoute {
     /// True when this route must skip the design-agent loop even when
     /// the loop gate would otherwise say yes.
     pub fn bypasses_design_agent_loop(self) -> bool {
-        matches!(self, Self::Orchestrator | Self::Variants(_))
-    }
-
-    /// The direction count a variants route asks for (clamped), `None`
-    /// for every other route.
-    pub fn variant_count(self) -> Option<u8> {
-        match self {
-            Self::Variants(count) => Some(crate::clamp_variant_count(count)),
-            _ => None,
-        }
+        matches!(self, Self::Orchestrator)
     }
 
     /// True when the route itself establishes that the turn is a design
@@ -173,13 +146,7 @@ impl LaunchRoute {
     /// 2026-09-13: a 5-page PPT brief produced one empty starter frame and
     /// a collapsed thinking block).
     pub fn implies_design_intent(self) -> bool {
-        matches!(self, Self::Orchestrator | Self::Variants(_))
-    }
-
-    /// True when the turn must edit the selected boards in place and
-    /// never fall through to a new-design or chat route.
-    pub fn forces_in_place_refine(self) -> bool {
-        matches!(self, Self::Refine)
+        matches!(self, Self::Orchestrator)
     }
 }
 
@@ -187,10 +154,6 @@ impl LaunchRoute {
 /// (messages, input draft, focused flag, panel anchor, model catalog).
 #[derive(Debug, Clone)]
 pub struct ChatState {
-    /// Runtime identity for a conversation. Hosts bind asynchronous results to
-    /// this value instead of a tab index that can be reused after closing a tab.
-    /// It is never persisted; snapshots retain the identity through `Clone`.
-    pub runtime_instance: ChatInstanceId,
     pub messages: Vec<ChatMessage>,
     /// Short label shown in the floating chat panel header.
     pub title: String,
@@ -335,7 +298,6 @@ fn alloc_image_id() -> u64 {
 impl Default for ChatState {
     fn default() -> Self {
         Self {
-            runtime_instance: ChatInstanceId::default(),
             messages: Vec::new(),
             title: DEFAULT_CHAT_TITLE.to_string(),
             input: TextInputState::default(),

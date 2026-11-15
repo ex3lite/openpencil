@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Mobile Food App".into(),
@@ -18,7 +17,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 

@@ -8,7 +8,7 @@ use crate::agent_settings_builtin_presets::{builtin_agent_preset, BuiltinAgentPr
 fn default_settings_are_quiescent() {
     let s = AgentSettings::default();
     assert_eq!(s.tab, AgentSettingsTab::Agents);
-    assert_eq!(s.connected, [false; 8]);
+    assert_eq!(s.connected, [false; 7]);
     assert!(s.builtin_agents.is_empty());
     assert!(s.builtin_agent_draft.is_none());
     assert!(s.acp_agent_draft.is_none());
@@ -52,7 +52,7 @@ fn tab_and_cli_arrays_cover_all_variants() {
 /// stable — see `chat::models::AgentProvider::ALL`.
 #[test]
 fn agent_provider_display_is_a_permutation_of_all_with_dsh_third() {
-    assert_eq!(AgentProvider::ALL.len(), 8);
+    assert_eq!(AgentProvider::ALL.len(), 7);
     assert_eq!(
         AgentProvider::ALL,
         [
@@ -63,7 +63,6 @@ fn agent_provider_display_is_a_permutation_of_all_with_dsh_third() {
             AgentProvider::Antigravity,
             AgentProvider::GrokBuild,
             AgentProvider::DeepSeekHarness,
-            AgentProvider::Kimi,
         ],
         "ALL is append-only: existing persisted indices must never shift"
     );
@@ -80,15 +79,13 @@ fn agent_provider_display_is_a_permutation_of_all_with_dsh_third() {
             "ALL entry {provider:?} is missing from DISPLAY"
         );
     }
-    // DeepSeek Harness renders right after Codex, then Kimi Code, both
-    // before OpenCode.
+    // DeepSeek Harness renders right after Codex, before OpenCode.
     assert_eq!(
-        AgentProvider::DISPLAY[..5],
+        AgentProvider::DISPLAY[..4],
         [
             AgentProvider::ClaudeCode,
             AgentProvider::CodexCli,
             AgentProvider::DeepSeekHarness,
-            AgentProvider::Kimi,
             AgentProvider::OpenCode,
         ]
     );
@@ -96,10 +93,8 @@ fn agent_provider_display_is_a_permutation_of_all_with_dsh_third() {
     for provider in AgentProvider::DISPLAY {
         assert_eq!(AgentProvider::ALL[provider.index()], provider);
     }
-    // Append-only invariant: DeepSeek Harness is the 7th slot and Kimi Code
-    // the 8th (last), so persisted flags for earlier providers keep their
-    // meaning.
-    assert_eq!(AgentProvider::Kimi.index(), 7);
+    // Append-only invariant: DeepSeek Harness is the 7th (last) slot, so
+    // persisted flags for the previous six providers keep their meaning.
     assert_eq!(AgentProvider::DeepSeekHarness.index(), 6);
     assert_eq!(AgentProvider::GrokBuild.index(), 5);
 }
@@ -340,62 +335,4 @@ fn add_acp_agent_assigns_id_and_defaults_to_local_config() {
     assert!(s.acp_agents[0].url.is_none());
     assert!(s.acp_agents[0].enabled);
     assert!(!s.acp_agents[0].connected);
-}
-
-#[test]
-fn image_gen_toggle_defaults_off() {
-    let s = AgentSettings::default();
-    assert!(!s.image_gen_enabled, "the toggle must default to off");
-    assert!(!s.image_gen_active());
-}
-
-#[test]
-fn image_gen_active_is_the_full_truth_table() {
-    fn settings(enabled: bool, configured: bool) -> AgentSettings {
-        let mut s = AgentSettings {
-            image_gen_enabled: enabled,
-            ..AgentSettings::default()
-        };
-        if configured {
-            s.add_image_gen_profile();
-            s.image_gen_profiles[0].api_key = "sk-live".into();
-        }
-        s
-    }
-    // (enabled, available) → active
-    assert!(settings(true, true).image_gen_active());
-    assert!(!settings(true, false).image_gen_active());
-    assert!(!settings(false, true).image_gen_active());
-    assert!(!settings(false, false).image_gen_active());
-}
-
-#[test]
-fn image_gen_available_mirrors_image_generation_configured() {
-    let mut s = AgentSettings::default();
-    assert!(!s.image_gen_available());
-    s.add_image_gen_profile();
-    // A profile without an API key is not a usable configuration.
-    assert!(!s.image_gen_available());
-    s.image_gen_profiles[0].api_key = "sk-live".into();
-    assert!(s.image_gen_available());
-    assert_eq!(
-        s.image_gen_available(),
-        s.image_generation_configured(),
-        "image_gen_available must stay the configured predicate"
-    );
-}
-
-#[test]
-fn workbench_profiles_need_base_url_to_count_as_configured() {
-    let mut s = AgentSettings::default();
-    s.add_image_gen_profile();
-    s.image_gen_profiles[0].provider = ImageGenProvider::Workbench;
-    s.image_gen_profiles[0].api_key = "wb-key".into();
-    s.image_gen_profiles[0].base_url = None;
-    assert!(
-        !s.image_generation_configured(),
-        "a Workbench profile without an endpoint must not count as configured"
-    );
-    s.image_gen_profiles[0].base_url = Some("http://10.0.0.9".into());
-    assert!(s.image_generation_configured());
 }

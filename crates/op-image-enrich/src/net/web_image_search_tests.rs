@@ -45,11 +45,6 @@ fn zero_result_retry_keeps_the_core_product_phrase() {
         "the retry must keep the garment subject instead of wasting a slot on staging prose"
     );
     assert_eq!(
-        two_keyword_retry("skincare cream texture closeup"),
-        Some("skincare cream texture".to_string()),
-        "camera words go before the domain word that disambiguates the subject"
-    );
-    assert_eq!(
         two_keyword_retry("sculptural arc table lamp terracotta"),
         Some("table lamp terracotta".to_string()),
         "the retry must keep a trailing product subject instead of truncating it"
@@ -305,7 +300,6 @@ fn first_thumbnail_materializer_stops_after_first_success() {
     let hits = ["first", "second", "third"]
         .into_iter()
         .map(|id| RawHit {
-            original: None,
             id: id.to_string(),
             thumb_url: id.to_string(),
             attribution: format!("by {id}"),
@@ -339,7 +333,6 @@ fn multi_thumbnail_materializer_caps_public_results_at_five() {
     };
     let hits = (0..SEARCH_CANDIDATE_COUNT)
         .map(|index| RawHit {
-            original: None,
             id: index.to_string(),
             thumb_url: index.to_string(),
             attribution: String::new(),

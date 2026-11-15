@@ -17,9 +17,6 @@ static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 fn test_client() -> reqwest::Client {
     reqwest::Client::builder()
         .use_rustls_tls()
-        // Health/cancellation fixtures must reach their local listener,
-        // independent of whichever proxy the test machine has configured.
-        .no_proxy()
         .build()
         .expect("test HTTP client")
 }

@@ -39,27 +39,6 @@ fn text(id: &str, content: &str) -> Value {
 }
 
 #[test]
-fn vertical_scroll_shell_does_not_add_a_second_content_rail() {
-    let mut sink = insert(json!({"type":"frame","id":"root","width":390,"height":844,
-    "layout":"vertical","children":[
-        {"type":"frame","id":"status","role":"status-bar","height":44},
-        {"type":"frame","id":"scroll","role":"scroll-area","layout":"vertical",
-         "width":"fill_container","height":"fill_container","clipContent":true,"children":[
-            {"type":"frame","id":"section","layout":"vertical","width":"fill_container",
-             "padding":[0,24],"children":[text("title","今日推荐")]}
-         ]},
-        {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
-    ]}));
-    let before = node_json(&sink, "scroll");
-    repair_mobile_content_rails_for_all_roots(&mut sink);
-    assert_eq!(
-        node_json(&sink, "scroll"),
-        before,
-        "the viewport transports already-inset sections; it does not own another gutter"
-    );
-}
-
-#[test]
 fn mixed_mobile_sections_converge_on_existing_content_rail() {
     let mut sink = insert(json!({
         "type":"frame","id":"root","width":375,"height":1285,"layout":"vertical",
@@ -464,29 +443,6 @@ fn full_bleed_role_and_media_overlay_wrapper_are_untouched() {
 }
 
 #[test]
-fn map_template_conversion_keeps_the_same_full_bleed_rail_contract_as_its_image_slot() {
-    for map in [
-        json!({"type":"image","id":"map","width":375,"height":734,"src":"","imageSearchQuery":"map-template:running"}),
-        json!({"type":"frame","id":"map","role":"map","explain":"map-template:running",
-            "width":375,"height":734,"layout":"none","children":[]}),
-    ] {
-        let mut sink = insert(json!({"type":"frame","id":"root","width":375,"height":812,
-            "layout":"vertical","children":[
-                {"type":"frame","id":"viewport","width":"fill_container","height":734,
-                 "layout":"none","explain":"op-navigation-viewport","padding":0,"children":[text("directions","前方200米右转"),map]},
-                {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Details")]}]}));
-        repair_mobile_content_rails_for_all_roots(&mut sink);
-        assert_eq!(node_json(&sink, "viewport")["padding"], 0.0);
-        assert_eq!(node_json(&sink, "map")["width"], 375.0);
-        assert_eq!(node_json(&sink, "body")["padding"], json!([0.0, 24.0]));
-        assert!(
-            op_design_lint::detect_edge_section_padding(&sink.state.active_children()[0])
-                .is_empty()
-        );
-    }
-}
-
-#[test]
 fn edge_spanning_rounded_card_gets_a_transparent_rail_wrapper() {
     let mut sink = insert(json!({
         "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
@@ -612,9 +568,3 @@ fn repair_is_idempotent_and_preserves_asymmetric_authored_padding() {
 
 #[path = "mobile_content_rail_shell_tests.rs"]
 mod shell_tests;
-
-#[path = "mobile_content_rail_carousel_tests.rs"]
-mod carousel_tests;
-
-#[path = "mobile_content_rail_action_tests.rs"]
-mod action_tests;

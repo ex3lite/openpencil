@@ -47,10 +47,7 @@ pub fn pick_save_as_path(state: &EditorState) -> Option<PathBuf> {
             "dialog.pickerSaveTitle",
         ))
         .add_filter(op_editor_ui::PRODUCT_NAME, DOCUMENT_EXTENSIONS)
-        .set_file_name(format!(
-            "{}.op",
-            op_editor_core::export_name::document_export_stem(state)
-        ))
+        .set_file_name("untitled.op")
         .save_file()
 }
 
@@ -127,14 +124,7 @@ pub(crate) fn fit_loaded_document(
     window: Option<&winit::window::Window>,
 ) {
     let (vw, vh) = viewport_size_for_window(window);
-    if host.workspace_visible() {
-        host.apply_workspace_fit(vw, vh);
-    } else {
-        host.fit_content_to_viewport(vw, vh);
-    }
-    // A shared document (one carrying a share recipe) opens in the Studio
-    // workspace with its Make-one-like-this banner; any other stays put.
-    host.adopt_shared_recipe_view(vw, vh);
+    host.fit_content_to_viewport(vw, vh);
     host.mark_editor_state_dirty();
 }
 
@@ -209,10 +199,6 @@ fn load_into_host(
     ) {
         return Ok(None);
     }
-    // Home, its recent list, and an ordinary workspace all open into the
-    // same simple view. A hidden workspace can belong to a professional
-    // editor, so its existence (or the startup preference) is not the mode.
-    let open_in_normal_mode = host.home_visible() || host.workspace_visible();
     let loaded_source_state = crate::figma_import_session::capture_output_state(path)?;
     let locale = host.editor_state().editor_ui.locale;
     let loaded = load_editor_state_with_report(path, locale);
@@ -236,28 +222,11 @@ fn load_into_host(
     if !host.replace_editor_state(state) {
         return Ok(None);
     }
-    if open_in_normal_mode {
-        open_loaded_normal_workspace(host);
-    }
     host.editor_state_mut().mark_saved_revision();
     host.force_rotate_layer_panel_owner();
     host.mark_editor_state_dirty();
     host.arm_missing_fonts_detection();
     Ok(Some(bound_path))
-}
-
-/// Reopen existing work without inventing a generation or carrying the
-/// previous document's brief, task family, selection, or running state.
-fn open_loaded_normal_workspace(host: &mut WidgetHostNative) {
-    let now_ms = host.now_ms();
-    let state = host.editor_state_mut();
-    op_editor_core::work_identity::open_for_reading(state, now_ms);
-    let ui = &mut state.editor_ui;
-    ui.entry_surface = op_editor_core::EntrySurface::Home;
-    ui.workspace.view = op_editor_core::WorkspaceView::default_for(ui.workspace.family);
-    ui.workspace.previous_tool = Some(state.tool);
-    ui.enter_chat_tab();
-    state.tool = op_editor_core::Tool::Hand;
 }
 
 /// Cmd+O — pop the Open dialog and replace the current document.
@@ -266,9 +235,6 @@ pub fn handle_open(
     current_path: &mut Option<PathBuf>,
     window: Option<&winit::window::Window>,
 ) -> bool {
-    if !crate::persistence_replace_guard::confirm_replace(host, current_path, window) {
-        return false;
-    }
     let path = match rfd::FileDialog::new()
         .set_title(op_i18n::translate(
             host.editor_state().editor_ui.locale,
@@ -358,11 +324,45 @@ fn export_editor_state_to_path(
     state: &EditorState,
     path: &std::path::Path,
 ) -> Result<(), op_host_services::export::ExportError> {
-    op_host_services::export::export_editor_state_to_path(
-        state,
-        &op_host_services::export::EditorExportScope::Configured,
-        path,
-    )
+    use op_editor_core::editor_ui_state::ExportFormat as Fmt;
+    use op_editor_core::scene_template_catalog::TemplateScene;
+
+    let fmt = state.editor_ui.export_format;
+    let scale = state.editor_ui.export_scale;
+    // A single selected node scopes raster and SVG exports to that
+    // subtree. PDF remains page-level.
+    let single_node = if state.selection_count() == 1 && state.selection.anchor.is_real() {
+        Some(state.selection.anchor.as_str())
+    } else {
+        None
+    };
+    if fmt == Fmt::Pdf {
+        // A deck's pages are its boards, not its canvas pages: the
+        // page-level exporter would put every slide plus the gaps
+        // between them on one sheet.
+        if state.editor_ui.scenario == Some(TemplateScene::Slides) {
+            return op_host_services::export_pdf::export_deck_pdf(state, path);
+        }
+        // PDF is intentionally multi-page; keep the full builder for it.
+        let scene = op_pen_loader::editor_state_to_layout_scene(state);
+        return op_host_services::export_pdf::export_pdf(&scene, path);
+    }
+
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    let raster = |rf: op_host_services::export::RasterFormat| match single_node {
+        Some(id) => op_host_services::export::export_node_raster(&scene, id, path, rf, scale),
+        None => op_host_services::export::export_raster(&scene, path, rf, scale),
+    };
+    match fmt {
+        Fmt::Png => raster(op_host_services::export::RasterFormat::Png),
+        Fmt::Jpeg => raster(op_host_services::export::RasterFormat::Jpeg),
+        Fmt::Webp => raster(op_host_services::export::RasterFormat::Webp),
+        Fmt::Svg => match single_node {
+            Some(id) => op_host_services::export::export_node_svg(&scene, id, path),
+            None => op_host_services::export::export_svg(&scene, path),
+        },
+        Fmt::Pdf => unreachable!("PDF returned before active-page scene construction"),
+    }
 }
 
 /// Route a `FileAction` raised by the file-menu dispatcher to the
@@ -378,9 +378,6 @@ pub fn run_action(
     use op_editor_core::editor_ui_state::FileAction;
     match action {
         FileAction::New => {
-            if !crate::persistence_replace_guard::confirm_replace(host, current_path, window) {
-                return ActionOutcome::Noop;
-            }
             if !host.gate_collaboration_action(
                 op_editor_core::CollabGateAction::ReplaceDocument,
                 op_editor_core::CollabEditSource::User,
@@ -487,21 +484,10 @@ pub fn run_action(
             crate::persistence_export_pptx::handle_export_pptx(host);
             ActionOutcome::Noop
         }
-        FileAction::Share => {
-            host.editor_state_mut()
-                .editor_ui
-                .image_panel
-                .close_popovers();
-            crate::persistence_share::handle_share(host, current_path.as_deref());
-            ActionOutcome::Noop
-        }
         FileAction::OpenRecent(i) => {
             let Some(entry) = host.editor_state().editor_ui.recent_files.get(i).cloned() else {
                 return ActionOutcome::Noop;
             };
-            if !crate::persistence_replace_guard::confirm_replace(host, current_path, window) {
-                return ActionOutcome::Noop;
-            }
             let path = std::path::PathBuf::from(&entry.path);
             match load_into_host(host, &path) {
                 Ok(Some(bound_path)) => {
@@ -685,7 +671,3 @@ pub fn show_error_dialog_public(
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "persistence_open_mode_tests.rs"]
-mod open_mode_tests;

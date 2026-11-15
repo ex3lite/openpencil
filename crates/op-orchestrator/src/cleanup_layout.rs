@@ -39,10 +39,7 @@ fn container_content_height(node: &PenNode) -> Option<f64> {
     let layout = container_props(node).and_then(|props| props.layout.as_ref());
 
     match layout {
-        // An ABSENT layout is a Row in jian (`resolve_flex_direction`'s
-        // default), so it measures like one. Summing it as a stack grew a
-        // layout-less three-column board's page to the stacked height.
-        Some(LayoutMode::Horizontal) | None => children
+        Some(LayoutMode::Horizontal) => children
             .iter()
             .filter_map(intrinsic_height)
             .reduce(f64::max)
@@ -56,9 +53,7 @@ fn container_content_height(node: &PenNode) -> Option<f64> {
             .filter_map(intrinsic_height)
             .reduce(f64::max)
             .map(|height| height + padding_y),
-        Some(LayoutMode::Vertical) => {
-            stacked_children_height(Some(children.as_slice()), gap, padding_y)
-        }
+        _ => stacked_children_height(Some(children.as_slice()), gap, padding_y),
     }
 }
 

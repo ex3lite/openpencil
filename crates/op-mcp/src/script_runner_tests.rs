@@ -3,85 +3,6 @@
 use super::*;
 
 #[test]
-fn undefined_insertion_parent_rejects_the_whole_script_in_every_mode() {
-    for run in [
-        run_script_to_program,
-        run_generation_script_to_program,
-        run_modification_script_to_program,
-    ] {
-        let prefix = r#"const row = I(null, {type:"frame", name:"ETA"});
-I(row, {type:"text", content:"12", fontSize:34});
-const unit = {type:"text", content:"minutes"};"#;
-        for tail in ["I(row.lastChild, unit)", "K('button', row.lastChild)"] {
-            for suffix in ["", ";", "; I(row, {type:"] {
-                let error = run(&format!("{prefix}\n{tail}{suffix}")).unwrap_err();
-                assert!(
-                    error.to_string().contains("OP_SCRIPT_PARENT_UNDEFINED"),
-                    "{error}"
-                );
-            }
-        }
-        let program = run(&format!(
-            "{prefix}\nconst group = I(row, {{type:'frame'}}); I(group, unit);"
-        ))
-        .unwrap();
-        assert!(
-            program.lines().last().unwrap().starts_with("b3=I(b2, "),
-            "{program}"
-        );
-    }
-}
-
-#[test]
-fn syntax_repairs_must_not_hide_an_undefined_insertion_parent() {
-    for source in [
-        "const row=I(null,{type:'frame',align.items:'center'}); const unit={type:'text',content:'minutes'}; I(row.lastChild, unit)",
-        "const row=I(null,{type:'frame'}); const unit={type:'text',content:'min\nutes'}; I(row.lastChild, unit)",
-        "const row=I(null,{type:'frame'}); I(row.lastChild,{type:'text',content:'minutes')",
-    ] {
-        let error = run_generation_script_to_program(source).unwrap_err();
-        assert!(error.to_string().contains("OP_SCRIPT_PARENT_UNDEFINED"), "{error}");
-    }
-}
-
-#[test]
-fn generation_defers_only_foreground_repairs_until_structural_ancestry_is_known() {
-    let script = r##"
-        const row = I(null,{type:"frame",layout:"center",fill:[{type:"solid",color:"#FFFFFF"}]});
-        I(row,{type:"text",name:"Button Label",content:"订阅",fill:[{type:"solid",color:"#FFFFFF"}]});
-        I(row,{type:"icon_font",iconFontName:"magnifying-glass",fill:[{type:"solid",color:"#EEEEEE"}]});
-    "##;
-    let generated =
-        crate::parse_program_objects(&run_generation_script_to_program(script).unwrap());
-    assert_eq!(generated[0].1["layout"], "vertical");
-    assert_eq!(generated[1].1["fill"][0]["color"], "#FFFFFF");
-    assert_eq!(generated[1].1["fontFamily"], "Inter");
-    assert_eq!(generated[1].1["lineHeight"], 1.5);
-    assert_eq!(generated[2].1["iconFontName"], "search");
-    assert_eq!(generated[2].1["fill"][0]["color"], "#EEEEEE");
-    let direct = crate::parse_program_objects(&run_script_to_program(script).unwrap());
-    assert_eq!(direct[1].1["fill"][0]["color"], "#17191D");
-    assert_eq!(direct[2].1["fill"][0]["color"], "#17191D");
-    let truncated = format!("{script}\nI(row, {{type:");
-    assert_eq!(
-        crate::parse_program_objects(&run_generation_script_to_program(&truncated).unwrap()),
-        generated,
-        "syntax recovery must preserve the generation mode"
-    );
-}
-
-#[test]
-fn modification_recording_preserves_authored_text_metrics_without_generation_defaults() {
-    let source =
-        r#"I(null,{id:"title",type:"text",content:"咖啡",height:56,fontSize:28,lineHeight:1.1});"#;
-    let program = run_modification_script_to_program(source).unwrap();
-    let nodes = crate::parse_program_objects(&program);
-    assert_eq!(nodes[0].1["height"], 56);
-    assert_eq!(nodes[0].1["lineHeight"], 1.1);
-    assert!(nodes[0].1.get("fontFamily").is_none());
-}
-
-#[test]
 fn loop_records_one_line_per_iteration() {
     let program = run_script_to_program(
         r#"const row = I(null, {type: "frame", name: "Row"});
@@ -251,37 +172,6 @@ I(dark, {type: "icon_font", name: "Faint icon", fill: [{type: "solid", color: "#
     assert!(lines[3].contains(r##""color":"#FAF8F3""##), "{program}");
     assert!(!lines[1].contains("#F5F5F5"), "{program}");
     assert!(!lines[3].contains("#303238"), "{program}");
-}
-
-#[test]
-fn a_complete_offset_copy_keeps_its_ink_in_both_insert_orders() {
-    for reading_first in [true, false] {
-        let reading = r##"I(w,{type:"text",name:"ink",content:"咖啡小聚",x:0,y:0,width:920,fontSize:170,fontWeight:700,fill:[{type:"solid",color:"#1E1A16"}]});"##;
-        let decoration = r##"I(w,{type:"text",name:"red",content:"咖啡小聚",x:3,y:3,width:920,fontSize:170,fontWeight:700,fill:[{type:"solid",color:"#B74A37"}]});"##;
-        let prefix = r##"const p=I(null,{type:"frame",fill:[{type:"solid",color:"#F1EDE1"}]});const w=I(p,{type:"frame",layout:"none",width:920,height:340});"##;
-        let script = format!(
-            "{prefix}{}{}",
-            if reading_first { reading } else { decoration },
-            if reading_first { decoration } else { reading }
-        );
-        let program = run_script_to_program(&script).unwrap();
-        assert!(program.contains("#B74A37"), "{program}");
-        assert!(
-            program.find(r#""name":"ink""#).unwrap() < program.find(r#""name":"red""#).unwrap(),
-            "{program}"
-        );
-    }
-}
-
-#[test]
-fn independent_copy_or_explicit_updates_do_not_claim_the_recorded_effect() {
-    let script = r##"const p=I(null,{type:"frame",fill:[{type:"solid",color:"#F1EDE1"}]});const w=I(p,{type:"frame",layout:"none",width:920,height:340});I(w,{type:"text",content:"咖啡小聚",x:0,y:0,width:920,fontSize:170,fill:[{type:"solid",color:"#1E1A16"}]});I(w,{type:"text",content:"独立文案",x:3,y:3,width:920,fontSize:170,fill:[{type:"solid",color:"#B74A37"}]});"##;
-    assert!(!run_script_to_program(script).unwrap().contains("#B74A37"));
-    let with_update =
-        script.replace("独立文案", "咖啡小聚") + r#"U("existing",{name:"authorized update"});"#;
-    assert!(!run_script_to_program(&with_update)
-        .unwrap()
-        .contains("#B74A37"));
 }
 
 #[test]
@@ -681,7 +571,7 @@ fn balances_glm_missing_outer_brace() {
 
     assert!(repaired.ends_with(r##""#EAD8C8"}]}});"##));
     assert_eq!(repaired.matches('{').count(), repaired.matches('}').count());
-    let program = eval_to_program(&repaired, None).expect("balanced GLM script evals");
+    let program = eval_to_program(&repaired).expect("balanced GLM script evals");
     assert!(program.contains(r#""name":"Profile Button""#));
 }
 

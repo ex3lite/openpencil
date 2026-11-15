@@ -21,7 +21,7 @@ use crate::types::{OrchestratorError, Progress};
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const PLAN_JSON: &str = r##"{
-  "sharedContext": {}, "rootFrame": { "id": "root", "name": "Page", "width": 1200, "height": 800,
+  "rootFrame": { "id": "root", "name": "Page", "width": 1200, "height": 800,
                  "layout": "vertical", "gap": 0,
                  "fill": [{ "type": "solid", "color": "#FFFFFF" }] },
   "subtasks": [
@@ -42,7 +42,7 @@ fn node_json(prefix: &str) -> String {
 
 /// Multi-screen plan — triggers the concurrent path when concurrency=2.
 const MULTI_SCREEN_PLAN_JSON: &str = r##"{
-  "sharedContext": {}, "rootFrame": { "id": "root", "name": "App", "width": 390, "height": 844,
+  "rootFrame": { "id": "root", "name": "App", "width": 390, "height": 844,
                  "layout": "vertical", "gap": 0,
                  "fill": [{ "type": "solid", "color": "#FFFFFF" }] },
   "subtasks": [
@@ -63,7 +63,7 @@ fn node_json_mobile(prefix: &str) -> String {
 
 /// Dashboard plan — triggers the dashboard path.
 const DASHBOARD_PLAN_JSON: &str = r##"{
-  "sharedContext": {}, "rootFrame": {
+  "rootFrame": {
     "id": "dash-root",
     "name": "Analytics Dashboard",
     "width": 1440,
@@ -431,7 +431,6 @@ fn concurrent_validation_enabled_emits_validation_done() {
         ScriptResponse::Text(MULTI_SCREEN_PLAN_JSON.into()),
         ScriptResponse::Text(node_json_mobile("login")),
         ScriptResponse::Text(node_json_mobile("home")),
-        ScriptResponse::Text(node_json_mobile("bottom-nav")),
     ]);
     let mut sink = VecDocSink::new();
     let mut events: Vec<Progress> = Vec::new();
@@ -461,7 +460,7 @@ fn concurrent_validation_enabled_emits_validation_done() {
     ))
     .expect("concurrent validation run ok");
 
-    assert_eq!(summary.subtasks.len(), 3);
+    assert_eq!(summary.subtasks.len(), 2);
 
     let has_cleanup = events.iter().any(|e| matches!(e, Progress::CleanupDone));
     let has_validation_done = events

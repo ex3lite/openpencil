@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use op_editor_core::agent_settings::ImageGenProfile;
 use op_editor_core::{walkers, EditorState, NodeId};
@@ -26,21 +25,12 @@ pub(crate) use op_host_services::web_image_search::{simplify_search_query, sniff
 // re-exported so every existing importer and test stays stable.
 use op_ai::chat_provider::ChatProvider;
 use op_host_services::image_relevance_judge::{ChatVisionJudge, OpenAiCompatVisionJudge};
-use op_host_services::web_image_generate::ImageGenerateError;
 use op_image_enrich::net::{ImageRelevanceJudge, NoJudge};
 pub(crate) use op_image_enrich::{
-    collaboration_image_result_gate, collect_targets, collect_targets_with_scene,
+    apply_result, collaboration_image_result_gate, collect_targets, collect_targets_with_scene,
     image_request_mode, is_image_fallback, ImageAspectRatio, ImageRequestMode, ImageSearchTarget,
     SEARCH_FAILED_PLACEHOLDER_SRC,
 };
-
-pub(crate) fn apply_result(state: &mut EditorState, node_id: &NodeId, url: &str) -> bool {
-    let changed = op_image_enrich::apply_result(state, node_id, url);
-    if changed {
-        op_orchestrator::repair_photo_caption_for_image(state, node_id);
-    }
-    changed
-}
 
 /// Desktop wrapper over the shared credential pair — adds the
 /// `EditorState` snapshot constructor the daemon side has no use for.
@@ -71,44 +61,24 @@ impl OpenverseCredentials {
     }
 }
 
-/// What a finished job carries back to `poll_into`. A search resolves to
-/// an optional url (`None` = the dashed placeholder). A generation carries
-/// its typed error so the fallback policy can classify it.
-#[derive(Debug, PartialEq)]
-enum JobOutcome {
-    Search(Option<String>),
-    Generate(Result<String, ImageGenerateError>),
-}
-
 struct ImageSearchJob {
     node_id: NodeId,
-    /// The original CLI run deadline, retained through generation fallback.
-    deadline: Option<Instant>,
     /// Exact node intent at enqueue time. Production jobs always set this;
     /// hand-built unit jobs may omit it when testing unrelated bookkeeping.
     intent: Option<String>,
-    /// Stock jobs retain their view separately from a generation fallback's
-    /// authored intent. Outer None means not a stock job; inner None means
-    /// unknown geometry, which must not match a later known crop.
-    stock_view: Option<Option<op_image_enrich::ImageJudgeView>>,
-    /// The slot's full target, kept by GENERATION jobs only: a degradable
-    /// failure re-runs the slot as a stock search and needs the query.
-    fallback_target: Option<ImageSearchTarget>,
-    rx: Receiver<JobOutcome>,
+    rx: Receiver<Option<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SearchIntentKey {
     query: String,
     aspect_ratio: Option<ImageAspectRatio>,
-    prompt: Option<String>,
-    judge_view: Option<String>,
 }
 
 enum SearchMemoEntry {
     Pending {
         request_id: u64,
-        waiters: Vec<mpsc::Sender<JobOutcome>>,
+        waiters: Vec<mpsc::Sender<Option<String>>>,
     },
     Ready(String),
 }
@@ -154,9 +124,6 @@ pub(crate) fn resolve_judge(
 
 #[derive(Default)]
 pub(crate) struct ImageSearchSession {
-    /// CLI runs share one deadline across every page, retry and fallback.
-    /// Interactive desktop sessions leave this unset.
-    deadline: Option<Instant>,
     in_flight: HashSet<String>,
     completed: HashSet<String>,
     jobs: Vec<ImageSearchJob>,
@@ -217,24 +184,6 @@ pub(crate) struct ImageSearchSession {
     /// only after the window opens. Survives `reset()`: it is process-level
     /// configuration, not document state.
     judge: Option<(Arc<dyn ImageRelevanceJudge>, JudgeChoice)>,
-    /// Slots that already degraded from a failed generation to a search.
-    /// The fallback is once per slot by contract — a search that fails too
-    /// lands the placeholder; the session never returns to the generator.
-    fell_back: HashSet<String>,
-    /// Session summary counters (generated / searched / fell_back).
-    stats: ImageSessionStats,
-    /// Diagnostic accounting for logical slots, independent of network work.
-    progress: progress::ImageBatchProgress,
-    #[cfg(test)]
-    progress_events: Vec<progress::ProgressEvent>,
-}
-
-/// Counters for the session summary, logged as one line as it evolves.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ImageSessionStats {
-    pub(crate) generated: u32,
-    pub(crate) searched: u32,
-    pub(crate) fell_back: u32,
 }
 
 // Memo key for the authored stock-search intent — see
@@ -244,10 +193,6 @@ pub(crate) struct ImageSessionStats {
 impl ImageSearchSession {
     pub(crate) fn new() -> Self {
         Self::default()
-    }
-
-    pub(crate) fn set_deadline(&mut self, deadline: Instant) {
-        self.deadline = Some(deadline);
     }
 
     /// Full teardown of session state. MUST be the call used by every
@@ -263,16 +208,9 @@ impl ImageSearchSession {
     /// node id, not by document identity). Clearing `jobs` too drops any
     /// still-pending job outright so it can never reach `poll_into` again.
     pub(crate) fn reset(&mut self) {
-        if let Some(event) = self.progress.reset() {
-            self.log_progress(event);
-        }
         self.in_flight.clear();
         self.completed.clear();
         self.jobs.clear();
-        self.deadline = None;
-        // Node ids restart with the replacement document, so per-slot
-        // fallback bookkeeping must not survive it either.
-        self.fell_back.clear();
         self.invalidate_scan_gate();
         // Replace the generations, do not merely clear them. Detached network
         // threads still own the old Arcs and may finish after reset; writing to
@@ -283,48 +221,6 @@ impl ImageSearchSession {
 
     pub(crate) fn is_pending(&self) -> bool {
         !self.jobs.is_empty()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn progress_snapshot(&self) -> progress::ProgressSnapshot {
-        self.progress.snapshot()
-    }
-
-    fn log_progress(&mut self, event: progress::ProgressEvent) {
-        use std::io::Write;
-        let _ = writeln!(
-            std::io::stderr().lock(),
-            "image-search progress: pid={} {event}",
-            std::process::id()
-        );
-        #[cfg(test)]
-        self.progress_events.push(event);
-    }
-
-    fn finish_progress(&mut self, node_id: &NodeId, outcome: progress::TerminalOutcome) {
-        if let Some(event) = self.progress.finish(node_id.as_str(), outcome) {
-            self.log_progress(event);
-        }
-    }
-
-    /// The session summary counters (generated / searched / fell_back).
-    /// Production reads them through [`Self::log_stats`]; the accessor
-    /// exists for the test assertions.
-    #[cfg(test)]
-    pub(crate) fn stats(&self) -> ImageSessionStats {
-        self.stats
-    }
-
-    fn log_stats(&self) {
-        tracing::info!(
-            generated = self.stats.generated,
-            searched = self.stats.searched,
-            fell_back = self.stats.fell_back,
-            "image-enrich session: generated={} searched={} fell_back={}",
-            self.stats.generated,
-            self.stats.searched,
-            self.stats.fell_back
-        );
     }
 
     /// Whether the relevance judge has been resolved for this session.
@@ -444,29 +340,16 @@ impl ImageSearchSession {
         // heuristic slots remain Auto: configured generation first, otherwise
         // stock search. A generate request without a configured provider fails
         // visibly; it is never silently changed into a stock-photo request.
-        // The chat panel's 生图 toggle gates ONLY the Auto arm: an explicit
-        // Generate request ignores it (the model asked for generation), while
-        // Auto with the toggle off must search even when a profile exists.
         let gen_profile = crate::image_panel_host::active_image_gen_profile(state).cloned();
-        let auto_gen_active = state.editor_ui.agent_settings.image_gen_active();
         let credentials = OpenverseCredentials::from_state(state);
         for target in targets {
             let id = target.node_id.as_str().to_string();
-            let profile = intent::generation_profile_for_request(
-                target.mode,
-                gen_profile.as_ref(),
-                auto_gen_active,
-            );
-            let search_intent = intent_fingerprint(&target, profile);
             self.in_flight.insert(id);
-            let job = match (target.mode, profile) {
-                (ImageRequestMode::Generate | ImageRequestMode::Auto, Some(profile)) => {
-                    spawn_gen_job(target, profile.clone(), self.deadline)
-                }
-                (ImageRequestMode::Generate, None) => {
-                    spawn_unavailable_gen_job(target, self.deadline)
-                }
-                (ImageRequestMode::Search, _) | (ImageRequestMode::Auto, _) => {
+            let job = match (target.mode, &gen_profile) {
+                (ImageRequestMode::Generate, Some(profile))
+                | (ImageRequestMode::Auto, Some(profile)) => spawn_gen_job(target, profile.clone()),
+                (ImageRequestMode::Generate, None) => spawn_unavailable_gen_job(target),
+                (ImageRequestMode::Search, _) | (ImageRequestMode::Auto, None) => {
                     let request_id = self.next_search_request_id;
                     self.next_search_request_id = self.next_search_request_id.wrapping_add(1);
                     // A search is actually starting: if the app handler has
@@ -482,15 +365,11 @@ impl ImageSearchSession {
                         request_id,
                         judge,
                         judge_enabled,
-                        search_intent,
-                        self.deadline,
                     )
                 }
             };
-            self.progress.enqueue(job.node_id.as_str());
             self.jobs.push(job);
         }
-        self.log_progress(self.progress.enqueued_event());
         true
     }
 
@@ -522,86 +401,12 @@ impl ImageSearchSession {
         // at least one such job is actually ready, then reuse it for every
         // other completion drained by this poll. Pending-only frames stay at
         // zero target walks.
-        let mut current_intents: Option<HashMap<String, intent::ImageIntentSnapshot>> = None;
+        let mut current_intents: Option<HashMap<String, String>> = None;
         while i < self.jobs.len() {
             match self.jobs[i].rx.try_recv() {
-                Ok(outcome) => {
-                    // A DEGRADABLE generation failure (busy / timeout /
-                    // upstream / network — see `ImageGenerateError::is_degradable`)
-                    // converts this completion into a same-slot search job.
-                    // Config-missing slots never reach a generation, and a
-                    // non-degradable provider fault keeps the visible
-                    // failure path below, exactly like before.
-                    let can_fallback = matches!(
-                        &outcome,
-                        JobOutcome::Generate(Err(error)) if error.is_degradable()
-                    ) && self.jobs[i].fallback_target.is_some();
+                Ok(url) => {
                     let job = self.jobs.swap_remove(i);
                     let id = job.node_id.as_str().to_string();
-                    if can_fallback && !self.fell_back.contains(&id) {
-                        self.fell_back.insert(id.clone());
-                        self.stats.fell_back += 1;
-                        let JobOutcome::Generate(Err(error)) = &outcome else {
-                            unreachable!("can_fallback implies a generation error")
-                        };
-                        tracing::info!(
-                            node_id = %job.node_id,
-                            "image-gen: fell back to search ({error})"
-                        );
-                        // Keep the slot in flight and re-run it as a
-                        // search, carrying the GENERATION intent so the
-                        // stale-result guard below still recognises the
-                        // node's unchanged binding.
-                        self.in_flight.insert(id);
-                        self.last_scanned = None;
-                        let request_id = self.next_search_request_id;
-                        self.next_search_request_id = self.next_search_request_id.wrapping_add(1);
-                        self.ensure_judge(None, None);
-                        let (judge, judge_enabled) = self.judge_pair();
-                        let credentials = OpenverseCredentials::from_state(state);
-                        let target = job
-                            .fallback_target
-                            .expect("can_fallback implies a kept target");
-                        let fallback_job = spawn_job(
-                            target,
-                            credentials,
-                            Arc::clone(&self.used_urls),
-                            Arc::clone(&self.search_memo),
-                            request_id,
-                            judge,
-                            judge_enabled,
-                            job.intent.clone().unwrap_or_default(),
-                            job.deadline,
-                        );
-                        self.jobs.push(fallback_job);
-                        self.log_stats();
-                        // `swap_remove` moved a later job into slot `i` —
-                        // revisit it without advancing.
-                        continue;
-                    }
-                    let is_stock_result = matches!(outcome, JobOutcome::Search(_));
-                    let is_search_hit = matches!(outcome, JobOutcome::Search(Some(_)));
-                    let url = match outcome {
-                        JobOutcome::Search(url) => url,
-                        JobOutcome::Generate(Ok(url)) => {
-                            self.stats.generated += 1;
-                            Some(url)
-                        }
-                        JobOutcome::Generate(Err(error)) => {
-                            // A non-degradable failure (configuration) ends
-                            // here as a visible placeholder; say why, or the
-                            // only trace is an unexplained "failed" count.
-                            tracing::warn!(
-                                node_id = %job.node_id,
-                                "image-gen: failed without fallback ({error})"
-                            );
-                            None
-                        }
-                    };
-                    if is_search_hit {
-                        self.stats.searched += 1;
-                    }
-                    self.log_stats();
                     self.in_flight.remove(&id);
                     // `in_flight`/`completed` are mutated outside
                     // `enqueue_missing`, and a failed job updates them without
@@ -619,46 +424,25 @@ impl ImageSearchSession {
                     if let Err(reason) = collaboration_image_result_gate(state) {
                         state.editor_ui.collab.set_notice(reason.notice_kind(), 0);
                         changed = true;
-                        self.finish_progress(&job.node_id, progress::TerminalOutcome::Discarded);
                         continue;
                     }
-                    if (job.intent.is_some() || (is_stock_result && job.stock_view.is_some()))
-                        && current_intents.is_none()
-                    {
+                    if job.intent.is_some() && current_intents.is_none() {
                         #[cfg(test)]
                         {
                             self.stale_intent_scan_count += 1;
                         }
-                        current_intents = Some(current_intent_snapshot(state, scene));
+                        current_intents = Some(current_intent_fingerprints(state, scene));
                     }
                     if job.intent.as_ref().is_some_and(|expected| {
                         current_intents
                             .as_ref()
                             .and_then(|intents| intents.get(job.node_id.as_str()))
-                            .map(|current| &current.fingerprint)
                             != Some(expected)
                     }) {
                         tracing::info!(
                             node_id = %job.node_id,
                             "discarding stale image result because the node's image intent changed"
                         );
-                        self.finish_progress(&job.node_id, progress::TerminalOutcome::Discarded);
-                        continue;
-                    }
-                    if is_stock_result
-                        && job.stock_view.as_ref().is_some_and(|expected| {
-                            current_intents
-                                .as_ref()
-                                .and_then(|intents| intents.get(job.node_id.as_str()))
-                                .map(|current| &current.judge_view)
-                                != Some(expected)
-                        })
-                    {
-                        tracing::info!(
-                            node_id = %job.node_id,
-                            "discarding stale stock image because the slot's visible crop changed"
-                        );
-                        self.finish_progress(&job.node_id, progress::TerminalOutcome::Discarded);
                         continue;
                     }
                     // Ours: a failed search lands the theme-adaptive dashed
@@ -672,15 +456,8 @@ impl ImageSearchSession {
                         {
                             self.completed.insert(id);
                         }
-                        let outcome = if url == SEARCH_FAILED_PLACEHOLDER_SRC {
-                            progress::TerminalOutcome::Fallback
-                        } else {
-                            progress::TerminalOutcome::Applied
-                        };
-                        self.finish_progress(&job.node_id, outcome);
                     } else {
                         self.completed.insert(id);
-                        self.finish_progress(&job.node_id, progress::TerminalOutcome::Discarded);
                     }
                 }
                 Err(TryRecvError::Empty) => {
@@ -694,7 +471,6 @@ impl ImageSearchSession {
                     // Same invalidation as the Ok arm: a failed job mutated the
                     // session sets, so force one rescan.
                     self.last_scanned = None;
-                    self.finish_progress(&job.node_id, progress::TerminalOutcome::Disconnected);
                 }
             }
         }
@@ -702,19 +478,171 @@ impl ImageSearchSession {
     }
 }
 
+fn spawn_job(
+    target: ImageSearchTarget,
+    credentials: Option<OpenverseCredentials>,
+    used_urls: Arc<Mutex<HashSet<String>>>,
+    search_memo: Arc<Mutex<HashMap<SearchIntentKey, SearchMemoEntry>>>,
+    request_id: u64,
+    judge: Arc<dyn ImageRelevanceJudge>,
+    judge_enabled: bool,
+) -> ImageSearchJob {
+    let (tx, rx) = mpsc::channel();
+    let node_id = target.node_id.clone();
+    let aspect_ratio = target.aspect_ratio;
+    let key = search_intent_key(&target.query, aspect_ratio);
+    let intent = Some(intent_fingerprint(&target, None));
+    let judge_intent = target
+        .prompt
+        .as_deref()
+        .filter(|prompt| !prompt.trim().is_empty())
+        .unwrap_or(target.query.as_str())
+        .to_string();
+    // One full search intent, one in-flight request and one session result.
+    // Rebuilt nodes subscribe to the same pending request instead of racing
+    // duplicate searches; completed intents return from the memo.
+    {
+        let mut memo = search_memo.lock().unwrap();
+        match memo.get_mut(&key) {
+            Some(SearchMemoEntry::Ready(url)) => {
+                let _ = tx.send(Some(url.clone()));
+                return ImageSearchJob {
+                    node_id,
+                    intent,
+                    rx,
+                };
+            }
+            Some(SearchMemoEntry::Pending { waiters, .. }) => {
+                waiters.push(tx);
+                return ImageSearchJob {
+                    node_id,
+                    intent,
+                    rx,
+                };
+            }
+            None => {
+                memo.insert(
+                    key.clone(),
+                    SearchMemoEntry::Pending {
+                        request_id,
+                        waiters: vec![tx],
+                    },
+                );
+            }
+        }
+    }
+    std::thread::spawn(move || {
+        let url = if judge_enabled {
+            fetch_first_image_url_blocking_with_judge(
+                &target.query,
+                aspect_ratio,
+                credentials.as_ref().map(OpenverseCredentials::as_web),
+                &used_urls,
+                judge.as_ref(),
+                &judge_intent,
+            )
+        } else {
+            // No configured judge deliberately uses the old one-result path;
+            // this is the NoJudge behavior and keeps default output bytes
+            // unchanged.
+            fetch_first_image_url_blocking(
+                &target.query,
+                aspect_ratio,
+                credentials.as_ref().map(OpenverseCredentials::as_web),
+                &used_urls,
+            )
+        };
+        publish_search_result(&search_memo, key, request_id, url);
+    });
+    ImageSearchJob {
+        node_id,
+        intent,
+        rx,
+    }
+}
+
+/// Publish only into the exact Pending entry that launched this request. A
+/// reset may remove it and a new document may insert the same key before the
+/// old thread returns; the request id keeps that old result isolated.
+fn publish_search_result(
+    search_memo: &Arc<Mutex<HashMap<SearchIntentKey, SearchMemoEntry>>>,
+    key: SearchIntentKey,
+    request_id: u64,
+    url: Option<String>,
+) -> bool {
+    let waiters = {
+        let mut memo = search_memo.lock().unwrap();
+        let matches_request = matches!(
+            memo.get(&key),
+            Some(SearchMemoEntry::Pending {
+                request_id: pending_id,
+                ..
+            }) if *pending_id == request_id
+        );
+        if !matches_request {
+            return false;
+        }
+        let Some(SearchMemoEntry::Pending { waiters, .. }) = memo.remove(&key) else {
+            unreachable!("request identity was checked under the same lock")
+        };
+        if let Some(found) = url.as_ref() {
+            memo.insert(key, SearchMemoEntry::Ready(found.clone()));
+        }
+        waiters
+    };
+    for waiter in waiters {
+        let _ = waiter.send(url.clone());
+    }
+    true
+}
+
+/// Enrich via the configured image-GEN model instead of stock search. Prefers the
+/// node's bound `image_prompt`; falls back to the search keyword so a node that
+/// only carries `image_search_query` still generates. Same `ImageSearchJob`
+/// channel as search, so `poll_into` applies the resulting src identically.
+fn spawn_gen_job(target: ImageSearchTarget, profile: ImageGenProfile) -> ImageSearchJob {
+    let (tx, rx) = mpsc::channel();
+    let node_id = target.node_id.clone();
+    let intent = Some(intent_fingerprint(&target, Some(&profile)));
+    std::thread::spawn(move || {
+        let prompt = target
+            .prompt
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or(target.query.as_str());
+        let url = crate::image_generate_host::run_generate_blocking(
+            prompt,
+            &profile,
+            target.width,
+            target.height,
+        )
+        .ok();
+        let _ = tx.send(url);
+    });
+    ImageSearchJob {
+        node_id,
+        intent,
+        rx,
+    }
+}
+
+fn spawn_unavailable_gen_job(target: ImageSearchTarget) -> ImageSearchJob {
+    let (tx, rx) = mpsc::channel();
+    let node_id = target.node_id.clone();
+    let intent = Some(intent_fingerprint(&target, None));
+    let _ = tx.send(None);
+    ImageSearchJob {
+        node_id,
+        intent,
+        rx,
+    }
+}
 mod fetch;
 mod intent;
-mod jobs;
-mod progress;
 
-#[cfg(test)]
-use jobs::publish_search_result;
-use jobs::{spawn_gen_job, spawn_job, spawn_unavailable_gen_job};
-
-use fetch::fetch_first_image_url_blocking_with_judge_for_view;
 pub(crate) use fetch::fetch_image_data_url;
-use intent::current_intent_snapshot;
-pub(crate) use intent::{intent_fingerprint, search_intent_key};
+use fetch::{fetch_first_image_url_blocking, fetch_first_image_url_blocking_with_judge};
+pub(crate) use intent::{current_intent_fingerprints, intent_fingerprint, search_intent_key};
 
 // `apply_result` + the slot predicates + the target/mode/aspect types live in
 // the shared `op-image-enrich` crate now (see the re-export block at the top

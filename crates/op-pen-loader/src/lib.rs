@@ -23,18 +23,12 @@ mod adapter;
 mod authored_geometry;
 mod editor_meta;
 mod editor_meta_error;
-mod editor_meta_family;
-mod editor_meta_import;
-mod editor_meta_share;
 mod editor_scene;
 mod effects;
-mod full_content_snapshot;
-mod initial_text_snapshot;
 mod layout_repair;
 mod layout_scene;
 mod legacy_payload_repair;
 mod library;
-mod table_default_snapshot;
 // Only the real-shaper (`skia-measure`) build benefits from caching; the
 // estimate backend is already cheap, so the module is gated to avoid dead code
 // under the CanvasKit (no-skia-measure) web build.
@@ -88,28 +82,20 @@ pub mod variables;
 /// against the editor's variables + active theme. Builds the scene
 /// directly from the layout-resolved `DocPayload` — no intermediate
 /// shell-core `Document`.
-pub use editor_scene::{
-    editor_state_to_active_page_export_layout_scene,
-    editor_state_to_active_page_full_content_export_layout_scene,
-    editor_state_to_active_page_layout_scene, editor_state_to_export_layout_scene,
-    editor_state_to_layout_scene,
-};
+pub use editor_scene::{editor_state_to_active_page_layout_scene, editor_state_to_layout_scene};
 pub use layout_scene::{
     pen_document_to_layout_scene, pen_document_to_layout_scene_for_preview,
-    pen_document_to_layout_scene_for_preview_with_measure,
     pen_document_to_layout_scene_with_geometry_mode,
 };
 /// Skips the layout-scene rebuild when the document / active theme / active page
 /// are unchanged — the hosts hold one and drive `refresh_layout_scene` through it.
 pub use scene_cache::SceneBuildCache;
 
-pub use adapter::pages::layout_measure_backend;
-
 // Re-exports so `openpencil-desktop`'s existing call sites change
 // minimally.
 pub use adapter::{
     build_var_table, pen_document_to_payload, pen_document_to_payload_preserving_geometry,
-    pen_document_to_payload_with_measure, root_authored_origin, root_available_size, LoadedDoc,
+    root_authored_origin, root_available_size, LoadedDoc,
 };
 pub use editor_meta::{
     apply_editor_meta, apply_editor_meta_or_legacy_fallback, extract_editor_meta,

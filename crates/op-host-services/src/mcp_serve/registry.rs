@@ -11,11 +11,6 @@ pub(super) fn rebuild_registry(
     requested_tool: Option<&str>,
     profile: tool_profile::McpAccessProfile,
 ) -> ToolRegistry {
-    // The lean catalog has its own six-tool registry (two of them compose
-    // several full-catalog tools); nothing else is constructed for it.
-    if profile.catalog == tool_catalog::McpToolCatalog::Lean {
-        return lean_profile::lean_registry(doc, requested_tool);
-    }
     let mut r = ToolRegistry::default();
 
     macro_rules! register_tool {
@@ -41,7 +36,6 @@ pub(super) fn rebuild_registry(
     register_tool!("get_document_info", document_info_snapshot(doc));
     register_tool!("get_selection", selection_snapshot(doc));
     register_tool!("get_node", get_node_snapshot(doc));
-    register_tool!("annotate_image", op_mcp::annotate_image_snapshot(doc));
     register_tool!("list_pages", list_pages_snapshot(doc));
     register_tool!("list_variables", list_variables_snapshot(doc));
     register_tool!("get_variables", get_variables_snapshot(doc));
@@ -91,11 +85,11 @@ pub(super) fn rebuild_registry(
     register_tool!("get_component", get_component_snapshot(doc));
     register_tool!("batch_get", batch_get_snapshot(doc));
     register_tool!("read_nodes", read_nodes_snapshot(doc));
+    register_tool!("codegen_export", codegen_export_snapshot(doc));
     register_tool!("codegen_plan", codegen_plan_snapshot(doc));
     register_tool!("codegen_submit_chunk", codegen_submit_chunk_snapshot());
     register_tool!("codegen_assemble", codegen_assemble_snapshot());
     register_tool!("codegen_clean", codegen_clean_snapshot());
-    register_tool!("codegen_export", codegen_export_snapshot(doc));
     register_tool!(
         "search_all_unique_properties",
         search_all_unique_properties_snapshot(doc)
@@ -174,7 +168,6 @@ pub(super) fn rebuild_registry(
     register_tool!("import_svg", import_svg_snapshot());
     register_tool!("import_html", import_html_snapshot());
     register_tool!("import_html_url", import_html_url_snapshot());
-    register_tool!("brand_extract", brand_extract_snapshot(doc));
     register_tool!("import_web_snapshot", import_web_snapshot_tool());
     register_tool!("update_node", update_node_snapshot());
     register_tool!("delete_node", delete_node_snapshot());
@@ -182,22 +175,6 @@ pub(super) fn rebuild_registry(
     register_tool!("copy_node", copy_node_snapshot());
     register_tool!("replace_node", replace_node_snapshot());
     register_tool!("batch_design", batch_design_snapshot(doc));
-    register_tool!(
-        "create_generator",
-        op_mcp::generator_tools::create_generator_snapshot(doc)
-    );
-    register_tool!(
-        "update_generator_params",
-        op_mcp::generator_tools::update_generator_params_snapshot(doc)
-    );
-    register_tool!(
-        "get_generator",
-        op_mcp::generator_tools::get_generator_snapshot(doc)
-    );
-    register_tool!(
-        "detach_generator",
-        op_mcp::generator_tools::detach_generator_snapshot(doc)
-    );
     register_tool!("get_design_prompt", get_design_prompt_snapshot(doc));
     register_tool!("design_skeleton", design_skeleton_snapshot());
     register_tool!("design_content", design_content_snapshot());

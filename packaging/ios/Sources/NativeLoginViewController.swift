@@ -97,10 +97,6 @@ final class NativeLoginViewController: UIViewController {
         }
     }
 
-    func presentPrivacyPolicy(from presenter: UIViewController) {
-        AppPrivacy.present(from: presenter, ssoOrigin: origin)
-    }
-
     // MARK: - Layout
 
     private func buildLayout() {
@@ -328,10 +324,6 @@ final class NativeLoginViewController: UIViewController {
         contentStack.setCustomSpacing(20, after: registerRow)
         contentStack.addArrangedSubview(regionLabel)
         contentStack.addArrangedSubview(regionNoteLabel)
-        contentStack.addArrangedSubview(AppPrivacy.makeLink(
-            target: self,
-            action: #selector(openPrivacyPolicy)
-        ))
     }
 
     private static let dividerTag = 61
@@ -360,10 +352,6 @@ final class NativeLoginViewController: UIViewController {
     }
 
     // MARK: - Actions
-
-    @objc private func openPrivacyPolicy() {
-        presentPrivacyPolicy(from: self)
-    }
 
     @objc private func cancelPressed() {
         guard !isFinishing else { return }
@@ -636,8 +624,9 @@ final class NativeLoginViewController: UIViewController {
             comment: "Region restart note"
         )
         regionNoteLabel.isHidden = false
-        // The running pairing remains in its original region. Acknowledge
-        // the next-launch preference without terminating the application.
+        // The auth runtime initializes once per process, and reaching this
+        // screen means it already initialized for the previous region — so
+        // offer an immediate relaunch alongside the passive note.
         let alert = UIAlertController(
             title: String(
                 format: NSLocalizedString(
@@ -655,9 +644,20 @@ final class NativeLoginViewController: UIViewController {
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(
-            title: NSLocalizedString("common.ok", value: "OK", comment: "Acknowledge"),
-            style: .default
+            title: NSLocalizedString("sso.region.later", value: "Later", comment: "Defer"),
+            style: .cancel
         ))
+        alert.addAction(UIAlertAction(
+            title: NSLocalizedString(
+                "sso.region.quitNow",
+                value: "Quit now",
+                comment: "Exit to apply region"
+            ),
+            style: .destructive
+        ) { _ in
+            // A clean exit; the user relaunches into the new region.
+            exit(0)
+        })
         present(alert, animated: true)
     }
 

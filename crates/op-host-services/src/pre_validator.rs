@@ -342,12 +342,6 @@ mod tests {
     #[path = "pre_validator_bleed_tests.rs"]
     mod bleed_tests;
 
-    #[path = "pre_validator_map_tests.rs"]
-    mod map_tests;
-
-    #[path = "pre_validator_hierarchy_tests.rs"]
-    mod hierarchy_tests;
-
     /// Minimal `DocSink` for tests — wraps an `EditorState`, applies
     /// commands through `EditorState::apply`. Modeled on
     /// `op-orchestrator::test_support::VecDocSink`.

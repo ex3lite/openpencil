@@ -13,23 +13,20 @@ version=
 private_head_sha=
 openpencil_sha=
 build_id=
-abi=3
 
 usage() {
     cat >&2 <<'EOF'
 usage: verify-signed-op-auth-matrix.sh \
   --signed-root DIR --trusted-public-key PROVENANCE_PUBKEY \
   --version VERSION --private-head-sha FULL_SHA --openpencil-sha FULL_SHA \
-  --build-id IMMUTABLE_ID [--abi {3,4}]
-
-The reviewed caller selects the ABI; omitted --abi retains the ABI 3 lane.
+  --build-id IMMUTABLE_ID
 EOF
 }
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --signed-root|--trusted-public-key|--version|--private-head-sha|\
-        --openpencil-sha|--build-id|--abi)
+        --openpencil-sha|--build-id)
             [[ "$#" -ge 2 ]] || {
                 usage
                 exit 2
@@ -53,10 +50,6 @@ for required in \
         exit 2
     }
 done
-[[ "$abi" == 3 || "$abi" == 4 ]] || {
-    printf 'error: --abi must be 3 or 4\n' >&2
-    exit 2
-}
 [[ -d "$signed_root" && ! -L "$signed_root" \
     && -f "$trusted_public_key" && ! -L "$trusted_public_key" \
     && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ \
@@ -134,7 +127,6 @@ cmp -s "$expected_root_entries" "$actual_root_entries" || {
 
 matrix_lines=$temp_dir/matrix-lines
 : > "$matrix_lines"
-local_full=0
 while IFS= read -r target; do
     target_root=$signed_root/$target
     [[ -d "$target_root" && ! -L "$target_root" ]] || {
@@ -161,7 +153,7 @@ while IFS= read -r target; do
     artifact_sha=$(sha256_file "$target_root/$artifact")
     hardening_sha=$(sha256_file "$target_root/HARDENING-ATTESTATION")
     printf '%s\n' "$version" > "$temp_dir/expected-version"
-    printf '%s\n' "$abi" > "$temp_dir/expected-abi"
+    printf '3\n' > "$temp_dir/expected-abi"
     printf '%s\n' "$artifact_sha" > "$temp_dir/expected-sha"
     cmp -s "$temp_dir/expected-version" "$target_root/VERSION" \
         && cmp -s "$temp_dir/expected-abi" "$target_root/ABI_VERSION" \
@@ -169,14 +161,6 @@ while IFS= read -r target; do
         printf 'error: signed artifact metadata mismatch for %s\n' "$target" >&2
         exit 1
     }
-    sed -n 's/^abi=//p' "$target_root/HARDENING-ATTESTATION" > "$temp_dir/hardening-abi"
-    cmp -s "$temp_dir/expected-abi" "$temp_dir/hardening-abi" || {
-        printf 'error: signed hardening attestation ABI mismatch for %s\n' "$target" >&2
-        exit 1
-    }
-    if grep -Eq '^(staging_format=local-|signer_revision=|execution_evidence_sha256=)' "$target_root/HARDENING-ATTESTATION"; then
-        local_full=1
-    fi
     hardening=op-auth-hardened-v1
     [[ "$target" == *-pc-windows-msvc ]] \
         && hardening=op-auth-signed-unobfuscated-v1
@@ -186,11 +170,11 @@ format=1
 target=$target
 artifact=$artifact
 version=$version
-abi=$abi
+abi=3
 sha256=$artifact_sha
 hardening=$hardening
 source_revision=$private_head_sha
-build_id=$build_id.a$abi.$hardening_sha
+build_id=$build_id.a3.$hardening_sha
 EOF
     cmp -s "$expected_provenance" "$target_root/PROVENANCE" || {
         printf 'error: non-canonical signed provenance for %s\n' "$target" >&2
@@ -208,7 +192,7 @@ expected_manifest=$temp_dir/expected-manifest
 {
     printf 'format=op-auth-release-matrix-v1\n'
     printf 'version=%s\n' "$version"
-    printf 'abi=%s\n' "$abi"
+    printf 'abi=3\n'
     printf 'source_revision=%s\n' "$private_head_sha"
     printf 'openpencil_revision=%s\n' "$openpencil_sha"
     printf 'build_id=%s\n' "$build_id"
@@ -226,11 +210,4 @@ verify_signature \
     "$signed_root/RELEASE-MANIFEST.sig" \
     'release matrix'
 
-if [[ "$local_full" -eq 1 ]]; then
-    python3 "$script_dir/check-local-full-auth.py" --if-local-full \
-        --signed-root "$signed_root" --trusted-public-key "$trusted_public_key" \
-        --version "$version" --source-revision "$private_head_sha" \
-        --openpencil-revision "$openpencil_sha" --build-id "$build_id"
-fi
-
-printf 'verify-signed-op-auth-matrix: verified signed ABI-v%s matrix (%s)\n' "$abi" "$build_id"
+printf 'verify-signed-op-auth-matrix: verified signed ABI-v3 matrix (%s)\n' "$build_id"

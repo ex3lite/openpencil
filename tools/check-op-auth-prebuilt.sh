@@ -146,13 +146,6 @@ expected_symbols() {
         printf '%s\n' \
             op_auth_collab_relay_token_begin
     fi
-    if [[ "$1" -ge 4 ]]; then
-        printf '%s\n' \
-            op_auth_hosted_access_begin \
-            op_auth_hosted_access_cancel \
-            op_auth_hosted_access_poll \
-            op_auth_hosted_session_epoch
-    fi
 }
 
 metadata_leak_count() {
@@ -235,8 +228,8 @@ while IFS= read -r artifact; do
     if [[ -f "$target_dir/ABI_VERSION" ]]; then
         abi_version=$(tr -d '[:space:]' < "$target_dir/ABI_VERSION")
     fi
-    if [[ ! "$abi_version" =~ ^[1234]$ ]]; then
-        record_failure "$target: ABI_VERSION must be 1, 2, 3, or 4"
+    if [[ ! "$abi_version" =~ ^[123]$ ]]; then
+        record_failure "$target: ABI_VERSION must be 1, 2, or 3"
         abi_version=1
     fi
 

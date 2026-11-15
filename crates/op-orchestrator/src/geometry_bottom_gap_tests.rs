@@ -16,83 +16,6 @@ use serde_json::json;
 
 const ECHO: &str = "mobile-bottom-flush";
 
-#[test]
-fn pinned_action_closes_the_screen_only_with_its_own_safe_inset() {
-    for (name, padding, expected) in [
-        ("Pinned Start Button", 28, false),
-        ("Pinned Start Button", 0, true),
-        ("Start Button", 28, true),
-        ("Unpinned Start Button", 28, true),
-    ] {
-        let root = json!({"type":"frame","id":"root","width":375,"height":812,
-        "layout":"vertical","children":[
-            {"type":"frame","id":"body","height":724,"width":"fill_container"},
-            {"type":"frame","id":"footer","name":name,"width":"fill_container",
-             "height":88,"layout":"vertical","padding":[12,24,padding,24],"children":[
-                {"type":"frame","id":"button","role":"button","height":48,
-                 "children":[{"type":"text","id":"label","content":"开始训练","height":24}]}
-            ]}
-        ]});
-        assert_eq!(echoed(root), expected, "{name}, bottom padding {padding}");
-    }
-}
-
-#[test]
-fn navigation_keeps_background_full_bleed_and_moves_only_flush_overlays() {
-    let root = json!({"type":"frame","id":"root","width":375,"height":812,"layout":"vertical","gap":0,
-        "children":[{"type":"frame","id":"status","height":78,"width":375},
-            {"type":"frame","id":"viewport","layout":"none","explain":"op-navigation-viewport",
-             "width":375,"height":734,"children":[
-                {"type":"frame","id":"summary","x":16,"y":574,"width":343,"height":160,
-                 "layout":"vertical","children":[{"type":"text","id":"label","content":"剩余3.2公里，预计12分钟"}]},
-                {"type":"frame","id":"map","role":"map","explain":"map-template:running",
-                 "x":0,"y":0,"width":375,"height":734}]}]});
-    let mut state = state_for(root.clone());
-    assert!(echoed(root));
-    let map_before = op_editor_core::walkers::find_node(
-        state.active_children(),
-        &op_editor_core::NodeId::new("map"),
-    )
-    .unwrap()
-    .clone();
-    let mut sink = crate::loop_finalize::StateDocSink { state: &mut state };
-    assert_eq!(
-        crate::geometry_validation::clamp_absolute_children_into_parent(&mut sink, "root"),
-        1
-    );
-    assert_eq!(
-        crate::geometry_validation::clamp_absolute_children_into_parent(&mut sink, "root"),
-        0
-    );
-    assert!(!geometry_diagnostics(&state)
-        .iter()
-        .any(|d| d.contains(ECHO)));
-    let viewport = serde_json::to_value(&state.active_children()[0]).unwrap();
-    assert_eq!(viewport["children"][1]["children"][0]["y"], 550.0);
-    assert_eq!(viewport["children"][1]["children"][0]["height"], 160.0);
-    assert_eq!(
-        op_editor_core::walkers::find_node(
-            state.active_children(),
-            &op_editor_core::NodeId::new("map")
-        )
-        .unwrap(),
-        &map_before
-    );
-    assert_eq!(
-        crate::geometry_validation::fixed_mobile_bottom_gap(&state, "root"),
-        Some(24.0)
-    );
-    let mut ordinary = viewport;
-    ordinary["children"][1]
-        .as_object_mut()
-        .unwrap()
-        .remove("explain");
-    assert!(
-        echoed(ordinary),
-        "unowned absolute content does not get the map exception"
-    );
-}
-
 fn diagnostics_for(root: serde_json::Value) -> Vec<String> {
     let doc: jian_ops_schema::PenDocument = serde_json::from_value(json!({
         "version": "1.0",
@@ -145,7 +68,6 @@ fn fixed_gap_screen(gap: f64) -> serde_json::Value {
     json!({
         "type": "frame", "id": "root", "name": "Mobile Screen",
         "width": 390, "height": 844, "layout": "vertical", "gap": 0,
-        "clipContent": false,
         "children": [
             { "type": "frame", "id": "body", "name": "Body",
               "width": "fill_container", "height": 844.0 - gap }
@@ -323,20 +245,6 @@ fn content_overflowing_the_root_is_left_to_the_spill_diagnostics() {
 }
 
 #[test]
-fn fixed_artboards_do_not_claim_padding_created_room_below_fixed_content() {
-    let mut root = fixed_gap_screen(0.0);
-    root.as_object_mut().unwrap().remove("clipContent");
-    let before = state_for(root.clone()).doc;
-    let (state, changed) = repair(root);
-    assert!(!changed);
-    assert_eq!(state.doc, before);
-    assert_eq!(resolved_direct_child_gap(&state), 0.0);
-    assert!(geometry_diagnostics(&state)
-        .iter()
-        .any(|issue| issue.contains(ECHO)));
-}
-
-#[test]
 fn cleanup_repairs_zero_and_eleven_pixel_gaps_to_twenty_eight() {
     for initial_gap in [0.0, 11.0] {
         let (state, changed) = repair(fixed_gap_screen(initial_gap));
@@ -431,7 +339,6 @@ fn cleanup_repairs_a_last_wrapper_without_nested_bottom_navigation() {
     let root = json!({
         "type": "frame", "id": "root", "name": "Article Detail",
         "width": 390, "height": 844, "layout": "vertical",
-        "clipContent": false,
         "children": [{
             "type": "frame", "id": "wrapper", "name": "Content Wrapper",
             "width": "fill_container", "height": 844, "layout": "vertical",
@@ -459,7 +366,6 @@ fn all_roots_driver_repairs_every_mobile_screen() {
         "children": [
             {
                 "type": "frame", "id": "root-a", "width": 390, "height": 844,
-                "clipContent": false,
                 "layout": "vertical",
                 "children": [
                     { "type": "frame", "id": "body-a",
@@ -468,7 +374,6 @@ fn all_roots_driver_repairs_every_mobile_screen() {
             },
             {
                 "type": "frame", "id": "root-b", "x": 440, "width": 390, "height": 844,
-                "clipContent": false,
                 "layout": "vertical",
                 "children": [
                     { "type": "frame", "id": "body-b",
@@ -492,22 +397,4 @@ fn all_roots_driver_repairs_every_mobile_screen() {
             "every root must be visited"
         );
     }
-}
-
-#[test]
-fn interactive_scroll_clip_edge_is_not_a_flush_content_edge() {
-    let mut root = json!({"type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
-        "children":[{"type":"frame","id":"scroll","role":"scroll-area","height":"fill_container",
-            "width":"fill_container","layout":"vertical","clipContent":true,"padding":[0,0,28,0],
-            "events":{"onScroll":[{"toast":"Scrolled"}]},
-            "children":[{"type":"text","id":"body","content":"Long detail","height":1000}]}]});
-    assert!(!echoed(root.clone()));
-    root["children"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("events");
-    assert!(
-        echoed(root),
-        "clipping alone must not hide a flush-content defect"
-    );
 }

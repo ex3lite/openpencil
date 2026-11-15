@@ -17,9 +17,14 @@ impl WidgetHostNative {
         viewport_height: f32,
     ) -> bool {
         let cancelled = self.cancel_native_touch_gestures();
-        if let Some(scrolled) = self.scroll_home_surface(x, y, dy, viewport_width, viewport_height)
+        if self
+            .wheel_home_model_picker(x, y, dy, viewport_width, viewport_height)
+            .is_some()
         {
-            return scrolled || cancelled;
+            return true;
+        }
+        if self.try_scroll_home(x, y, dy, viewport_width, viewport_height) {
+            return true;
         }
         if self.try_scroll_missing_fonts_picker(x, y, dy, viewport_width, viewport_height) {
             return true;
@@ -60,8 +65,28 @@ impl WidgetHostNative {
         }
         // Open chat model-picker owns trackpad scroll over its
         // dropdown, same as the wheel path.
-        if self.try_scroll_model_picker(x, y, dy, viewport_width, viewport_height) {
-            return true;
+        if self.editor_state.editor_ui.chat_model_picker.open {
+            use op_editor_ui::widgets::ai_chat_model_picker::max_picker_scroll;
+            use op_editor_ui::widgets::AIChatPlaceholder;
+            let picker = self
+                .ai_chat_rect(viewport_width, viewport_height)
+                .and_then(|chat_rect| {
+                    AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
+                        .model_picker_bounds(chat_rect)
+                });
+            if let Some(picker) = picker {
+                if (picker).contains(Point2D::new(x, y)) {
+                    let max = max_picker_scroll(
+                        &self.editor_state.chat.available_models,
+                        self.editor_state.editor_ui.chat_model_picker_input.text(),
+                    );
+                    let next = (self.editor_state.editor_ui.chat_model_picker.scroll.offset - dy)
+                        .clamp(0.0, max);
+                    self.editor_state.editor_ui.chat_model_picker.scroll.offset = next;
+                    self.mark_dirty();
+                    return true;
+                }
+            }
         }
         if self.try_scroll_chat_input(x, y, dy, viewport_width, viewport_height) {
             return true;

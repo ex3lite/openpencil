@@ -67,7 +67,7 @@ pub trait DocSink: Send {
 
 /// Child ids of `parent_id` in document order (page-level children when the
 /// parent is `NodeId::NONE`); empty when the parent is missing.
-pub(crate) fn child_ids_under(state: &EditorState, parent_id: &NodeId) -> Vec<String> {
+fn child_ids_under(state: &EditorState, parent_id: &NodeId) -> Vec<String> {
     use op_editor_core::PenNodeExt;
     let children = if parent_id.is_real() {
         match op_editor_core::walkers::find_node(state.active_children(), parent_id) {
@@ -378,10 +378,6 @@ pub enum Progress {
     PlanCoverageRetry {
         missing: Vec<String>,
     },
-    /// Run-level provider-limit breaker (motion50 fix 1): no further model calls this run.
-    RunAborted {
-        reason: String,
-    },
     /// Per-subtask skill-load report emitted after the sub-agent prompt is built.
     SubtaskSkills {
         id: String,
@@ -414,7 +410,8 @@ pub enum Progress {
     /// (D-lite "three-piece" visibility fix, 2026-07-17) — a user-facing
     /// confirmation that `group_count` screens are about to run against
     /// `workers` overlapping workers, so ⚡Nx's effect is legible instead of
-    /// silent. Never emitted on the sequential path (see `effective_concurrency`).
+    /// silent. Never emitted on the sequential path (`workers == 1` never
+    /// fires this — see `run.rs`'s `effective_concurrency` branch).
     ConcurrentGroupsStarted {
         group_count: usize,
         workers: u32,
@@ -425,8 +422,8 @@ pub enum Progress {
     /// (sequential-execution root-cause hunt, 2026-07-17): `requested_workers`
     /// is the raw, unclamped `DesignRequest.concurrency` this turn carried —
     /// `1` proves the ⚡Nx picker's value never reached the orchestrator for
-    /// this turn; any value `> 1` would mean `effective_concurrency` itself
-    /// has a bug (its contract guarantees `> 1` whenever
+    /// this turn; any value `> 1` here would mean `effective_concurrency`
+    /// itself has a bug (its contract guarantees `> 1` whenever
     /// `group_count > 1 && clamp_concurrency(requested_workers) > 1`).
     ScreenGroupsSequential {
         group_count: usize,
@@ -435,10 +432,11 @@ pub enum Progress {
     /// Progress emitted by one screen-group agent in the concurrent classic
     /// orchestrator path. The boxed inner event keeps the recursive enum
     /// finite-sized while preserving the ordinary [`Progress`] vocabulary for
-    /// subtask lifecycle updates. `group_idx` identifies the screen group,
-    /// not a semaphore worker slot: three screen groups running with a
-    /// concurrency limit of two still have three stable identities and three
-    /// independent progress streams.
+    /// subtask lifecycle updates.
+    ///
+    /// `group_idx` identifies the screen group, not a semaphore worker slot:
+    /// three screen groups running with a concurrency limit of two still have
+    /// three stable identities and three independent progress streams.
     WorkerScoped(WorkerEvent),
     CleanupDone,
     /// The user-visible quality credential for the classic path — emitted
@@ -450,6 +448,7 @@ pub enum Progress {
     /// A separate variant rather than a payload on `CleanupDone` so existing
     /// `CleanupDone` matchers (ordering assertions, the "polishing" narration)
     /// keep working untouched.
+    ///
     /// Deliberately carries NO leftover-issue count: the promise-delivery
     /// check (`Progress::UnfilledScreens`) runs later in the pipeline, so
     /// anything claimed here about remaining work would be a guess. Renderers
@@ -470,10 +469,6 @@ pub enum Progress {
         /// (`crate::repair_tier`). Never counted as repairs; rendered ahead
         /// of them, because "this was not run" outranks "this was".
         notes: Vec<String>,
-        /// The same edits as `records`, structured (pass, family, node id,
-        /// node name, detail) so hosts can build the user-facing quality
-        /// report — and point at the node — without re-parsing the lines.
-        items: Vec<op_editor_core::QualityRepairRecord>,
     },
     // ── S3c: Vision-validation progress variants ─────────────────────────────
     /// 视觉校验阶段开始(pre-validation 将在此之后立即运行)。
@@ -537,20 +532,6 @@ pub enum Progress {
         /// Human-readable reason shown by the host's progress surface.
         reason: String,
     },
-    // ── Variants: side-by-side design directions ───────────────────────────
-    /// One direction of a variants run (`crate::variants_run`) landed on the
-    /// page: its boards, its style guide and the palette it was built with.
-    VariantReady(op_editor_core::WorkspaceVariant),
-    /// One direction of a variants run produced nothing. The other
-    /// directions keep running; only an all-directions failure fails the run.
-    VariantFailed {
-        /// Slot of the direction (`0` = A).
-        index: usize,
-        /// The direction's display name.
-        name: String,
-        /// Why it failed.
-        error: String,
-    },
 }
 
 /// Stable context attached to one screen group's progress events.
@@ -579,9 +560,57 @@ impl Progress {
     }
 }
 
-#[path = "types_skill_brief.rs"]
-mod skill_brief;
-pub use skill_brief::{report_to_progress_parts, SkillBrief};
+/// A one-line summary of an included skill, surfaced to the chat UI via
+/// `Progress::SubtaskSkills`. Mirrors `op_ai_skills::SkillLoadEntry` minus
+/// the `category` field (the UI line doesn't display it).
+#[derive(Debug, Clone)]
+pub struct SkillBrief {
+    pub name: String,
+    pub token_count: u32,
+    pub truncated: bool,
+}
+
+impl SkillBrief {
+    /// Build a brief from an `op-ai-skills` report entry (name + token_count +
+    /// truncated; category is dropped — the UI line doesn't show it).
+    pub fn from_entry(e: &op_ai_skills::SkillLoadEntry) -> SkillBrief {
+        SkillBrief {
+            name: e.name.clone(),
+            token_count: e.token_count,
+            truncated: e.truncated,
+        }
+    }
+}
+
+/// Short, user-facing word for a `DropReason` (used in the `▸ dropped:` line).
+fn drop_reason_display(reason: &op_ai_skills::DropReason) -> &'static str {
+    use op_ai_skills::DropReason::*;
+    match reason {
+        IntentMiss => "intent",
+        BudgetExhausted => "budget",
+        TierFiltered => "tier",
+        MinimalMode => "minimal",
+        ReducedComplexity => "reduced",
+        Deduped => "dedup",
+        ContentMismatch => "mismatch",
+        ModelFamilyMiss => "family",
+    }
+}
+
+/// Decompose a merged `SkillLoadReport` into the four payload parts of
+/// `Progress::SubtaskSkills` (included briefs, `(name, reason)` drops,
+/// budget_used, budget_max).
+pub fn report_to_progress_parts(
+    report: &op_ai_skills::SkillLoadReport,
+) -> (Vec<SkillBrief>, Vec<(String, String)>, u32, u32) {
+    let included = report.included.iter().map(SkillBrief::from_entry).collect();
+    let dropped = report
+        .dropped
+        .iter()
+        .map(|d| (d.name.clone(), drop_reason_display(&d.reason).to_string()))
+        .collect();
+    (included, dropped, report.budget_used, report.budget_max)
+}
 
 /// 单个 subtask 的执行结果。`error` 带值但 `node_count > 0` 表示
 /// "部分产出"(软错误);`node_count == 0` 表示零节点失败。
@@ -590,8 +619,8 @@ pub struct SubtaskOutcome {
     pub id: String,
     pub node_count: usize,
     pub error: Option<String>,
-    /// Post-remap ids of the roots this subtask inserted; empty on failure.
-    /// Buffered workers keep local staging ids until real replay replaces them.
+    /// Post-remap ids of the roots this subtask inserted; empty on failure or
+    /// when the sink is buffered (ids unavailable until replay).
     pub inserted_root_ids: Vec<String>,
     /// Visually dominant headline extracted from the inserted section.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -10,35 +10,6 @@
 use super::*;
 
 #[test]
-fn chinese_quality_receipt_is_readable_and_keeps_explicit_diagnostics() {
-    let mut message = op_editor_core::ChatMessage::assistant_streaming();
-    let events = vec![
-        Progress::CleanupDone,
-        Progress::QualityChecked {
-            checks: vec!["layout".into(), "palette".into()],
-            repairs: vec![("layout".into(), 1)],
-            records: vec!["layout · table-gap · Menu [n7] · gap 0 → 16".into()],
-            notes: vec![],
-            items: vec![],
-        },
-    ];
-    assert!(super::apply_progress(&mut message, &events, Locale::ZhCn));
-    assert!(message.content.contains("已完成设计检查 · 自动调整 1 处"));
-    assert!(!message.content.contains("Checked layout"));
-    assert!(!message.content.contains("repairs:"));
-    let detail = message
-        .activities
-        .iter()
-        .find(|activity| activity.id == "__polish")
-        .unwrap()
-        .detail
-        .as_ref()
-        .unwrap();
-    assert!(detail.contains("gap 0 → 16"));
-    assert!(!message.content.contains("没有问题"));
-}
-
-#[test]
 fn quality_records_land_on_the_polish_row_as_expandable_detail() {
     // The user's complaint was that the check stage reported "41 auto-repair(s)
     // applied" and nothing else. The narration keeps the headline; the itemized
@@ -56,7 +27,6 @@ fn quality_records_land_on_the_polish_row_as_expandable_detail() {
                 "palette · light-mobile-nav-surface · Tab Bar [n9] · fill #F8FAFC → #FFFFFF".into(),
             ],
             notes: Vec::new(),
-            items: Vec::new(),
         },
     ];
 
@@ -108,7 +78,6 @@ fn a_long_repair_list_is_capped_on_the_row_with_a_localized_remainder_notice() {
             repairs: vec![("layout".into(), 45)],
             records,
             notes: Vec::new(),
-            items: Vec::new(),
         },
     ];
 
@@ -157,7 +126,6 @@ fn a_skipped_tier_note_heads_the_polish_row_detail() {
             repairs: vec![("layout".into(), 1)],
             records: vec!["layout · table-gap · Pricing Row [n42] · gap 0 → 16".into()],
             notes: vec![TIER_SKIP_NOTE.to_string()],
-            items: Vec::new(),
         },
     ];
 
@@ -198,7 +166,6 @@ fn a_template_run_that_repaired_nothing_still_shows_why() {
             repairs: Vec::new(),
             records: Vec::new(),
             notes: vec![TIER_SKIP_NOTE.to_string()],
-            items: Vec::new(),
         },
     ];
 
@@ -229,7 +196,6 @@ fn a_run_with_neither_notes_nor_records_leaves_the_row_bare() {
             repairs: Vec::new(),
             records: Vec::new(),
             notes: Vec::new(),
-            items: Vec::new(),
         },
     ];
 

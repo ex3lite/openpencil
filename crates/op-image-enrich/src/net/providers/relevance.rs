@@ -5,16 +5,6 @@
 
 use super::RawHit;
 
-#[path = "relevance_matching.rs"]
-mod matching;
-
-#[path = "relevance_intent.rs"]
-mod intent;
-pub(crate) use intent::retrieval_plan;
-#[cfg(test)]
-pub(crate) use intent::rewrite_queries;
-use intent::INTENT_STYLE_WORDS;
-
 /// Design-artifact words that are pure noise against a photo corpus (see
 /// the desktop `image_search_session.rs` for the measurement notes).
 const IMAGE_SEARCH_ARTIFACT_WORDS: &[&str] = &[
@@ -145,13 +135,6 @@ const IMAGE_SEARCH_DESCRIPTORS: &[&str] = &[
     "photography",
     "isolated",
     "studio",
-    // Camera / editorial framing, not the subject: "cheeseburger close-up"
-    // made "close-up" a second required subject word that Openverse tags
-    // spell "closeup" or "close", and burger photos failed the 2-word bar.
-    "editorial",
-    "closeup",
-    "close-up",
-    "macro",
 ];
 
 /// Metadata markers that make a catalogue hit an explicitly non-photographic
@@ -168,13 +151,6 @@ const NON_PHOTO_RESULT_WORDS: &[&str] = &[
     "poster",
     "catalog",
     "catalogue",
-    // Painted/drawn media that Openverse files as ordinary photo uploads: a
-    // street mural of a "snake oil serum" bottle is artwork, not a product
-    // photo.
-    "graffiti",
-    "mural",
-    "cartoon",
-    "clipart",
 ];
 
 /// Result themes that are usually adjacent catalogue noise rather than the
@@ -207,14 +183,7 @@ const SCENE_QUERY_OPT_IN_WORDS: &[&str] = &[
 const ISOLATION_RESULT_WORDS: &[&str] = &["isolated", "isolate", "isolation", "cutout"];
 
 pub(crate) fn two_keyword_retry(query: &str) -> Option<String> {
-    // Camera/style words ("closeup", "shot") go before any subject word:
-    // keeping the tail of "skincare cream texture closeup" used to drop the
-    // domain word and search "cream texture closeup", which ranked a child
-    // eating vanilla ice cream as a skincare hero (arena l01, 2026-09-28).
-    let core: Vec<String> = concrete_query_words(query)
-        .into_iter()
-        .filter(|word| !INTENT_STYLE_WORDS.contains(&canonicalize_word(word).as_str()))
-        .collect();
+    let core = concrete_query_words(query);
     // Product prompts commonly put the searchable subject noun near the end
     // (for example "... table lamp terracotta"). Keeping the concrete tail
     // avoids truncating that noun while preserving the existing behavior for
@@ -222,11 +191,82 @@ pub(crate) fn two_keyword_retry(query: &str) -> Option<String> {
     let core_tail = &core[core.len().saturating_sub(3)..];
     let retry = core_tail.join(" ");
     let primary = lexical_words(query).join(" ");
-    // No shorter retry for a three-word subject: dropping its leading word
-    // loses the domain ("rose serum bottle" → a 1960s medical serum,
-    // "camellia cream jar" → cake in a jar; measured 2026-09-30). An empty
-    // slot is better than a wrong picture.
     (!retry.is_empty() && retry != primary).then_some(retry)
+}
+
+/// Style and staging words stripped from an intent-derived rewrite. The
+/// judged-ladder rewrite wants the subject of the image prompt, not its art
+/// direction. Multi-word forms are matched per token because the tokenizer
+/// splits on non-alphanumerics ("close-up" → "close up", "high quality" →
+/// "high" + "quality").
+const INTENT_STYLE_WORDS: &[&str] = &[
+    "photo",
+    "photography",
+    "professional",
+    "shot",
+    "close",
+    "closeup",
+    "image",
+    "stock",
+    "high",
+    "quality",
+    "4k",
+    "hd",
+    "cinematic",
+    "lighting",
+    "background",
+    "minimal",
+];
+
+/// Up to two rewritten queries for the judged Openverse ladder, in attempt
+/// order. The visual judge can reject every primary candidate (k=0 after the
+/// lexical filter, or all Off verdicts) while a looser phrasing still has
+/// good hits — the two-keyword retry inside the list fetch only fires on a
+/// zero-hit response, so judge-rejected slots used to fall straight to the
+/// Wikimedia ladder.
+///
+/// 1. The last two content words of the query.
+/// 2. The leading subject words of the intent (the image prompt) with stop
+///    words and style words removed, capped at three words.
+///
+/// Candidates that are empty, equal to the original query, or equal to an
+/// earlier rewrite are dropped, so the caller's cost bound is at most two
+/// extra Openverse list calls per slot.
+pub(crate) fn rewrite_queries(query: &str, intent: &str) -> Vec<String> {
+    let mut rewrites: Vec<String> = Vec::new();
+    let mut push = |rewrite: Option<String>| {
+        if let Some(rewrite) = rewrite {
+            if !rewrite.is_empty() && rewrite != query && !rewrites.contains(&rewrite) {
+                rewrites.push(rewrite);
+            }
+        }
+    };
+    push(two_keyword_rewrite(query));
+    push(intent_rewrite(intent));
+    rewrites
+}
+
+/// The last two content words of the query — tighter than
+/// [`two_keyword_retry`]'s three-word tail, which equals the primary query
+/// for the common three-word subject phrase and therefore never fires there.
+fn two_keyword_rewrite(query: &str) -> Option<String> {
+    let core = concrete_query_words(query);
+    let tail = &core[core.len().saturating_sub(2)..];
+    (!tail.is_empty()).then(|| tail.join(" "))
+}
+
+/// The leading subject words of the intent with stop words and style words
+/// removed, capped at three words. `None` when nothing searchable remains.
+fn intent_rewrite(intent: &str) -> Option<String> {
+    let words: Vec<String> = lexical_words(intent)
+        .into_iter()
+        .filter(|word| {
+            !IMAGE_SEARCH_STOP_WORDS.contains(&word.as_str())
+                && !INTENT_STYLE_WORDS.contains(&word.as_str())
+        })
+        .take(3)
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
 }
 
 pub(super) fn core_query_words(query: &str) -> Vec<String> {
@@ -309,185 +349,102 @@ fn canonicalize_word(word: &str) -> String {
 /// all-descriptor prompt), preserve the provider response rather than making
 /// an unprovable relevance decision.
 pub(crate) fn retain_relevant_hits(hits: Vec<RawHit>, query: &str) -> Vec<RawHit> {
-    retain_relevant_hits_for_intent(hits, query, "")
-}
-
-/// [`retain_relevant_hits`] with the slot's authored intent (its image
-/// prompt). Search queries are terse ("cleanser tube white") while the
-/// photographic contract usually lives only in the prompt ("minimal product
-/// photography of …"); without it the photo fence never engaged and an
-/// Instagram tattoo shot that merely mentions "cleanser" in its caption
-/// passed as a product photo. The intent only ever tightens the photo
-/// contract — subject words still come from the query. Positive intent
-/// context then ranks surviving hits without accepting a fenced result.
-pub(crate) fn retain_relevant_hits_for_intent(
-    hits: Vec<RawHit>,
-    query: &str,
-    intent: &str,
-) -> Vec<RawHit> {
-    let contract = RelevanceContract::new(query, intent);
-    let strict = retain_relevant_hits_enforcing(hits.clone(), &contract, true);
+    let strict = retain_relevant_hits_enforcing(hits.clone(), query, true);
     if !strict.is_empty() {
-        return intent::rank_context(strict, query, intent);
+        return strict;
     }
     // Isolation evidence ("isolated", "white background", …) is sparse in
     // provider metadata, and treating it as a hard fence empties the result
     // set for perfectly good product queries — the slot then publishes as a
     // gray placeholder. When the strict pass keeps nothing, degrade the
     // isolation requirement to a preference and keep the subject fence.
-    intent::rank_context(
-        retain_relevant_hits_enforcing(hits, &contract, false),
-        query,
-        intent,
-    )
-}
-
-/// Why the fence would drop `hit` for `query`/`intent`, or `None` when it
-/// survives the lenient (isolation-as-preference) pass. Diagnostics only —
-/// the search trace prints it next to every provider hit.
-pub(crate) fn fence_rejection(hit: &RawHit, query: &str, intent: &str) -> Option<&'static str> {
-    fence_verdict(hit, &RelevanceContract::new(query, intent), false).err()
-}
-
-/// The query/intent-derived facts every hit is fenced against.
-struct RelevanceContract<'a> {
-    query: &'a str,
-    core: Vec<String>,
-    /// The QUERY itself asks for a photo ("… studio photo"): the title must
-    /// name the subject and staged rooms are off.
-    requires_photo: bool,
-    /// Only the slot's image PROMPT asks for a photo ("minimal product
-    /// photography of …"): artwork media are rejected, nothing more. Holding
-    /// these slots to the title rule too turned 1 in 9 skincare / food slots
-    /// into grey tiles — Openverse titles photos "[139/365]" or "Day 330" and
-    /// names the subject only in tags.
-    photo_medium_only: bool,
-    requires_isolation: bool,
-    minimum_overlap: usize,
-}
-
-impl<'a> RelevanceContract<'a> {
-    fn new(query: &'a str, intent: &str) -> Self {
-        let core = matching::distinct_subjects(concrete_query_words(query));
-        // Multi-word product subjects need more than one token of evidence.
-        // A single generic overlap such as "lamp" previously accepted
-        // "Photography lamp setup" for "ceramic table lamp studio photo",
-        // which is technically an image but visibly the wrong product.
-        // Single-word subjects still use one match so common queries such as
-        // "armchair" keep their useful recall.
-        let minimum_overlap = if core.len() >= 2 { 2 } else { 1 };
-        Self {
-            query,
-            requires_photo: query_requests_photo(query),
-            photo_medium_only: !query_requests_photo(query) && query_requests_photo(intent),
-            requires_isolation: query_requests_isolation(query),
-            core,
-            minimum_overlap,
-        }
-    }
-}
-
-/// Ranking key of a hit that passed the fence: (title overlap, title subject
-/// tokens, title extra tokens, total overlap).
-type RankKey = (usize, usize, usize, usize);
-
-fn fence_verdict(
-    hit: &RawHit,
-    contract: &RelevanceContract<'_>,
-    enforce_isolation: bool,
-) -> Result<RankKey, &'static str> {
-    let metadata = &hit.relevance_metadata;
-    let query = contract.query;
-    if metadata_is_off_subject(metadata, query) {
-        return Err("off-subject theme or unrequested brand");
-    }
-    if (contract.requires_photo || contract.photo_medium_only)
-        && metadata_is_explicitly_non_photo(metadata)
-    {
-        return Err("photo requested but metadata names a non-photo medium");
-    }
-    if enforce_isolation
-        && contract.requires_isolation
-        && !metadata_has_isolation_evidence(metadata)
-    {
-        return Err("isolation requested but no isolation evidence");
-    }
-    if contract.core.is_empty() {
-        return Ok((0, 0, 0, 0));
-    }
-    if contract.requires_photo && metadata_is_scene_heavy(metadata) && !query_requests_scene(query)
-    {
-        return Err("photo requested but metadata describes a staged room");
-    }
-    let core = &contract.core;
-    // Hashtag soup in a title ("… #beauty #skincare #model") is the uploader's
-    // reach bait, not a description: an event crowd shot titled that way
-    // passed as a "skincare model" photo (2026-09-30). Only prose words and
-    // the provider's own tags count as subject evidence.
-    let title = matching::evidence(core, &without_hashtags(&hit.title));
-    let metadata = matching::evidence(core, &without_hashtags(metadata));
-    let title_overlap = title.overlap;
-    if contract.requires_photo && title_overlap == 0 {
-        return Err("photo requested but no subject word in the title");
-    }
-    let total_overlap = metadata.overlap;
-    if total_overlap < contract.minimum_overlap {
-        return Err("too few subject words in title/tags");
-    }
-    let title_extra_tokens = title
-        .unmatched
-        .iter()
-        .filter(|word| {
-            !IMAGE_SEARCH_STOP_WORDS.contains(&word.as_str())
-                && !IMAGE_SEARCH_DESCRIPTORS.contains(&word.as_str())
-        })
-        .count();
-    let title_subject_tokens = title_overlap + title_extra_tokens;
-    Ok((
-        title_overlap,
-        title_subject_tokens,
-        title_extra_tokens,
-        total_overlap,
-    ))
-}
-
-fn without_hashtags(text: &str) -> String {
-    text.split_whitespace()
-        .filter(|word| !word.starts_with('#'))
-        .collect::<Vec<_>>()
-        .join(" ")
+    retain_relevant_hits_enforcing(hits, query, false)
 }
 
 fn retain_relevant_hits_enforcing(
     hits: Vec<RawHit>,
-    contract: &RelevanceContract<'_>,
+    query: &str,
     enforce_isolation: bool,
 ) -> Vec<RawHit> {
-    let mut ranked: Vec<(RankKey, RawHit)> = hits
+    let core = core_query_words(query);
+    let requires_photo = query_requests_photo(query);
+    let requires_isolation = enforce_isolation && query_requests_isolation(query);
+    if core.is_empty() {
+        return hits
+            .into_iter()
+            .filter(|hit| {
+                !metadata_is_off_subject(&hit.relevance_metadata, query)
+                    && (!requires_photo
+                        || !metadata_is_explicitly_non_photo(&hit.relevance_metadata))
+                    && (!requires_isolation
+                        || metadata_has_isolation_evidence(&hit.relevance_metadata))
+            })
+            .collect();
+    }
+    // Multi-word product subjects need more than one token of evidence. A
+    // single generic overlap such as "lamp" previously accepted
+    // "Photography lamp setup" for "ceramic table lamp studio photo", which
+    // is technically an image but visibly the wrong product. Single-word
+    // subjects still use one match so common queries such as "armchair" keep
+    // their useful recall.
+    let minimum_overlap = if core.len() >= 2 { 2 } else { 1 };
+    let mut ranked: Vec<(usize, usize, usize, usize, RawHit)> = hits
         .into_iter()
         .filter_map(|hit| {
-            fence_verdict(&hit, contract, enforce_isolation)
-                .ok()
-                .map(|key| (key, hit))
+            if metadata_is_off_subject(&hit.relevance_metadata, query)
+                || (requires_photo && metadata_is_explicitly_non_photo(&hit.relevance_metadata))
+                || (requires_isolation && !metadata_has_isolation_evidence(&hit.relevance_metadata))
+                || (requires_photo
+                    && metadata_is_scene_heavy(&hit.relevance_metadata)
+                    && !query_requests_scene(query))
+            {
+                return None;
+            }
+            let title = normalized_words(&hit.title);
+            let metadata = normalized_words(&hit.relevance_metadata);
+            let title_overlap = overlap_count(&core, &title);
+            if requires_photo && title_overlap == 0 {
+                return None;
+            }
+            let total_overlap = overlap_count(&core, &metadata);
+            if total_overlap < minimum_overlap {
+                return None;
+            }
+            let title_extra_tokens = title
+                .iter()
+                .filter(|word| {
+                    !core.contains(word)
+                        && !IMAGE_SEARCH_STOP_WORDS.contains(&word.as_str())
+                        && !IMAGE_SEARCH_DESCRIPTORS.contains(&word.as_str())
+                })
+                .count();
+            let title_subject_tokens = title_overlap + title_extra_tokens;
+            Some((
+                title_overlap,
+                title_subject_tokens,
+                title_extra_tokens,
+                total_overlap,
+                hit,
+            ))
         })
         .collect();
-    if contract.core.is_empty() {
-        // No concrete subject: keep provider order among the survivors.
-        return ranked.into_iter().map(|(_, hit)| hit).collect();
-    }
     // Prefer a subject-dense title before raw overlap: a concise "Ceramic
     // vase" is a safer product match than a long archaeological title that
     // happens to contain both words. Then prefer title evidence, concision,
     // and finally title + tag evidence. `sort_by` is stable, so exact ties
     // retain provider order.
-    ranked.sort_by(|(left, _), (right, _)| {
+    ranked.sort_by(|left, right| {
         let density = (right.0 * left.1).cmp(&(left.0 * right.1));
         density
             .then_with(|| right.0.cmp(&left.0))
             .then_with(|| left.2.cmp(&right.2))
             .then_with(|| right.3.cmp(&left.3))
     });
-    ranked.into_iter().map(|(_, hit)| hit).collect()
+    ranked.into_iter().map(|(_, _, _, _, hit)| hit).collect()
+}
+
+fn overlap_count(core: &[String], candidate: &[String]) -> usize {
+    core.iter().filter(|word| candidate.contains(word)).count()
 }
 
 fn query_requests_photo(query: &str) -> bool {
@@ -500,22 +457,14 @@ fn query_requests_photo(query: &str) -> bool {
 }
 
 fn metadata_is_explicitly_non_photo(metadata: &str) -> bool {
-    matching::normalized_fence_words(metadata)
+    normalized_words(metadata)
         .iter()
         .any(|word| NON_PHOTO_RESULT_WORDS.contains(&word.as_str()))
 }
 
 fn metadata_is_off_subject(metadata: &str, query: &str) -> bool {
-    // Brand names are matched on raw lexical words: canonicalisation would
-    // turn "starbucks" into "starbuck" and miss the list.
-    if super::brand_fence::names_unrequested_brand(
-        &matching::fence_words(metadata),
-        &matching::fence_words(query),
-    ) {
-        return true;
-    }
-    let metadata = matching::normalized_fence_words(metadata);
-    let query = matching::normalized_fence_words(query);
+    let metadata = normalized_words(metadata);
+    let query = normalized_words(query);
     OFF_SUBJECT_RESULT_GROUPS.iter().any(|group| {
         let query_requests_group = query.iter().any(|word| group.contains(&word.as_str()));
         !query_requests_group && metadata.iter().any(|word| group.contains(&word.as_str()))
@@ -523,7 +472,7 @@ fn metadata_is_off_subject(metadata: &str, query: &str) -> bool {
 }
 
 pub(super) fn query_requests_scene(query: &str) -> bool {
-    let words = matching::normalized_fence_words(query);
+    let words = normalized_words(query);
     words
         .iter()
         .any(|word| SCENE_QUERY_OPT_IN_WORDS.contains(&word.as_str()))
@@ -531,7 +480,7 @@ pub(super) fn query_requests_scene(query: &str) -> bool {
 }
 
 pub(super) fn metadata_is_scene_heavy(metadata: &str) -> bool {
-    let words = matching::normalized_fence_words(metadata);
+    let words = normalized_words(metadata);
     words
         .iter()
         .any(|word| word != "lounge" && SCENE_HEAVY_RESULT_WORDS.contains(&word.as_str()))
@@ -607,5 +556,57 @@ pub fn simplify_search_query(prompt: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "relevance_rewrite_tests.rs"]
-mod rewrite_queries_tests;
+mod rewrite_queries_tests {
+    use super::rewrite_queries;
+
+    #[test]
+    fn two_keyword_rewrite_precedes_the_intent_rewrite() {
+        assert_eq!(
+            rewrite_queries(
+                "female dermatologist portrait",
+                "professional photo of a female dermatologist in a clinic",
+            ),
+            vec![
+                "dermatologist portrait".to_string(),
+                "female dermatologist clinic".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn intent_rewrite_strips_style_words() {
+        assert_eq!(
+            rewrite_queries(
+                "fitness model gym workout",
+                "professional photo of a fitness model in a gym, cinematic lighting, 4k hd",
+            ),
+            vec!["gym workout".to_string(), "fitness model gym".to_string(),]
+        );
+    }
+
+    #[test]
+    fn empty_intent_keeps_only_the_two_keyword_rewrite() {
+        assert_eq!(
+            rewrite_queries("oak desk lamp", ""),
+            vec!["desk lamp".to_string()]
+        );
+    }
+
+    #[test]
+    fn rewrites_matching_the_query_or_each_other_are_dropped() {
+        // Both rewrites resolve to the primary query itself: nothing to retry.
+        assert!(rewrite_queries(
+            "dermatologist portrait",
+            "photo of a dermatologist portrait"
+        )
+        .is_empty());
+        // The intent rewrite duplicates the two-keyword rewrite: deduped.
+        assert_eq!(
+            rewrite_queries(
+                "dermatologist clinic portrait",
+                "professional photo clinic portrait",
+            ),
+            vec!["clinic portrait".to_string()]
+        );
+    }
+}

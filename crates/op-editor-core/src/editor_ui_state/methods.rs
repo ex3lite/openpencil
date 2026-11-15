@@ -660,18 +660,6 @@ impl EditorUiState {
 
     /// Native touch chrome is shared by phone and tablet players. Layout
     /// geometry still branches on the three size classes.
-    /// An animation start stamp as the chrome should see it: under reduced
-    /// motion every stamp reads as 0, which each chrome animation already
-    /// treats as "settled" — entrances, art switches and hover lifts then
-    /// appear in their final state instead of moving.
-    pub fn motion_stamp(&self, at_ms: u64) -> u64 {
-        if self.reduced_motion {
-            0
-        } else {
-            at_ms
-        }
-    }
-
     pub fn touch_chrome(&self) -> bool {
         self.touch
     }
@@ -684,12 +672,8 @@ impl EditorUiState {
         self.touch && self.size_class.is_medium()
     }
 
-    /// Tablet landscape (and large tablet) editing layout: persistent
-    /// rails and the docked inspector. False while the works reader owns
-    /// the screen — it is a takeover, and a selection it keeps (the scope
-    /// of 改这一页) must not raise an inspector rail beside it.
     pub fn expanded_touch_layout(&self) -> bool {
-        self.touch && self.size_class.is_expanded() && !self.works_reader_visible()
+        self.touch && self.size_class.is_expanded()
     }
 
     /// The generated-code inspector needs more horizontal room than the

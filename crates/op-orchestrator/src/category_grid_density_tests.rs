@@ -460,7 +460,6 @@ fn cleanup_driver_checkpoints_category_grid_density() {
     let mut sink = sink_with_root(mobile_root(json!([category_grid(1)])));
     let root_id = root_id(&sink);
     let plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: root_id.clone(),
             name: "外卖 App 首页".into(),
@@ -473,7 +472,6 @@ fn cleanup_driver_checkpoints_category_grid_density() {
         },
         subtasks: Vec::new(),
         style_guide_name: None,
-        palette: None,
     };
     let mut summary = RepairSummary::default();
 
@@ -487,7 +485,7 @@ fn cleanup_driver_checkpoints_category_grid_density() {
 }
 
 #[test]
-fn literal_three_by_three_grid_keeps_composition_after_density() {
+fn literal_three_by_three_grid_reflows_after_density() {
     let rows = (0..3)
         .map(|index| category_row(&format!("row-{index}"), &["美食", "甜品饮品", "生鲜果蔬"]))
         .collect::<Vec<_>>();
@@ -500,9 +498,10 @@ fn literal_three_by_three_grid_keeps_composition_after_density() {
     assert!(repair_category_grid_density(&mut sink, &root_id) > 0);
     let grid = node_json(&sink, "category-grid");
     let rows = grid["children"].as_array().unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["children"].as_array().unwrap().len(), 5);
+    assert_eq!(rows[1]["children"].as_array().unwrap().len(), 4);
     for row in rows {
-        assert_eq!(row["children"].as_array().unwrap().len(), 3);
         assert_eq!(row["gap"], 12.0);
         assert_eq!(row["justifyContent"], "start");
         for tile in row["children"].as_array().unwrap() {

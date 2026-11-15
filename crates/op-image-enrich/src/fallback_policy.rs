@@ -89,16 +89,10 @@ fn is_overlay_stack_with_text(node: &PenNode, children: &[PenNode]) -> bool {
 }
 
 fn has_text_descendant(node: &PenNode) -> bool {
-    // A caption created by this policy is not authored overlay content. In
-    // particular, it must not make its own parent stack become covered on the
-    // next pass. Edited captions and other authored children remain content.
-    let generated = policy_media_children(node);
     matches!(node, PenNode::Text(_))
-        || node.children().is_some_and(|children| {
-            children.iter().any(|child| {
-                !is_policy_media_child(node, child, &generated) && has_text_descendant(child)
-            })
-        })
+        || node
+            .children()
+            .is_some_and(|children| children.iter().any(has_text_descendant))
 }
 
 fn fallback_patch(
@@ -107,18 +101,11 @@ fn fallback_patch(
     after_enrich: bool,
     covered_by_overlay: bool,
 ) -> Option<ImageFallbackPatch> {
-    if is_image_fallback(node) {
-        if covered_by_overlay {
-            if let Some(patch) = cover_existing_media_fallback(node) {
-                return Some(patch);
-            }
-        }
-        return normalize_legacy_media_caption(node);
-    }
     if !matches!(
         node,
         PenNode::Image(_) | PenNode::Frame(_) | PenNode::Rectangle(_)
-    ) || !is_failed_image_slot(node, after_enrich)
+    ) || is_image_fallback(node)
+        || !is_failed_image_slot(node, after_enrich)
     {
         return None;
     }
@@ -139,30 +126,21 @@ fn fallback_patch(
     } else {
         ImageFallbackBranch::Media
     };
-    Some(fallback_patch_for_branch(node, branch))
-}
-
-/// Build the policy decoration for a known branch without reclassifying the
-/// current geometry, which may have changed since a fallback was saved.
-pub(crate) fn fallback_patch_for_branch(
-    node: &PenNode,
-    branch: ImageFallbackBranch,
-) -> ImageFallbackPatch {
     let query = search_query(node);
     let icon_name = icon_name_for_query(&query);
     let name = fallback_name(node.base().name.as_deref());
     let patch = match branch {
         ImageFallbackBranch::Thumb => thumbnail_patch(node, &name, &icon_name),
         ImageFallbackBranch::Media => {
-            media_patch(node, &name, &icon_name, &caption_for_query(&query))
+            media_patch(node, &name, &icon_name, &caption_for_query(&query), width)
         }
         ImageFallbackBranch::Covered => covered_patch(node, &name),
     };
-    ImageFallbackPatch {
+    Some(ImageFallbackPatch {
         node_id: node.id_str().to_string(),
         branch,
         patch_json: patch.to_string(),
-    }
+    })
 }
 
 fn is_failed_image_slot(node: &PenNode, after_enrich: bool) -> bool {
@@ -246,56 +224,22 @@ pub fn icon_name_for_query(query: &str) -> String {
     let query = query.to_ascii_lowercase();
     let table = [
         (
-            &[
-                "dumbbell",
-                "dumbbells",
-                "fitness",
-                "exercise",
-                "exercises",
-                "workout",
-                "workouts",
-            ][..],
+            &["dumbbell", "fitness", "exercise", "workout"][..],
             "dumbbell",
         ),
-        (
-            &["food", "foods", "dish", "dishes", "meal", "meals"][..],
-            "utensils",
-        ),
-        (&["coffee", "coffees"][..], "coffee"),
-        (
-            &["product", "products", "shirt", "shirts", "shoe", "shoes"][..],
-            "shopping-bag",
-        ),
-        (&["map", "maps"][..], "map"),
-        (
-            &[
-                "user",
-                "users",
-                "avatar",
-                "avatars",
-                "portrait",
-                "portraits",
-            ][..],
-            "user",
-        ),
-        (
-            &["house", "houses", "hotel", "hotels", "room", "rooms"][..],
-            "building",
-        ),
-        (&["car", "cars", "ride", "rides"][..], "car"),
+        (&["food", "dish", "meal"][..], "utensils"),
+        (&["coffee"][..], "coffee"),
+        (&["product", "shirt", "shoe"][..], "shopping-bag"),
+        (&["map"][..], "map"),
+        (&["user", "avatar", "portrait"][..], "user"),
+        (&["house", "hotel", "room"][..], "building"),
+        (&["car", "ride"][..], "car"),
         (&["music"][..], "music"),
-        (&["video", "videos"][..], "play"),
+        (&["video"][..], "play"),
     ];
     table
         .iter()
-        .find(|(keywords, _)| {
-            // Whole words avoid unrelated substrings (skincare/car,
-            // mushroom/room). Explicit plurals preserve common queries
-            // without applying a stemmer to arbitrary subject names.
-            query
-                .split(|c: char| !c.is_alphanumeric())
-                .any(|word| keywords.contains(&word))
-        })
+        .find(|(keywords, _)| keywords.iter().any(|keyword| query.contains(keyword)))
         .map(|(_, icon)| (*icon).to_string())
         .unwrap_or_else(|| "image".to_string())
 }
@@ -429,7 +373,7 @@ fn thumbnail_patch(node: &PenNode, name: &str, icon_name: &str) -> Value {
     )
 }
 
-fn media_patch(node: &PenNode, name: &str, icon_name: &str, caption: &str) -> Value {
+fn media_patch(node: &PenNode, name: &str, icon_name: &str, caption: &str, width: f64) -> Value {
     fallback_frame_patch(
         node,
         json!({
@@ -456,9 +400,8 @@ fn media_patch(node: &PenNode, name: &str, icon_name: &str, caption: &str) -> Va
                     "id": format!("{}-image-fallback-caption", node.id_str()),
                     "name": "Image fallback caption",
                     "content": caption,
-                    "width": "fill_container",
-                    "height": "fit_content",
-                    "textGrowth": "fixed-width",
+                    "width": width.clamp(1.0, 160.0),
+                    "height": 16,
                     "fontSize": 12,
                     "textAlign": "center",
                     "fill": solid_fill("$--muted-foreground")
@@ -467,127 +410,6 @@ fn media_patch(node: &PenNode, name: &str, icon_name: &str, caption: &str) -> Va
             "explain": fallback_explain(node, ImageFallbackBranch::Media)
         }),
     )
-}
-
-/// Reconstruct the exact decorations this policy owns. A matching id alone
-/// is insufficient: a user may have edited the caption or icon after failure.
-fn policy_media_children(node: &PenNode) -> Vec<PenNode> {
-    if !node
-        .base()
-        .explain
-        .as_deref()
-        .is_some_and(|explain| explain.starts_with("image fallback: media "))
-        || fallback_metadata(node).is_none()
-    {
-        return Vec::new();
-    }
-    let query = fallback_search_query_for_host(node);
-    let patch = media_patch(
-        node,
-        "",
-        &icon_name_for_query(&query),
-        &caption_for_query(&query),
-    );
-    serde_json::from_value(patch["children"].clone()).unwrap_or_default()
-}
-
-fn legacy_caption_width(node: &PenNode) -> Option<f64> {
-    // Resolved widths were not stored with legacy tiles. Without an authored
-    // numeric media width, ownership of a fixed-width caption is unprovable.
-    node.width_px()
-        .filter(|width| width.is_finite() && *width > 96.0)
-        .map(|width| width.clamp(1.0, 160.0))
-}
-
-fn is_policy_media_child(node: &PenNode, child: &PenNode, generated: &[PenNode]) -> bool {
-    if generated.is_empty() {
-        return false;
-    }
-    if generated.contains(child) {
-        return true;
-    }
-    // The earlier caption used a fixed 16px height. Recognize it in the same
-    // pass as current captions, but require every other property to match.
-    let Ok(mut value) = serde_json::to_value(child) else {
-        return false;
-    };
-    if value["type"] != "text"
-        || value["height"].as_f64() != Some(16.0)
-        || legacy_caption_width(node).is_none()
-        || value["width"].as_f64() != legacy_caption_width(node)
-        || !value["textGrowth"].is_null()
-    {
-        return false;
-    }
-    value["width"] = json!("fill_container");
-    value["height"] = json!("fit_content");
-    value["textGrowth"] = json!("fixed-width");
-    serde_json::from_value::<PenNode>(value).is_ok_and(|normalized| generated.contains(&normalized))
-}
-
-/// Repair a tile produced without its parent overlay context. Only pure,
-/// unchanged policy decorations are safe to remove. Customized tiles retain
-/// their existing content and retry behavior; this does not redefine the
-/// restoration protocol for image-filled containers with authored children.
-fn cover_existing_media_fallback(node: &PenNode) -> Option<ImageFallbackPatch> {
-    let generated = policy_media_children(node);
-    let children = node.children()?;
-    if children.is_empty()
-        || !children
-            .iter()
-            .all(|child| is_policy_media_child(node, child, &generated))
-    {
-        return None;
-    }
-    let metadata = node
-        .base()
-        .explain
-        .as_deref()?
-        .strip_prefix("image fallback: media ")?;
-    Some(ImageFallbackPatch {
-        node_id: node.id_str().to_owned(),
-        branch: ImageFallbackBranch::Covered,
-        patch_json: json!({
-            "children": [],
-            "explain": format!("image fallback: covered {metadata}")
-        })
-        .to_string(),
-    })
-}
-
-/// Upgrade only the policy-owned legacy caption layout. Keep edited copy,
-/// typography, intent metadata and node ids intact; unrelated text is not a
-/// fallback caption merely because its name resembles one.
-fn normalize_legacy_media_caption(node: &PenNode) -> Option<ImageFallbackPatch> {
-    if !node
-        .base()
-        .explain
-        .as_deref()?
-        .starts_with("image fallback: media ")
-    {
-        return None;
-    }
-    let mut children = serde_json::to_value(node.children()?).ok()?;
-    let caption_id = format!("{}-image-fallback-caption", node.id_str());
-    let caption = children
-        .as_array_mut()?
-        .iter_mut()
-        .find(|child| child["id"] == caption_id && child["type"] == "text")?;
-    if caption["height"].as_f64() != Some(16.0)
-        || legacy_caption_width(node).is_none()
-        || caption["width"].as_f64() != legacy_caption_width(node)
-        || !caption["textGrowth"].is_null()
-    {
-        return None;
-    }
-    caption["width"] = json!("fill_container");
-    caption["height"] = json!("fit_content");
-    caption["textGrowth"] = json!("fixed-width");
-    Some(ImageFallbackPatch {
-        node_id: node.id_str().to_owned(),
-        branch: ImageFallbackBranch::Media,
-        patch_json: json!({"children":children}).to_string(),
-    })
 }
 
 fn covered_patch(node: &PenNode, name: &str) -> Value {
@@ -605,21 +427,10 @@ fn covered_patch(node: &PenNode, name: &str) -> Value {
 }
 
 pub fn apply_image_fallback_policy_to_node(state: &mut EditorState, node_id: &NodeId) -> bool {
-    let children = state.active_children();
-    let Some(node) = walkers::find_node(children, node_id) else {
+    let Some(node) = walkers::find_node(state.active_children(), node_id).cloned() else {
         return false;
     };
-    let covered_by_overlay = walkers::find_parent_and_index(children, node_id)
-        .and_then(|(parent, _)| parent)
-        .and_then(|parent_id| walkers::find_node(children, &parent_id))
-        .is_some_and(|parent| {
-            parent
-                .children()
-                .is_some_and(|children| is_overlay_stack_with_text(parent, children))
-        });
-    // Targeted enrichment must use the same parent context as the full-tree
-    // policy, and must never apply a descendant's patch to this target.
-    let Some(patch) = fallback_patch(node, &HashMap::new(), false, covered_by_overlay) else {
+    let Some(patch) = image_fallback_policy(&node, false).into_iter().next() else {
         return false;
     };
     state.apply(EditorCommand::PatchNodeData {
@@ -696,7 +507,3 @@ pub fn restore_image_fallback_node(node: &PenNode) -> Option<PenNode> {
 #[cfg(test)]
 #[path = "fallback_policy_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "fallback_policy_context_tests.rs"]
-mod context_tests;

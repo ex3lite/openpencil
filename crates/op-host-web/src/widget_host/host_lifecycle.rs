@@ -12,7 +12,6 @@ impl WidgetHost {
         // A fresh launch opens with a single empty starter Frame —
         // see `EditorState::starter`.
         let mut editor_state = op_editor_core::EditorState::starter();
-        editor_state.editor_ui.external_cli_available = false;
         editor_state.editor_ui.slide_thumbnails_supported = true;
         // Seed the render scene once up front; subsequent frames
         // re-derive only when `editor_state_dirty` is set.
@@ -39,7 +38,6 @@ impl WidgetHost {
             chat_input_selection_drag: None,
             image_input_selection_drag: None,
             image_input_geometry: None,
-            home_input_geometry: None,
             chat_text_selection_drag: None,
             create_drag: None,
             path_anchor_drag: None,
@@ -85,10 +83,6 @@ impl WidgetHost {
             slideshow_cursor: None,
             slideshow_press_screen: None,
             bundled_fonts_pending: false,
-            home_replace_confirm: None,
-            daemon_file_unbind_pending: false,
-            workspace_dock_drag: None,
-            workspace_idle_since_ms: None,
         }
     }
 
@@ -186,13 +180,6 @@ impl WidgetHost {
             // them identical, and the scene carries no editor state.
             if let Some(scene) = self.scene_cache.maybe_rebuild(&self.editor_state) {
                 self.layout_scene = scene;
-                if let Some(preview) = self.preview.as_mut() {
-                    preview.sync_image_assets(
-                        &self.editor_state.doc,
-                        self.document_epoch,
-                        self.editor_state.document_generation(),
-                    );
-                }
             }
             self.editor_state_dirty = false;
         }

@@ -18,17 +18,11 @@ fn workspace_keys_exist_in_every_locale_table() {
         "workspace.view.long",
         "workspace.view.overview",
         "workspace.fit",
-        "reader.viewDetails",
-        "reader.fullPage",
-        "reader.dragDetails",
         "workspace.present",
         "workspace.retry",
         "workspace.returnEdit",
         "workspace.backToWorkspace",
         "workspace.failed.note",
-        "workspace.editFailed",
-        "workspace.editFailed.note",
-        "ai.error.rateLimited",
     ];
     type Lookup = fn(&str) -> Option<&'static str>;
     let tables: [(&str, Lookup); 15] = [

@@ -513,11 +513,6 @@ pub(super) fn bottom_nav_surface_target(
     root_child: &PenNode,
     allow_structural: bool,
 ) -> Option<&PenNode> {
-    // A navigation viewport owns its floating trip cards. Their names can
-    // contain "bottom nav" without making them page-level destination tabs.
-    if crate::map_viewport::is_viewport_node(root_child) {
-        return None;
-    }
     if is_bottom_nav_surface(root_child, allow_structural) {
         if let Some(inner) = nested_bottom_nav_surface(root_child, allow_structural) {
             return Some(inner);
@@ -612,15 +607,12 @@ fn is_bottom_nav_surface(node: &PenNode, allow_structural: bool) -> bool {
             "bottom-tab",
             "底部导航",
             "底部导航栏",
+            "导航栏",
             "底栏",
+            "标签栏",
             "底部标签栏",
         ],
     ) {
-        // Plain `导航栏` / `标签栏` are the CJK "navbar" / "tab bar": just as
-        // ambiguous, and a top header named `返回导航栏` (back + hot/latest
-        // tabs) was moved to the bottom of a comments page by the nav-last
-        // anchor (arena m05, 2026-09-29). Unnamed bottom navs are still
-        // caught by the position-gated structural fallback below.
         return true;
     }
     // Structural fallback: a horizontal row of 3-5 labeled nav tabs

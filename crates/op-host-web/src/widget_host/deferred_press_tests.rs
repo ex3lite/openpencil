@@ -127,19 +127,11 @@ fn right_press_on_model_picker_does_not_open_layer_context_menu() {
     seed_layer_for_context_menu(&mut host);
     seed_two_chat_models(&mut host);
     let viewport = (1200.0, 800.0);
-    // RETIRED PREMISE: the parked floating panel put its picker over
-    // the layer rail's rows. The rail (Layers tab) and the picker (the
-    // composer card's, right of the rail) are disjoint columns now, so
-    // the swallow below is asserted from the picker's own card: a
-    // secondary press on it belongs to the floating surface and never
-    // reaches the layer context-menu machinery beside it.
     let layer_point = first_layer_row_point(&host, viewport.1);
     host.editor_state.editor_ui.chat_model_picker.open = true;
-    let card = host
-        .ai_chat_rect(viewport.0, viewport.1)
-        .expect("composer card");
-    let panel = AIChatPlaceholder::from_editor(&host.editor_state);
-    let picker = panel.model_picker_bounds(card).expect("picker rect");
+    let picker = host
+        .chat_model_picker_rect(viewport.0, viewport.1)
+        .expect("picker");
     let point = Point2D::new(
         picker.origin.x + 24.0,
         picker.origin.y
@@ -148,77 +140,13 @@ fn right_press_on_model_picker_does_not_open_layer_context_menu() {
             + ai_chat_model_picker::MODEL_GROUP_H
             + ai_chat_model_picker::MODEL_ROW_H / 2.0,
     );
+    // The composer and Layers rail are disjoint now; a secondary press
+    // on the picker must still never fall through to the layer menu.
+    assert!(!picker.contains(layer_point));
     assert!(picker.contains(point));
-    assert!(
-        !host.layer_panel_rect(viewport.1).contains(point),
-        "the picker no longer reaches the layer rail's column"
-    );
-    assert!(
-        layer_point.x < picker.origin.x,
-        "rail rows stay west of the picker"
-    );
-
     assert!(host.apply_right_press(point.x, point.y, viewport.0, viewport.1));
-
     assert!(host.editor_state.editor_ui.layer_context_menu.is_none());
     assert!(host.editor_state.editor_ui.chat_model_picker.open);
-}
-
-/// RETIRED BEHAVIOUR (minimize via chevron): the header chevron that
-/// collapsed the chat also closed the model picker and cleared its
-/// search. The chevron is gone from desktop; the composer card carries
-/// the same cleanup in two reachable steps: the open picker is modal
-/// over the card (any press on the card dismisses it AND its search),
-/// and once it is gone the header's glyphs — both of them — mean
-/// "open the Agent tab".
-#[test]
-fn the_composer_card_header_opens_the_agent_tab_and_closes_the_model_picker() {
-    let mut host = WidgetHost::new();
-    seed_two_chat_models(&mut host);
-    host.editor_state.editor_ui.chat_model_picker.open = true;
-    host.editor_state
-        .editor_ui
-        .chat_model_picker_input
-        .set_text("gpt");
-    // The card's slim header only exists while the input is focused.
-    host.editor_state.chat.focused = true;
-    let card = host.ai_chat_rect(1200.0, 800.0).unwrap();
-
-    // Step 1: the picker is modal over the card — the footer strip
-    // below its card is the reachable press that dismisses it.
-    assert!(host.apply_click(
-        card.origin.x + card.size.x - 28.0,
-        card.origin.y + card.size.y - 20.0,
-        1200.0,
-        800.0
-    ));
-    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
-    assert!(host
-        .editor_state
-        .editor_ui
-        .chat_model_picker_input
-        .text()
-        .is_empty());
-    assert_eq!(
-        host.editor_state.editor_ui.slides_panel.tab,
-        op_editor_core::LeftPanelTab::Layers,
-        "dismissing the picker stays on this tab"
-    );
-
-    // Step 2: with the picker gone the header is reachable — anywhere
-    // on the 30 px strip, both glyphs route the same way.
-    assert!(host.apply_click(
-        card.origin.x + card.size.x / 2.0,
-        card.origin.y + 15.0,
-        1200.0,
-        800.0
-    ));
-    assert_eq!(
-        host.editor_state.editor_ui.slides_panel.tab,
-        op_editor_core::LeftPanelTab::Chat,
-        "the glyphs' one meaning is: the conversation lives in the Agent tab"
-    );
-    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
 }
 
 #[test]

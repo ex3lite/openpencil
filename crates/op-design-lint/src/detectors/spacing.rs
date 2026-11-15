@@ -132,13 +132,6 @@ pub(super) fn is_full_bleed_section(node: &PenNode, root_width: f64) -> bool {
 /// below do not recognise, must not be padded back by a later validator.
 fn carries_bleed_marker(node: &PenNode) -> bool {
     node_name(node).is_some_and(|name| name.trim_end().ends_with(BLEED_NAME_SUFFIX))
-        // Full-screen navigation owns a fixed absolute canvas even after its
-        // image slot is replaced with an editable map frame. Match cleanup's
-        // marker so validation cannot add a content gutter to the background.
-        || matches!(node, PenNode::Frame(frame)
-            if frame.container.layout == Some(LayoutMode::None)
-                && frame.base.explain.as_deref().is_some_and(|hint|
-                    hint.split(';').any(|part| part.trim() == "op-navigation-viewport")))
 }
 
 const BLEED_NAME_SUFFIX: &str = "(bleed)";
@@ -257,9 +250,6 @@ fn has_concrete_zero_horizontal_padding(node: &PenNode) -> bool {
 }
 
 fn is_intentional_horizontal_scroller(node: &PenNode) -> bool {
-    if crate::horizontal_scroll::is_clipped_horizontal_lane_node(node) {
-        return true;
-    }
     match node {
         PenNode::Frame(node) => {
             node.container.layout == Some(LayoutMode::Horizontal)
@@ -448,24 +438,6 @@ fn walk_edge_section_padding(node: &PenNode, depth: usize, issues: &mut Vec<Issu
         let rail = infer_mobile_section_rail(kids, root_width);
         for child in kids {
             if !matches!(node_kind(child), NodeKind::Frame) {
-                continue;
-            }
-
-            // A vertical viewport transports complete sections, whose own
-            // gutters remain intact. Padding this shell a second time narrows
-            // every section (24 + 24 on a 375px phone leaves only 279px).
-            // Match the orchestrator's content-rail ownership contract.
-            if matches!(child, PenNode::Frame(frame)
-                if frame.container.layout == Some(LayoutMode::Vertical))
-                && matches!(
-                    role(child)
-                        .unwrap_or("")
-                        .trim()
-                        .to_ascii_lowercase()
-                        .as_str(),
-                    "scroll" | "scroll-area" | "scroll-viewport" | "viewport"
-                )
-            {
                 continue;
             }
 

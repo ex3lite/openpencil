@@ -341,16 +341,6 @@ impl PreviewSession {
             .map(|(_, _, id)| id);
         self.interaction
             .track_pointer(pointer_id, kind, phase, (scene_x, scene_y), hit.as_deref());
-        let mut scene_event = PointerEvent::simple_at(
-            pointer_id,
-            phase,
-            jian_core::geometry::point(scene_x, scene_y),
-            t_ms,
-        );
-        scene_event.kind = kind;
-        if self.handle_horizontal_drag(&scene_event) {
-            return true;
-        }
         let (rt_x, rt_y) = self.resolve_runtime_point(scene_x, scene_y, phase, pointer_id);
         use jian_core::geometry::point;
         let mut ev = PointerEvent::simple_at(pointer_id, phase, point(rt_x, rt_y), t_ms);
@@ -360,9 +350,7 @@ impl PreviewSession {
             ev.buttons = MouseButtons::empty();
             ev.pressure = 0.0;
         }
-        let emitted = !self
-            .dispatch_pointer_with_painted_target(ev, hit.as_deref())
-            .is_empty();
+        let emitted = !self.runtime.dispatch_pointer(ev).is_empty();
         self.sync_toggle_progress();
         let binding_changed =
             self.finish_binding_update(&binding_before) != crate::InvalidationKind::None;
@@ -404,9 +392,6 @@ impl PreviewSession {
             (event.position.x, event.position.y),
             hit_node.as_deref(),
         );
-        if self.handle_horizontal_drag(&event) {
-            return Vec::new();
-        }
         let (rt_x, rt_y) =
             self.resolve_runtime_point(event.position.x, event.position.y, event.phase, event.id.0);
         event.position = jian_core::geometry::point(rt_x, rt_y);
@@ -415,7 +400,7 @@ impl PreviewSession {
             event.buttons = MouseButtons::empty();
             event.pressure = 0.0;
         }
-        let events = self.dispatch_pointer_with_painted_target(event, hit_node.as_deref());
+        let events = self.runtime.dispatch_pointer(event);
         self.sync_toggle_progress();
         events
     }
@@ -474,25 +459,18 @@ impl PreviewSession {
     }
 
     /// Route a wheel at a SCENE-space point into the runtime. Returns
-    /// `true` when an authored scroll handler or an implicit carousel
-    /// consumes it; the host falls back to canvas pan/zoom otherwise. `dx`/`dy` are
+    /// `true` only when a node carrying `events.onScroll` consumed it —
+    /// the host falls back to canvas pan/zoom otherwise. `dx`/`dy` are
     /// screen-pixel deltas (same magnitude the design canvas pans by).
     pub fn dispatch_wheel(&mut self, scene_x: f32, scene_y: f32, dx: f32, dy: f32) -> bool {
         use jian_core::geometry::point;
         use jian_core::gesture::pointer::WheelEvent;
-        let mut event = WheelEvent::simple(point(scene_x, scene_y), point(dx, dy));
-        event.t_ms = self.last_now_ms;
-        let scroll_before = self.binding_overlay.scroll_revision();
-        // Desktop hosts still use this bool adapter. Keep its consumed result
-        // while sharing scroll offsets, hit geometry and clocks with the core.
-        let outcome = self.dispatch_input(crate::PreviewInputEnvelope::new(
-            crate::PreviewInput::Wheel {
-                event,
-                phase: crate::ScrollPhase::Changed,
-            },
-        ));
-        scroll_before != self.binding_overlay.scroll_revision()
-            || !outcome.semantic_handlers.is_empty()
+        if self.transition_active() {
+            return false;
+        }
+        let (rt_x, rt_y) = self.scene_to_runtime(scene_x, scene_y);
+        let ev = WheelEvent::simple(point(rt_x, rt_y), point(dx, dy));
+        !self.runtime.dispatch_wheel(ev).is_empty()
     }
 
     /// Translate a scene-space point into the runtime's hit-test space.
@@ -534,8 +512,16 @@ impl PreviewSession {
             };
             return (r.origin.x + fx * r.size.x, r.origin.y + fy * r.size.y);
         }
-        // The spatial index already includes authored root offsets.
-        // Without a mapped paint node, scene coordinates are the fallback.
+        for frame in &self.root_frames {
+            let rect = frame.scene_rect;
+            if x >= rect.origin.x
+                && x <= rect.origin.x + rect.size.x
+                && y >= rect.origin.y
+                && y <= rect.origin.y + rect.size.y
+            {
+                return (x - frame.offset.0, y - frame.offset.1);
+            }
+        }
         (x, y)
     }
 
@@ -554,7 +540,7 @@ impl PreviewSession {
     pub(crate) fn deepest_mapped_hit(&self, x: f32, y: f32) -> Option<(Rect, Rect, String)> {
         let scene = self.overlay_runtime_state(&self.scene);
         let page = scene.active_page()?;
-        for node in &page.children {
+        for node in page.children.iter().rev() {
             if let Some(hit) = self.deepest_mapped_in(node, x, y) {
                 return Some(hit);
             }
@@ -575,7 +561,7 @@ impl PreviewSession {
         {
             return None;
         }
-        for child in self.mapped_children(node) {
+        for child in self.mapped_children(node).iter().rev() {
             if let Some(hit) = self.deepest_mapped_in(child, x, y) {
                 return Some(hit);
             }
@@ -609,16 +595,49 @@ impl PreviewSession {
     /// `pub(crate)` so `mod.rs`'s test-only `node_rect`
     /// accessor can reach it from the parent module.
     ///
-    /// Use the engine's absolute coordinates, including authored root
-    /// origins, so mapping and the spatial index share the same space.
+    /// Merge note (responsive-m1a into main): jian-core's `node_rect`
+    /// now bakes a non-viewport-normalized root's own authored origin
+    /// into every rect under it (see `op-pen-loader`'s `compute_layout`
+    /// for the full mechanism) — jian's own convention calls this
+    /// "absolute scene coordinates" and its own runtimes hit-test
+    /// directly against it. OpenPencil's PreviewSession keeps a SECOND,
+    /// separate coordinate frame ("runtime space", root-relative) for
+    /// `Runtime::dispatch_pointer` and friends, which `scene_to_runtime`
+    /// above maps into via this function. Subtract the root's authored
+    /// origin back out so `runtime_rect` keeps returning root-relative
+    /// space regardless of jian-core's own internal convention.
     pub(crate) fn runtime_rect(&self, id: &str) -> Option<Rect> {
         let doc = self.runtime.document.as_ref()?;
         let key = doc.tree.by_id.get(id).copied()?;
         let r = self.runtime.layout.node_rect(key)?;
+        let (ox, oy) = self.root_authored_origin_of(doc, key);
         Some(Rect {
-            origin: Point2D::new(r.origin.x, r.origin.y),
+            origin: Point2D::new(r.origin.x - ox, r.origin.y - oy),
             size: Point2D::new(r.size.width, r.size.height),
         })
+    }
+
+    /// Walk `key` up to its tree root and return that root's authored
+    /// `(x, y)`, or `(0, 0)` when the root is viewport-normalized (its
+    /// origin is already baked out of `node_rect` by jian-core) or has
+    /// no authored position.
+    fn root_authored_origin_of(
+        &self,
+        doc: &jian_core::document::RuntimeDocument,
+        key: jian_core::document::tree::NodeKey,
+    ) -> (f32, f32) {
+        let mut cur = key;
+        while let Some(parent) = doc.tree.nodes.get(cur).and_then(|n| n.parent) {
+            cur = parent;
+        }
+        if self.runtime.layout.is_origin_normalized(cur) {
+            return (0.0, 0.0);
+        }
+        doc.tree
+            .nodes
+            .get(cur)
+            .map(|root| op_pen_loader::root_authored_origin(&root.schema))
+            .unwrap_or((0.0, 0.0))
     }
 
     /// Advance focus to the next focusable widget (Tab). `focus_next` now
@@ -664,7 +683,7 @@ impl PreviewSession {
     }
 
     /// Test-only: translate a scene-space point into the runtime's
-    /// engine hit-test space (exercises the tap coordinate fix).
+    /// root-relative space (exercises the tap coordinate fix).
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn scene_to_runtime_for_test(&self, x: f32, y: f32) -> (f32, f32) {
         self.scene_to_runtime(x, y)

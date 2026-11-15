@@ -181,19 +181,6 @@ impl<'a> Widget for FileMenu<'a> {
             );
             y += ROW_HEIGHT;
         }
-        if self.has_share_row() {
-            paint_row(
-                cx,
-                &self.theme,
-                rect.origin.x,
-                y,
-                Icon::Share,
-                t(self.ui, "share"),
-                "",
-                h(self.share_row()),
-            );
-            y += ROW_HEIGHT;
-        }
         y = paint_divider(cx, &self.theme, rect, y);
         paint_header(cx, &self.theme, rect.origin.x, y, t(self.ui, "recentFiles"));
         y += HEADER_HEIGHT;

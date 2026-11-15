@@ -159,35 +159,6 @@ pub(crate) fn scene_template_preview(template_id: &str) -> Option<TemplatePrevie
         "quicksort-lecture-deck" => preview!(78, "quicksort-lecture-deck"),
         "compound-effect-card" => preview!(79, "compound-effect-card"),
         "analytics-metric-card" => preview!(80, "analytics-metric-card"),
-        "coffee-order-app" => preview!(81, "coffee-order-app"),
-        "coffee-order-app-single" => preview!(97, "coffee-order-app-single"),
-        "budget-ledger-app" => preview!(82, "budget-ledger-app"),
-        "habit-fitness-app" => preview!(83, "habit-fitness-app"),
-        "coffee-counter-desktop" => preview!(84, "coffee-counter-desktop"),
-        "coffee-counter-desktop-single" => preview!(98, "coffee-counter-desktop-single"),
-        "sales-dashboard-web" => preview!(85, "sales-dashboard-web"),
-        "onboarding-training-deck" => preview!(86, "onboarding-training-deck"),
-        "research-findings-deck" => preview!(87, "research-findings-deck"),
-        "daybreak-coffee-site" => preview!(88, "daybreak-coffee-site"),
-        "openpencil-intro-deck" => preview!(89, "openpencil-intro-deck"),
-        "openpencil-intro-deck-43" => preview!(90, "openpencil-intro-deck-43"),
-        "coffee-world-carousel" => preview!(91, "coffee-world-carousel"),
-        "focus-mode-tutorial" => preview!(92, "focus-mode-tutorial"),
-        "weekly-review-infographic" => preview!(93, "weekly-review-infographic"),
-        "idea-to-publish-flow" => preview!(94, "idea-to-publish-flow"),
-        "blank-vs-example-contrast" => preview!(95, "blank-vs-example-contrast"),
-        "city-music-fest-poster" => preview!(96, "city-music-fest-poster"),
-        _ => None,
-    }
-}
-
-/// Full portrait renders for Home's separated phone showcase. These are
-/// presentation assets, not additional templates or generation choices.
-pub(crate) fn coffee_app_screen_preview(index: usize) -> Option<TemplatePreview> {
-    match index {
-        0 => preview!(99, "coffee-order-app-home-preview"),
-        1 => preview!(100, "coffee-order-app-menu-preview"),
-        2 => preview!(101, "coffee-order-app-order-preview"),
         _ => None,
     }
 }
@@ -213,18 +184,6 @@ mod tests {
                 preview.image_id
             );
         }
-        for index in 0..3 {
-            let preview = coffee_app_screen_preview(index).expect("phone showcase page");
-            assert!(
-                ids.insert(preview.image_id),
-                "showcase must not reuse a template cache id"
-            );
-            assert!(!preview.bytes.expect("native portrait").is_empty());
-            assert!(preview
-                .route
-                .starts_with("/pkg/assets/scene_template_previews/"));
-        }
-        assert!(coffee_app_screen_preview(3).is_none());
         assert!(scene_template_preview("no-such-template").is_none());
     }
 

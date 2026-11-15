@@ -269,7 +269,6 @@ fn basic_tier_components_prompt_keeps_both_manifest_and_teaching() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 
@@ -388,7 +387,6 @@ fn tight_budget_dashboard_keeps_component_composition() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 
@@ -524,7 +522,6 @@ fn tight_budget_dashboard_without_library_does_not_pin_component_composition() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 

@@ -21,12 +21,11 @@ use op_host_services::chat_subprocess::SubprocessProvider;
 
 /// Build the `ChatProvider` for an agent index (into
 /// `AgentProvider::ALL`: 0 ClaudeCode, 1 CodexCli, 2 OpenCode,
-/// 3 GithubCopilot, 4 Antigravity, 5 GrokBuild, 6 DeepSeekHarness, 7 Kimi). Claude Code uses its
+/// 3 GithubCopilot, 4 Antigravity, 5 GrokBuild, 6 DeepSeekHarness). Claude Code uses its
 /// dedicated SDK adapter; Codex uses the subprocess transport; Copilot
 /// rides the official SDK; OpenCode chats over its local HTTP server
 /// (`chat_http_server.rs`); DeepSeek Harness is a one-shot subprocess
-/// bridge (`chat_subprocess_dsh.rs`). Kimi Code has no canvas-tool wiring,
-/// so its chat turns ride the same tool-free transport as generation.
+/// bridge (`chat_subprocess_dsh.rs`).
 ///
 /// `chat_session` selects the chat-panel constructors. Claude Code and Copilot
 /// both receive multi-turn context through the owning tab's `ChatRequest`
@@ -52,8 +51,6 @@ fn provider_for_agent(agent_idx: usize, chat_session: bool) -> Option<Box<dyn Ch
         4 => subprocess_provider(CliName::Antigravity, chat_session),
         5 => subprocess_provider(CliName::GrokBuild, chat_session),
         6 => subprocess_provider(CliName::Dsh, chat_session),
-        7 => SubprocessProvider::for_cli_generation(CliName::Kimi)
-            .map(|p| Box::new(p) as Box<dyn ChatProvider>),
         _ => None,
     }
 }
@@ -89,11 +86,6 @@ fn provider_for_selected_model_impl(
     chat_session: bool,
 ) -> Option<Box<dyn ChatProvider>> {
     if let Some(entry) = host.editor_state().chat.selected_model_entry() {
-        if entry.hosted_route_id().is_some() {
-            return provider_for_hosted_selection_with(host.editor_state(), entry, |route_id| {
-                op_host_services::hosted_models::provider_for_route(route_id).ok()
-            });
-        }
         if entry.builtin_provider_id.is_some() {
             return provider_for_builtin(host.editor_state(), entry);
         }
@@ -105,22 +97,6 @@ fn provider_for_selected_model_impl(
         host.editor_state().editor_ui.chat_selected_agent,
         chat_session,
     )
-}
-
-/// Require the complete current catalog row before resolving its opaque route.
-/// Hosted metadata is never interpreted as a local agent or BYOK configuration.
-pub(super) fn provider_for_hosted_selection_with(
-    state: &EditorState,
-    entry: &ModelEntry,
-    resolve: impl FnOnce(&str) -> Option<Box<dyn ChatProvider>>,
-) -> Option<Box<dyn ChatProvider>> {
-    let route = entry.hosted.as_ref()?;
-    if !state.editor_ui.account.is_signed_in()
-        || !state.editor_ui.hosted_model_routes().contains(route)
-    {
-        return None;
-    }
-    resolve(route.route_id())
 }
 
 /// When the selected chat model is a ready builtin (API-key) entry,
@@ -164,10 +140,7 @@ pub(crate) fn builtin_provider_with_tools(
 pub(crate) fn selected_cli_model_id(host: &WidgetHostNative) -> Option<String> {
     let state = host.editor_state();
     let entry = state.chat.selected_model_entry()?;
-    if entry.hosted_route_id().is_some()
-        || entry.builtin_provider_id.is_some()
-        || entry.acp_agent_id().is_some()
-    {
+    if entry.builtin_provider_id.is_some() || entry.acp_agent_id().is_some() {
         return None;
     }
     let routed = op_editor_core::AgentProvider::ALL.get(state.editor_ui.chat_selected_agent)?;
@@ -246,9 +219,6 @@ fn acp_config_for_provider(agent: &op_editor_core::AcpAgentConfig) -> op_acp::Ac
 
 pub(super) fn selected_provider_label(host: &WidgetHostNative) -> String {
     if let Some(entry) = host.editor_state().chat.selected_model_entry() {
-        if entry.hosted_route_id().is_some() {
-            return "OpenPencil Hosted".into();
-        }
         if let Some(id) = entry.builtin_provider_id.as_deref() {
             if let Some(agent) = host
                 .editor_state()
@@ -300,22 +270,7 @@ mod routing_tests {
         let chat = provider_for_agent(6, true).expect("chat DSH routes too");
         assert_eq!(chat.provider_label(), "DeepSeek Harness");
         // Out-of-range agent indices stay unrouted (fail-closed).
-        assert!(provider_for_agent(8, false).is_none());
-    }
-
-    #[test]
-    fn kimi_routes_both_paths_to_the_tool_free_kimi_transport() {
-        // ALL index 7 is the append-only Kimi Code tail slot.
-        assert_eq!(
-            op_editor_core::AgentProvider::ALL[7],
-            op_editor_core::AgentProvider::Kimi
-        );
-        // Kimi has no canvas-tool wiring, so the chat panel takes the same
-        // generation transport as the orchestrator instead of no route.
-        for chat_session in [false, true] {
-            let provider = provider_for_agent(7, chat_session).expect("Kimi routes to a provider");
-            assert_eq!(provider.provider_label(), "Kimi Code");
-        }
+        assert!(provider_for_agent(7, false).is_none());
     }
 
     #[test]

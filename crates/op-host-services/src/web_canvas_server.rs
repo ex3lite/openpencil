@@ -474,19 +474,10 @@ pub fn handle_web_canvas_request(
             // merely a peer holding the operator's file (local/managed). That
             // decides whether a sync conflict may be auto-resolved — see
             // `op-host-web/src/live_sync_glue.rs::auto_resolve_is_safe`.
-            // `fileBound`: a file backs this document (`--file` or a recent
-            // open), so the browser opens onto its canvas rather than Home.
-            // `siteImport`: `/api/ai/site-import` is served (Home offers it).
-            // `variants`: `/api/ai/standard` runs side-by-side directions.
-            // `generators`: `/api/generator/run` is served (every mode).
             body: format!(
-                r#"{{"running":true,"port":{},"localIp":"127.0.0.1","server":"openpencil-mcp","mode":"web-canvas","serveMode":"{}","fileBound":{},"siteImport":{},"variants":{},"generators":{}}}"#,
+                r#"{{"running":true,"port":{},"localIp":"127.0.0.1","server":"openpencil-mcp","mode":"web-canvas","serveMode":"{}"}}"#,
                 state.port,
-                state.mode.wire_name(),
-                state.current_path.is_some(),
-                state.mode.allows_site_import(),
-                state.mode.allows_design_variants(),
-                crate::generator_run_route::SERVED
+                state.mode.wire_name()
             ),
         },
         ("POST", "/api/mcp/server") => update_mcp_server_settings(body, state),
@@ -648,7 +639,6 @@ pub fn handle_web_canvas_request(
             },
         },
         ("POST", "/api/file/open-recent") => open_recent_file(body, state),
-        ("POST", "/api/file/unbind") => unbind_current_file(state),
         ("POST", "/api/export/pdf") => export_pdf_download(body, state),
         ("POST", "/api/export/raster") => export_raster_download(body, state),
         ("GET", "/api/ai/models") => WebReply {

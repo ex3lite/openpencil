@@ -73,8 +73,6 @@ pub struct CanvasViewport<'a> {
     pub(super) viewport: DocViewport,
     /// The resolved render scene — the node tree the painter walks.
     pub(super) scene: &'a LayoutScene,
-    /// A normal reader or single-page workspace paints only this root subtree.
-    pub(super) focused_board: Option<String>,
     /// Anchor-selected node id (scene-space string). Empty = none.
     pub(super) selected: String,
     /// Full selection set (scene-space string ids).
@@ -132,9 +130,6 @@ pub struct CanvasViewport<'a> {
     /// carries no node names); painted screen-space above each root
     /// frame (TS `drawFrameLabelColored`).
     pub(super) frame_labels: Vec<FrameLabel>,
-    /// Ids of generator frames on the active page — each gets a small
-    /// screen-space badge (see `canvas_generator_badge`).
-    pub(super) generator_badges: Vec<String>,
     /// Bounded collaboration cursor/selection projection. It is painted
     /// below the local selection overlay, so local edit affordances remain
     /// visually authoritative.
@@ -228,7 +223,6 @@ impl<'a> Widget for CanvasViewport<'a> {
 
         // 3. Walk the active page; clip enforces widget bounds.
         if let Some(page) = self.scene.active_page() {
-            let roots = self.focused_roots(page);
             let viewport_origin = Point2D::new(
                 rect.origin.x + viewport.pan_x,
                 rect.origin.y + viewport.pan_y,
@@ -255,7 +249,7 @@ impl<'a> Widget for CanvasViewport<'a> {
                 .as_ref()
                 .map(|overlay| overlay.node_id.as_str());
             let generation_sets = super::canvas_generation_scan::generating_paint_sets(
-                roots,
+                &page.children,
                 indicators.as_ref(),
                 self.now_ms,
             );
@@ -292,7 +286,7 @@ impl<'a> Widget for CanvasViewport<'a> {
             }
             let child_hits = super::canvas_viewport_paint::paint_scene_nodes_with_options_hiding(
                 cx,
-                roots,
+                &page.children,
                 viewport_origin,
                 viewport.zoom,
                 edit_caret.clone(),
@@ -337,7 +331,7 @@ impl<'a> Widget for CanvasViewport<'a> {
             if let Some(indicators) = indicators.as_ref() {
                 super::canvas_agent_cursor::paint_agent_cursors(
                     cx,
-                    roots,
+                    &page.children,
                     viewport_origin,
                     viewport.zoom,
                     self.now_ms,
@@ -383,7 +377,7 @@ impl<'a> Widget for CanvasViewport<'a> {
             }
             super::canvas_frame_labels::paint_frame_labels(
                 cx,
-                roots,
+                &page.children,
                 frame_labels,
                 if selected_root_frame_label {
                     &[]
@@ -394,18 +388,9 @@ impl<'a> Widget for CanvasViewport<'a> {
                 viewport,
                 rect,
             );
-            super::canvas_generator_badge::paint_generator_badges(
-                cx,
-                roots,
-                &self.generator_badges,
-                &self.theme,
-                viewport_origin,
-                viewport,
-                rect,
-            );
             super::canvas_collab_presence::paint(
                 cx,
-                roots,
+                &page.children,
                 &self.collab_presence,
                 rect,
                 viewport,
@@ -485,7 +470,7 @@ impl<'a> Widget for CanvasViewport<'a> {
                 } else if !self.selected_set.is_empty() {
                     super::canvas_selection_overlay::paint_multi_selection_overlays(
                         cx,
-                        self.focused_roots(page),
+                        &page.children,
                         &self.selected_set,
                         &selection_input,
                     );

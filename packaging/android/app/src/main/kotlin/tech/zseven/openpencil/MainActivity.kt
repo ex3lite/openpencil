@@ -53,9 +53,6 @@ class MainActivity : ComponentActivity() {
     private var exportStagingDir: File? = null
     private lateinit var documentSave: DocumentSaveCoordinator
     private var backgroundNotificationPermissionRequested = false
-    private val chatAttachmentPicker = ChatAttachmentPicker(this) {
-        if (::surfaceView.isInitialized) surfaceView else null
-    }
 
     private val backgroundNotificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -138,7 +135,6 @@ class MainActivity : ComponentActivity() {
             configure(doc, editorMode, fonts)
             setOpenDocumentHandler(::launchDocumentPicker)
             setImportImageOrSvgHandler(::launchImageOrSvgPicker)
-            setPickChatAttachmentHandler(chatAttachmentPicker::launch)
             setExportDocumentHandler(::beginDocumentExport)
             setSystemChromeAppearanceHandler { prefersLightIcons ->
                 updateSystemChromeAppearance(window, prefersLightIcons)
@@ -168,18 +164,6 @@ class MainActivity : ComponentActivity() {
         surfaceView.setSaveDocumentHandler { documentSave.begin() }
 
         val regionStore = surfaceView.authRuntime.regionStore()
-        // Registered first so native login/account overlays retain priority.
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (surfaceView.handleSystemBack()) return
-                isEnabled = false
-                try {
-                    onBackPressedDispatcher.onBackPressed()
-                } finally {
-                    isEnabled = true
-                }
-            }
-        })
         loginBackCallback = object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() {
                 if (accountCenter.isVisible) {
@@ -669,9 +653,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showOpenDocumentError() {
-        val tag = if (::surfaceView.isInitialized) surfaceView.localeCode() else EngineLanguage.storedPreference(this)
-        val copy = EngineLanguage.resourceContext(this, tag).getText(R.string.document_open_failed)
-        Toast.makeText(this, copy, Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, R.string.document_open_failed, Toast.LENGTH_SHORT).show()
     }
 
     private fun showImageImportError() {

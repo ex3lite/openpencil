@@ -32,7 +32,7 @@ const CREDENTIAL_STORAGE_KEY: &str = "openpencil-rust-web-credentials";
 
 /// Parse a managed embedding host's locale bootstrap hint. URL decoding uses
 /// the browser-compatible form codec; the accepted values remain the strict
-/// `zh-CN | en-US` bridge contract.
+/// canonical editor locale bridge contract.
 pub(crate) fn host_locale_from_query(search: &str) -> Option<Locale> {
     let query = search.strip_prefix('?').unwrap_or(search);
     url::form_urlencoded::parse(query.as_bytes())
@@ -265,9 +265,6 @@ struct SettingsPayload {
     image_gen_profiles: Option<Vec<ImageGenProfilePayload>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     active_image_gen_profile_id: Option<String>,
-    /// Chat-panel image-generation toggle; older snapshots default to off.
-    #[serde(default)]
-    image_gen_enabled: Option<bool>,
     #[serde(default)]
     recent_files: Option<Vec<RecentFilePayload>>,
     #[serde(default)]
@@ -382,7 +379,6 @@ fn to_payload(state: &EditorState) -> SettingsPayload {
         builtin_agents: None,
         image_gen_profiles: None,
         active_image_gen_profile_id: None,
-        image_gen_enabled: Some(eui.agent_settings.image_gen_enabled),
         recent_files: Some(
             eui.recent_files
                 .iter()
@@ -446,9 +442,6 @@ fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
     }
     if let Some(enabled) = payload.experimental_features_enabled {
         eui.agent_settings.experimental_features_enabled = enabled;
-    }
-    if let Some(enabled) = payload.image_gen_enabled {
-        eui.agent_settings.image_gen_enabled = enabled;
     }
     if let Some(agents) = payload.builtin_agents {
         eui.agent_settings.clear_builtin_model_catalogs();

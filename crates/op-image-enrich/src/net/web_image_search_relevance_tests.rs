@@ -41,7 +41,6 @@ fn relevance_fence_rejects_holiday_hit_and_accepts_armchair_title_or_tag() {
 #[test]
 fn relevance_fence_returns_empty_when_no_hit_mentions_the_subject() {
     let hits = vec![RawHit {
-        original: None,
         id: "holiday".to_string(),
         thumb_url: "https://x/holiday.jpg".to_string(),
         attribution: "By X".to_string(),
@@ -62,7 +61,6 @@ fn relevance_fence_ranks_more_complete_matches_stably() {
     ]
     .into_iter()
     .map(|(id, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -90,7 +88,6 @@ fn multi_word_product_query_rejects_one_generic_match() {
     ]
     .into_iter()
     .map(|(id, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -108,7 +105,6 @@ fn multi_word_product_query_rejects_one_generic_match() {
 #[test]
 fn single_word_product_query_keeps_one_exact_subject_match() {
     let hits = vec![RawHit {
-        original: None,
         id: "armchair".to_string(),
         thumb_url: "https://x/armchair.jpg".to_string(),
         attribution: String::new(),
@@ -138,7 +134,6 @@ fn product_photo_query_rejects_room_scenes_unless_the_query_requests_one() {
     ]
     .into_iter()
     .map(|(id, title, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -152,7 +147,6 @@ fn product_photo_query_rejects_room_scenes_unless_the_query_requests_one() {
     assert_eq!(ids, ["product"]);
 
     let requested_scene = vec![RawHit {
-        original: None,
         id: "scene".to_string(),
         thumb_url: "https://x/scene.jpg".to_string(),
         attribution: String::new(),
@@ -187,7 +181,6 @@ fn lounge_chair_does_not_opt_into_scenes_but_explicit_scene_phrases_do() {
     ]
     .into_iter()
     .map(|(id, title, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -227,7 +220,6 @@ fn concise_subject_dense_vase_title_beats_long_kylix_metadata() {
     ]
     .into_iter()
     .map(|(id, title, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -254,7 +246,6 @@ fn photo_query_rejects_explicit_illustration_and_catalog_hits() {
     ]
     .into_iter()
     .map(|(id, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -288,7 +279,6 @@ fn isolated_query_requires_positive_isolation_metadata() {
     ]
     .into_iter()
     .map(|(id, metadata)| RawHit {
-        original: None,
         id: id.to_string(),
         thumb_url: format!("https://x/{id}.jpg"),
         attribution: String::new(),
@@ -307,73 +297,8 @@ fn isolated_query_requires_positive_isolation_metadata() {
 fn hyphenated_compound_survives_the_two_keyword_rewrite() {
     // The two-word tail equals the query itself, so no rewrite is offered.
     assert!(rewrite_queries("push-up exercise", "").is_empty());
-    // Three surviving subject words: no shorter retry at all (0930 rule).
-    assert!(rewrite_queries("dark gym push-up exercise", "").is_empty());
-    let rewrites = rewrite_queries("gym push-up exercise", "");
-    assert_eq!(rewrites[0], "gym push-up");
-    let rewrites = rewrite_queries("fresh - salad", "");
-    assert_eq!(rewrites[0], "fresh salad");
-}
-
-fn raw(id: &str, title: &str, tags: &str) -> RawHit {
-    RawHit {
-        original: None,
-        id: id.to_string(),
-        thumb_url: format!("https://x/{id}.jpg"),
-        attribution: String::new(),
-        title: title.to_string(),
-        relevance_metadata: format!("{title} {tags}"),
-    }
-}
-
-const BURGER_INTENT: &str = "minimal product photography of cheeseburger close-up";
-
-/// 2026-09-30: a photo contract that comes only from the slot's prompt keeps
-/// artwork out but no longer demands the subject in the title — Openverse
-/// titles food photos "[139/365]" and names the burger in its tags.
-#[test]
-fn a_prompt_only_photo_contract_accepts_a_tagged_photo_with_a_bare_title() {
-    let kept = retain_relevant_hits_for_intent(
-        vec![raw("n", "[139/365]", "cheeseburger close food lunch")],
-        "cheeseburger close-up",
-        BURGER_INTENT,
-    );
-    assert_eq!(kept.len(), 1);
-    let fenced = retain_relevant_hits_for_intent(
-        vec![raw(
-            "art",
-            "Burger poster",
-            "cheeseburger illustration painting",
-        )],
-        "cheeseburger close-up",
-        BURGER_INTENT,
-    );
-    assert!(fenced.is_empty(), "artwork is still not a product photo");
-}
-
-#[test]
-fn a_query_that_asks_for_a_photo_still_needs_the_subject_in_the_title() {
-    let kept = retain_relevant_hits_for_intent(
-        vec![raw("n", "[139/365]", "cheeseburger close food lunch")],
-        "cheeseburger studio photo",
-        "",
-    );
-    assert!(kept.is_empty());
-}
-
-#[test]
-fn hashtag_soup_in_a_title_is_not_subject_evidence() {
-    let kept = retain_relevant_hits_for_intent(
-        vec![raw(
-            "event",
-            "Magnifique Skin launch #event #beauty #skincare #model",
-            "building city concert exhibition fashion festival",
-        )],
-        "skincare model",
-        "",
-    );
-    assert!(
-        kept.is_empty(),
-        "an event crowd shot is not a skincare model"
-    );
+    let rewrites = rewrite_queries("dark gym push-up exercise", "");
+    assert_eq!(rewrites[0], "push-up exercise");
+    let rewrites = rewrite_queries("fresh - salad bowl", "");
+    assert_eq!(rewrites[0], "salad bowl");
 }

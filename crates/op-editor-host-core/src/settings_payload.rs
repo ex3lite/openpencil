@@ -149,7 +149,6 @@ pub fn image_gen_profile_to_payload(profile: &ImageGenProfile) -> ImageGenProfil
             ImageGenProvider::Replicate => "replicate",
             ImageGenProvider::Atlas => "atlas",
             ImageGenProvider::Custom => "custom",
-            ImageGenProvider::Workbench => "workbench",
         }
         .into(),
         api_key: profile.api_key.clone(),
@@ -165,7 +164,6 @@ pub fn image_gen_profile_from_payload(payload: ImageGenProfilePayload) -> Option
         "replicate" => ImageGenProvider::Replicate,
         "atlas" => ImageGenProvider::Atlas,
         "custom" => ImageGenProvider::Custom,
-        "workbench" => ImageGenProvider::Workbench,
         _ => return None,
     };
     Some(ImageGenProfile {

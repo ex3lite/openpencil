@@ -10,7 +10,7 @@ use super::super::palette::fade;
 use super::super::{HomeLayout, HomeSurface, StudioPalette, EXPLORE_FAMILIES};
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
-use crate::{Point2D, Rect};
+use crate::{Color, Point2D, Rect};
 use op_editor_core::HomeHit;
 
 pub(super) fn paint_explore(
@@ -54,7 +54,7 @@ pub(super) fn paint_explore(
         ),
     );
     cx.backend
-        .fill_round_rect(underline, 1.5, fade(palette.link, alpha));
+        .fill_round_rect(underline, 1.5, fade(palette.blue, alpha));
     cx.backend.restore();
     let sub_w =
         cx.backend
@@ -100,40 +100,30 @@ pub(super) fn paint_recent(
         palette.line,
         1.0,
     );
-    let (mut title_rect, mut content_rect) = super::super::recent_names::row_rects(layout, locale);
-    title_rect.origin.y += dy;
-    content_rect.origin.y += dy;
-    let title = super::super::recent_names::fit_label(
-        copy::home_str(locale, "home.recent.title"),
-        title_rect.size.x,
-        |label| {
-            cx.backend
-                .measure_text_family_styled(label, 16.0, SANS, 650, false)
-        },
-    );
     text_weighted(
         cx,
-        &title,
+        copy::home_str(locale, "home.recent.title"),
         Point2D::new(
-            title_rect.origin.x,
-            jian_widgets::centered_text_baseline_y(title_rect, 16.0),
+            row.origin.x,
+            jian_widgets::centered_text_baseline_y(
+                Rect::xywh(row.origin.x, row.origin.y, 96.0, 32.0),
+                16.0,
+            ),
         ),
         16.0,
         palette.ink,
         650,
     );
     if surface.recent_files.is_empty() {
-        let empty = super::super::recent_names::fit_label(
-            copy::home_str(locale, "home.recent.empty"),
-            content_rect.size.x,
-            |label| cx.backend.measure_text_family(label, 12.0, SANS),
-        );
         text(
             cx,
-            &empty,
+            copy::home_str(locale, "home.recent.empty"),
             Point2D::new(
-                content_rect.origin.x,
-                jian_widgets::centered_text_baseline_y(content_rect, 12.0),
+                row.origin.x + 96.0,
+                jian_widgets::centered_text_baseline_y(
+                    Rect::xywh(row.origin.x, row.origin.y, row.size.x, 32.0),
+                    12.0,
+                ),
             ),
             12.0,
             palette.muted,
@@ -142,22 +132,9 @@ pub(super) fn paint_recent(
         for (index, name) in surface.recent_files.iter().take(5).enumerate() {
             let chip = layout.recent_chips[index];
             let chip = Rect::xywh(chip.origin.x, chip.origin.y + dy, chip.size.x, chip.size.y);
-            let hovered = surface.state.hover == Some(HomeHit::Recent(index));
-            cx.backend.fill_round_rect(
-                chip,
-                6.0,
-                if hovered {
-                    palette.button_hover
-                } else {
-                    palette.raised
-                },
-            );
             cx.backend
-                .stroke_round_rect(chip, 6.0, palette.raised_line, 1.0);
-            let label =
-                super::super::recent_names::fit_label(name, (chip.size.x - 22.0).max(0.0), |s| {
-                    cx.backend.measure_text_family(s, 12.0, SANS)
-                });
+                .fill_round_rect(chip, 6.0, Color::rgb_u8(0xEA, 0xF2, 0xFF));
+            let label: String = name.chars().take(9).collect();
             text(
                 cx,
                 &label,
@@ -166,7 +143,7 @@ pub(super) fn paint_recent(
                     jian_widgets::centered_text_baseline_y(chip, 12.0),
                 ),
                 12.0,
-                palette.link,
+                Color::rgb_u8(0x37, 0x61, 0x99),
             );
         }
     }
@@ -184,7 +161,7 @@ pub(super) fn paint_recent(
         if hovered {
             palette.button_hover
         } else {
-            palette.raised
+            palette.panel
         },
     );
     cx.backend.stroke_round_rect(
@@ -193,7 +170,7 @@ pub(super) fn paint_recent(
         if hovered {
             palette.button_hover_line
         } else {
-            palette.raised_line
+            palette.line
         },
         1.0,
     );
@@ -220,10 +197,52 @@ pub(super) fn paint_recent(
         12.0,
         palette.ink,
     );
-    super::super::recent_names::paint_hover_name(surface, cx, layout, dy, palette);
 }
 
 /// Every palette token at `factor` of its alpha (an entrance fade).
 pub(super) fn fade_all(palette: StudioPalette, factor: f32) -> StudioPalette {
-    palette.faded(factor)
+    let faded = |color| fade(color, factor);
+    StudioPalette {
+        page: faded(palette.page),
+        panel: faded(palette.panel),
+        line: faded(palette.line),
+        ink: faded(palette.ink),
+        muted: faded(palette.muted),
+        sub: faded(palette.sub),
+        context: faded(palette.context),
+        divider: faded(palette.divider),
+        blue: faded(palette.blue),
+        blue_hover: faded(palette.blue_hover),
+        blue_soft: faded(palette.blue_soft),
+        segment_bg: faded(palette.segment_bg),
+        segment_line: faded(palette.segment_line),
+        input_line: faded(palette.input_line),
+        placeholder: faded(palette.placeholder),
+        yellow: faded(palette.yellow),
+        disabled_primary: faded(palette.disabled_primary),
+        preview: faded(palette.preview),
+        preview_line: faded(palette.preview_line),
+        selected_tab: faded(palette.selected_tab),
+        tab_hover: faded(palette.tab_hover),
+        tab_fill: faded(palette.tab_fill),
+        tab_hover_fill: faded(palette.tab_hover_fill),
+        tab_hover_line: faded(palette.tab_hover_line),
+        tab_selected_fill: faded(palette.tab_selected_fill),
+        tab_selected_line: faded(palette.tab_selected_line),
+        tabs_hairline: faded(palette.tabs_hairline),
+        button_hover: faded(palette.button_hover),
+        button_hover_line: faded(palette.button_hover_line),
+        eyebrow: faded(palette.eyebrow),
+        preview_desc: faded(palette.preview_desc),
+        preview_footer: faded(palette.preview_footer),
+        status_green: faded(palette.status_green),
+        chip_bg: faded(palette.chip_bg),
+        chip_line: faded(palette.chip_line),
+        tint_knowledge: faded(palette.tint_knowledge),
+        tint_tutorial: faded(palette.tint_tutorial),
+        tint_poster: faded(palette.tint_poster),
+        tile_knowledge: faded(palette.tile_knowledge),
+        tile_tutorial: faded(palette.tile_tutorial),
+        tile_poster: faded(palette.tile_poster),
+    }
 }

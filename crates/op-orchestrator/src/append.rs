@@ -78,7 +78,6 @@ mod tests {
 
     fn make_plan(subtask_ids_labels: &[(&str, &str)]) -> OrchestratorPlan {
         OrchestratorPlan {
-            shared_context: None,
             root_frame: RootFrameSpec {
                 id: "original-root".into(),
                 name: "Design".into(),
@@ -106,12 +105,10 @@ mod tests {
                     screen: None,
                     generated_root_id: None,
                     existing_section_labels: None,
-                    covers: None,
                     retry_feedback: None,
                 })
                 .collect(),
             style_guide_name: None,
-            palette: None,
         }
     }
 

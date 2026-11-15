@@ -11,22 +11,12 @@ use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect};
-#[path = "workspace_surface_preview.rs"]
-mod preview_entry;
-#[path = "workspace_surface_title.rs"]
-mod title;
-pub use title::workspace_title;
-#[path = "workspace_surface_history.rs"]
-mod history;
-pub use preview_entry::header_button_width;
-
 use op_editor_core::{
     EditorState, EditorUiState, HomeFamily, WorkspaceHit, WorkspaceState, WorkspaceView,
     WORKSPACE_DECK_STRIP_H, WORKSPACE_HEADER_H, WORKSPACE_TOOLBAR_H,
 };
 
 pub use super::home_surface::StudioPalette;
-use super::workspace_quality::{quality_chip_rect, quality_panel_layout, QualityPanelLayout};
 
 /// Back circle button (36 px) inset.
 /// Left inset of the header's back circle. The desktop window is
@@ -78,14 +68,6 @@ const STRIP_ACTION_H: f32 = THUMB_H + THUMB_LABEL_H;
 /// Failed-phase banner buttons.
 const BANNER_BUTTON_W: f32 = 96.0;
 const BANNER_BUTTON_H: f32 = 34.0;
-/// Width kept between the pager arrows for the position label.
-const PAGER_LABEL_W: f32 = 44.0;
-/// The template draft banner's single action (接入模型 / 让 AI 细化).
-const DRAFT_BUTTON_W: f32 = 132.0;
-/// The shared-document banner's Make-one-like-this action.
-const MAKE_SAME_BUTTON_W: f32 = 184.0;
-/// Gap between the header's outline buttons.
-const HEADER_BUTTON_GAP: f32 = 8.0;
 
 /// ease-out-cubic — the settle curve the entrance choreography uses.
 fn ease_out_cubic(t: f32) -> f32 {
@@ -139,11 +121,7 @@ pub struct WorkspaceLayout {
     pub zoom_fit: Rect,
     pub zoom_in: Rect,
     pub strip: Option<Rect>,
-    /// Thumbnail slots, left to right. Slot `i` shows board
-    /// `thumb_first + i` — a deck longer than the strip slides this window
-    /// to keep the selected board in view instead of dropping the tail.
     pub thumbs: Vec<Rect>,
-    pub thumb_first: usize,
     pub overview: Rect,
     pub play: Option<Rect>,
     /// The canvas region the host paints the real canvas into.
@@ -151,40 +129,12 @@ pub struct WorkspaceLayout {
     /// Failed-phase banner actions, centered near the canvas top.
     pub retry: Option<Rect>,
     pub return_edit: Option<Rect>,
-    /// The viewport height the layout was built for (the quality panel
-    /// clamps its height against it).
-    pub viewport_h: f32,
-    /// The open chat drawer's settled rect (narrow windows only). `None`
-    /// while docked or while the drawer is shut.
-    pub drawer: Option<Rect>,
 }
 
 /// Pure layout: shared by paint, hit-test and the host. `board_count`
 /// sizes the deck strip's thumbnail row. `dock_width` / `collapsed` are
 /// the LEFT PANEL's `layer_panel_width` and `!sidebar_open` — passed in
 /// as values so the pure function stays testable.
-/// First board of the thumbnail window: centred on the selection, clamped so
-/// the window never runs past either end of the deck.
-pub fn thumb_window_start(board_count: usize, slots: usize, selected: usize) -> usize {
-    if slots == 0 || board_count <= slots {
-        return 0;
-    }
-    selected
-        .min(board_count - 1)
-        .saturating_sub(slots / 2)
-        .min(board_count - slots)
-}
-
-impl WorkspaceLayout {
-    /// The strip slot showing `board`, if it is inside the window.
-    pub fn thumb_rect(&self, board: usize) -> Option<Rect> {
-        board
-            .checked_sub(self.thumb_first)
-            .and_then(|slot| self.thumbs.get(slot))
-            .copied()
-    }
-}
-
 pub fn layout_for(
     viewport_width: f32,
     viewport_height: f32,
@@ -269,8 +219,7 @@ pub fn layout_for(
         || views.contains(&WorkspaceView::Single { index: 0 });
     let next = show_pager
         .then(|| Rect::xywh(right - TOOLBAR_ICON, icon_y, TOOLBAR_ICON, TOOLBAR_BUTTON_H));
-    // Room for the "3 / 12" position label painted between the arrows.
-    right -= TOOLBAR_ICON + PAGER_LABEL_W;
+    right -= TOOLBAR_ICON + 2.0;
     let prev = show_pager
         .then(|| Rect::xywh(right - TOOLBAR_ICON, icon_y, TOOLBAR_ICON, TOOLBAR_BUTTON_H));
 
@@ -335,14 +284,11 @@ pub fn layout_for(
         zoom_in,
         strip,
         thumbs,
-        thumb_first: 0,
         overview,
         play,
         canvas,
         retry,
         return_edit,
-        viewport_h: vh,
-        drawer: None,
     }
 }
 
@@ -357,10 +303,6 @@ pub struct WorkspaceSurface<'a> {
     /// The active page's board ids, in document order.
     pub boards: Vec<String>,
     pub now_ms: u64,
-    /// Whether any chat agent can answer — the draft banner offers the
-    /// refine once one can, and the connect path until then.
-    pub usable_agent: bool,
-    pub history: op_editor_core::workspace_history::WorkspaceHistory,
 }
 
 impl<'a> WorkspaceSurface<'a> {
@@ -373,7 +315,19 @@ impl<'a> WorkspaceSurface<'a> {
         if !workspace.visible {
             return None;
         }
-        let title = workspace_title(state);
+        let title = state
+            .editor_ui
+            .file_name_display
+            .clone()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| {
+                let brief = workspace.brief.trim();
+                if brief.is_empty() {
+                    op_i18n::translate(state.editor_ui.locale, "common.untitled").to_string()
+                } else {
+                    brief.chars().take(16).collect()
+                }
+            });
         Some(Self {
             id: WidgetId::new(7700),
             theme: theme_for(&state.editor_ui),
@@ -382,158 +336,25 @@ impl<'a> WorkspaceSurface<'a> {
             title,
             boards: op_editor_core::preview_slideshow::active_page_boards(state),
             now_ms,
-            usable_agent: state.has_usable_chat_agent(),
-            history: op_editor_core::workspace_history::WorkspaceHistory::for_editor(state),
         })
     }
 
     pub fn layout(&self, viewport_width: f32, viewport_height: f32) -> WorkspaceLayout {
-        // A narrow window's chat is a drawer OVER the canvas: the chrome
-        // lays out as if the dock were collapsed, and the drawer rides on
-        // top of it.
-        let drawer_mode = self.ui.workspace_drawer_active();
-        let mut layout = layout_for(
+        layout_for(
             viewport_width,
             viewport_height,
             self.state.family,
             // The dock IS the left panel: one width, one open flag.
             self.ui.layer_panel_width,
-            drawer_mode || !self.ui.sidebar_open,
+            !self.ui.sidebar_open,
             self.boards.len(),
-        );
-        // Keep translated labels inside their actual hit targets. Paint uses
-        // measured text for centering; this conservative estimate reserves space.
-        let views = family_views(self.state.family);
-        let mut x = layout.view_segments.first().map_or(0.0, |r| r.origin.x);
-        let available = (layout.prev.unwrap_or(layout.zoom_out).origin.x
-            - 12.0
-            - x
-            - history::MIN_HISTORY_SPACE)
-            .max(0.0);
-        let widths: Vec<f32> = views
-            .iter()
-            .map(|view| {
-                (header_button_width(paint::view_label(
-                    self.ui.locale,
-                    self.state.family,
-                    self.state.family_known,
-                    *view,
-                )) - 17.0)
-                    .max(SEGMENT_W)
-            })
-            .collect();
-        let scale = (available / widths.iter().sum::<f32>().max(1.0)).min(1.0);
-        for (segment, width) in layout.view_segments.iter_mut().zip(widths) {
-            segment.origin.x = x;
-            segment.size.x = width * scale;
-            x += segment.size.x;
-        }
-        if drawer_mode && self.state.drawer_open {
-            layout.drawer = Some(Rect::xywh(
-                0.0,
-                WORKSPACE_HEADER_H,
-                self.ui.workspace_drawer_width(viewport_width),
-                (viewport_height - WORKSPACE_HEADER_H).max(0.0),
-            ));
-        }
-        layout.thumb_first =
-            thumb_window_start(self.boards.len(), layout.thumbs.len(), self.state.selected);
-        let action_left = self
-            .quality_chip(&layout)
-            .or_else(|| self.preview_button(&layout))
-            .or_else(|| self.share_button(&layout))
-            .unwrap_or(layout.export)
-            .origin
-            .x;
-        layout.title.size.x = (action_left - 12.0 - layout.title.origin.x).max(0.0);
-        layout
+        )
     }
 
     /// Failed-phase banner actions, resolved against the canvas so the
     /// hit-test and paint share one answer (layout_for is failure-blind).
-    /// Present runs only on a finished result with boards. The strip paints
-    /// the tile disabled otherwise, and the press must agree with the paint.
-    pub fn play_enabled(&self) -> bool {
-        self.state.phase == op_editor_core::WorkspacePhase::Done && !self.boards.is_empty()
-    }
-
-    /// The 质检 chip's label, when the finished run carries an audited
-    /// quality report.
-    pub fn quality_label(&self) -> Option<String> {
-        self.state
-            .finished_quality()
-            .map(|report| report.chip_text(self.ui.locale))
-    }
-
-    /// The 质检 chip's rect (left of the leftmost header button), when
-    /// there is a report to show.
-    pub fn quality_chip(&self, layout: &WorkspaceLayout) -> Option<Rect> {
-        let anchor = self
-            .preview_button(layout)
-            .or_else(|| self.share_button(layout))
-            .unwrap_or(layout.export);
-        self.quality_label()
-            .map(|label| quality_chip_rect(anchor, &label))
-    }
-
-    /// The header's 分享 button, left of 导出. Offered only by hosts that
-    /// can write the self-contained share page (the same capability the
-    /// slideshow export needs: a save picker and the offscreen painter).
-    pub fn share_button(&self, layout: &WorkspaceLayout) -> Option<Rect> {
-        if !self.ui.deck_html_export_supported {
-            return None;
-        }
-        let width = header_button_width(op_i18n::translate(self.ui.locale, "share.button"));
-        Some(Rect::xywh(
-            layout.export.origin.x - HEADER_BUTTON_GAP - width,
-            layout.export.origin.y,
-            width,
-            layout.export.size.y,
-        ))
-    }
-
-    /// The shared-document banner's Make-one-like-this action, centred
-    /// near the canvas top like the other canvas banners.
-    pub fn make_same_button(&self, layout: &WorkspaceLayout) -> Option<Rect> {
-        if !self.state.make_same_banner_visible() {
-            return None;
-        }
-        let cy = layout.canvas.origin.y + 28.0;
-        let cx = layout.canvas.origin.x + layout.canvas.size.x / 2.0;
-        Some(Rect::xywh(
-            cx - MAKE_SAME_BUTTON_W / 2.0,
-            cy,
-            MAKE_SAME_BUTTON_W,
-            BANNER_BUTTON_H,
-        ))
-    }
-
-    /// The expanded report panel, when the chip is open.
-    pub fn quality_panel(&self, layout: &WorkspaceLayout) -> Option<QualityPanelLayout> {
-        if !self.state.quality_open {
-            return None;
-        }
-        let chip = self.quality_chip(layout)?;
-        let report = self.state.finished_quality()?;
-        Some(quality_panel_layout(
-            chip,
-            layout.header.size.x,
-            layout.viewport_h,
-            report,
-        ))
-    }
-
-    /// Retry / back-to-edit actions for a run that did not finish: a failed
-    /// run, or one the user stopped (stopping used to leave no way to try
-    /// again short of retyping the brief on Home).
     pub fn banner_buttons(&self, layout: &WorkspaceLayout) -> Option<(Rect, Rect)> {
-        if !matches!(
-            self.state.phase,
-            op_editor_core::WorkspacePhase::Failed | op_editor_core::WorkspacePhase::Stopped
-        ) {
-            return None;
-        }
-        if !self.state.can_retry(&self.boards) {
+        if self.state.phase != op_editor_core::WorkspacePhase::Failed {
             return None;
         }
         let cy = layout.canvas.origin.y + 28.0;
@@ -546,23 +367,6 @@ impl<'a> WorkspaceSurface<'a> {
                 BANNER_BUTTON_H,
             ),
             Rect::xywh(cx + 5.0, cy, BANNER_BUTTON_W, BANNER_BUTTON_H),
-        ))
-    }
-
-    /// The template draft banner's action (接入模型 / 让 AI 细化), shown
-    /// while a one-click draft waits for its refinement. Resolved against
-    /// the canvas like the failed banner so paint and hit-test agree.
-    pub fn draft_banner_button(&self, layout: &WorkspaceLayout) -> Option<Rect> {
-        if !self.state.draft_banner_visible() {
-            return None;
-        }
-        let cy = layout.canvas.origin.y + 28.0;
-        let cx = layout.canvas.origin.x + layout.canvas.size.x / 2.0;
-        Some(Rect::xywh(
-            cx - DRAFT_BUTTON_W / 2.0,
-            cy,
-            DRAFT_BUTTON_W,
-            BANNER_BUTTON_H,
         ))
     }
 
@@ -583,36 +387,6 @@ impl<'a> WorkspaceSurface<'a> {
         layout: &WorkspaceLayout,
         point: Point2D,
     ) -> Option<WorkspaceHit> {
-        // The open report panel floats over the toolbar and canvas: it is
-        // the topmost chrome, so it answers first.
-        if let Some(panel) = self.quality_panel(layout) {
-            if let Some(hit) = panel.hit_test(point) {
-                return Some(hit);
-            }
-        }
-        // The open drawer covers everything below the header: presses on
-        // it belong to the chat panel, presses beside it close it.
-        if let Some(drawer) = layout.drawer {
-            if drawer.contains(point) {
-                return None;
-            }
-            if point.y >= WORKSPACE_HEADER_H {
-                return Some(WorkspaceHit::DrawerScrim);
-            }
-        }
-        if let Some(hit) = self.variant_bar_hit(layout, point) {
-            return Some(hit);
-        }
-        if let Some(button) = self.draft_banner_button(layout) {
-            if button.contains(point) {
-                return Some(WorkspaceHit::DraftAction);
-            }
-        }
-        if let Some(button) = self.make_same_button(layout) {
-            if button.contains(point) {
-                return Some(WorkspaceHit::MakeSame);
-            }
-        }
         if let Some((retry, return_edit)) = self.banner_buttons(layout) {
             if retry.contains(point) {
                 return Some(WorkspaceHit::Retry);
@@ -626,26 +400,21 @@ impl<'a> WorkspaceSurface<'a> {
             if strip.contains(point) {
                 if let Some(play) = layout.play {
                     if play.contains(point) {
-                        // A disabled tile swallows the press instead of
-                        // presenting a half-drawn deck.
-                        return self.play_enabled().then_some(WorkspaceHit::Play);
+                        return Some(WorkspaceHit::Play);
                     }
                 }
                 if layout.overview.contains(point) {
                     return Some(WorkspaceHit::Overview);
                 }
-                for (slot, rect) in layout.thumbs.iter().enumerate() {
+                for (index, rect) in layout.thumbs.iter().enumerate() {
                     if rect.contains(point) {
-                        return Some(WorkspaceHit::Thumb(layout.thumb_first + slot));
+                        return Some(WorkspaceHit::Thumb(index));
                     }
                 }
                 return Some(WorkspaceHit::Overview);
             }
         }
         if layout.toolbar.contains(point) {
-            if let Some(hit) = self.history_hit(layout, point) {
-                return Some(hit);
-            }
             if layout.zoom_in.contains(point) {
                 return Some(WorkspaceHit::ZoomIn);
             }
@@ -686,29 +455,11 @@ impl<'a> WorkspaceSurface<'a> {
             return None;
         }
         if layout.header.contains(point) {
-            if self
-                .preview_button(layout)
-                .is_some_and(|button| button.contains(point))
-            {
-                return Some(WorkspaceHit::Play);
-            }
-            if self
-                .quality_chip(layout)
-                .is_some_and(|chip| chip.contains(point))
-            {
-                return Some(WorkspaceHit::QualityChip);
-            }
             if layout.professional.contains(point) {
                 return Some(WorkspaceHit::Professional);
             }
             if layout.export.contains(point) {
                 return Some(WorkspaceHit::Export);
-            }
-            if self
-                .share_button(layout)
-                .is_some_and(|share| share.contains(point))
-            {
-                return Some(WorkspaceHit::Share);
             }
             if layout.back.contains(point) {
                 return Some(WorkspaceHit::Back);
@@ -748,40 +499,13 @@ impl Widget for WorkspaceSurface<'_> {
 
 #[path = "workspace_surface_paint.rs"]
 mod paint;
-pub(crate) use paint::{work_family_label, workspace_phase_key};
-
-#[path = "workspace_surface_banner.rs"]
-mod banner;
-#[path = "workspace_variants_bar.rs"]
-mod variants_bar;
-pub use variants_bar::{variant_bar_layout, VariantBarItem};
-#[path = "workspace_surface_drawer.rs"]
-mod drawer;
-#[path = "workspace_surface_focus.rs"]
-mod focus;
-#[path = "workspace_quality_paint.rs"]
-mod quality_paint;
 
 impl WorkspaceSurface<'_> {
     fn paint_workspace(&self, cx: &mut PaintCx<'_>, rect: Rect) {
         paint::paint_workspace(self, cx, rect);
-    }
-
-    /// Paint the expanded quality-report panel. The host calls this after
-    /// the canvas and the docked chat so the panel floats over both; a
-    /// closed chip paints nothing here.
-    pub fn paint_quality_overlay(&self, cx: &mut PaintCx<'_>, rect: Rect) {
-        let layout = self.layout(rect.size.x, rect.size.y);
-        let (_, alpha) = workspace_enter(self.state.shown_at_ms, self.now_ms);
-        let palette = StudioPalette::for_mode(self.ui.effective_theme_mode()).faded(alpha);
-        quality_paint::paint_quality_panel(self, cx, &layout, palette);
     }
 }
 
 #[cfg(test)]
 #[path = "workspace_surface_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "workspace_surface_share_tests.rs"]
-mod share_tests;

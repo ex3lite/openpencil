@@ -186,23 +186,6 @@ fn locale_change_updates_settings_fingerprint() {
 }
 
 #[test]
-fn recent_file_changes_trigger_settings_persistence() {
-    let mut state = EditorState::new();
-    let empty = fingerprint(&state);
-    state.editor_ui.touch_recent_file("/tmp/saved.op".into(), 1);
-    let added = fingerprint(&state);
-    assert_ne!(empty, added);
-    state.editor_ui.touch_recent_file("/tmp/saved.op".into(), 2);
-    assert_ne!(
-        added,
-        fingerprint(&state),
-        "re-saving also updates its recent timestamp"
-    );
-    state.editor_ui.recent_files.clear();
-    assert_eq!(empty, fingerprint(&state));
-}
-
-#[test]
 fn imported_agents_are_excluded_from_persistence() {
     // A user-entered agent must persist; an auto-imported (e.g. Zode)
     // agent must NOT, so its API key never lands in settings.json.
@@ -237,10 +220,10 @@ fn imported_agents_are_excluded_from_persistence() {
 
 #[test]
 fn connected_state_round_trips_through_payload() {
-    // Connect Claude (0) + Antigravity (4) + DeepSeek Harness (6) + Kimi
-    // Code (7, the append-only tail slot), leave the rest off.
+    // Connect Claude (0) + Antigravity (4) + DeepSeek Harness (6,
+    // the append-only tail slot), leave the rest off.
     let mut src = EditorState::new();
-    src.editor_ui.agent_settings.connected = [true, false, false, false, true, false, true, true];
+    src.editor_ui.agent_settings.connected = [true, false, false, false, true, false, true];
     // Serialize → JSON → deserialize, the real on-disk path.
     let json = serde_json::to_string(&to_payload(&src)).unwrap();
     let payload: SettingsPayload = serde_json::from_str(&json).unwrap();
@@ -248,7 +231,7 @@ fn connected_state_round_trips_through_payload() {
     apply_payload(&mut dst, payload);
     assert_eq!(
         dst.editor_ui.agent_settings.connected,
-        [true, false, false, false, true, false, true, true]
+        [true, false, false, false, true, false, true]
     );
 }
 

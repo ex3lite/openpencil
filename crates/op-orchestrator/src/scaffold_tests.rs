@@ -4,7 +4,6 @@ use op_editor_core::PenNodeExt;
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Design".into(),
@@ -20,7 +19,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -218,7 +216,6 @@ fn st(id: &str, label: &str) -> Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -368,7 +365,6 @@ fn a_screen_group_per_slide_emits_a_root_per_slide() {
     use crate::screen_groups::ScreenGroup;
 
     let mut plan = crate::plan::OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "page".into(),
             name: "Deck".into(),
@@ -381,7 +377,6 @@ fn a_screen_group_per_slide_emits_a_root_per_slide() {
         },
         subtasks: Vec::new(),
         style_guide_name: None,
-        palette: None,
     };
     let names = [
         "01 Cover",
@@ -416,7 +411,6 @@ fn a_screen_group_per_slide_emits_a_root_per_slide() {
             screen: Some((*screen).to_string()),
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         })
         .collect();
@@ -457,7 +451,6 @@ fn screen_group_plan(
     count: usize,
 ) -> (OrchestratorPlan, Vec<crate::screen_groups::ScreenGroup>) {
     let mut plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "page".into(),
             name: "Deck".into(),
@@ -470,7 +463,6 @@ fn screen_group_plan(
         },
         subtasks: Vec::new(),
         style_guide_name: None,
-        palette: None,
     };
     let mut groups = Vec::with_capacity(count);
     for i in 0..count {
@@ -491,7 +483,6 @@ fn screen_group_plan(
             screen: Some(screen),
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         });
     }
@@ -613,34 +604,4 @@ fn content_sized_boards_still_step_down_by_the_preset_height() {
         (0.0, 900.0 + SCREEN_GROUP_GAP + ROW_LABEL_HEADROOM),
         "the desktop preset height drives the row step: {positions:?}"
     );
-}
-
-/// GLM-5.3-Flash EV model page (0923): a Chinese landing page whose first
-/// section is the top `导航栏` and whose metric / chart sections read as
-/// dashboard content. It was pre-built as `[Sidebar 260 | Main Content]`,
-/// squeezing the top nav into a 260px column.
-fn chinese_landing_plan() -> OrchestratorPlan {
-    let mut p = plan();
-    p.root_frame.width = 1440.0;
-    p.subtasks = vec![
-        st("nav", "导航栏"),
-        st("hero", "满幅车身英雄区"),
-        st("metrics", "性能三指标"),
-        st("interior-1", "内饰图文·智能座舱"),
-        st("range-chart", "续航图表"),
-        st("footer", "页脚"),
-    ];
-    p
-}
-
-#[test]
-fn a_chinese_top_nav_bar_does_not_scaffold_a_sidebar_dashboard() {
-    assert!(!plan_is_sidebar_dashboard(&chinese_landing_plan(), false));
-}
-
-#[test]
-fn a_chinese_sidebar_still_scaffolds_two_columns() {
-    let mut p = sidebar_dashboard_plan();
-    p.subtasks[0] = st("nav", "侧边导航栏");
-    assert!(plan_is_sidebar_dashboard(&p, false));
 }

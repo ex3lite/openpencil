@@ -15,42 +15,35 @@
 //! `op-host-web-server`. The 4 MiB per-image cap still bounds what can be
 //! embedded.
 
-mod brand_fence;
 mod catalog;
 mod download;
-mod original_download;
 pub(crate) mod pacing;
 mod relevance;
 
-pub(crate) use catalog::original_source;
 pub(crate) use catalog::wikimedia_info_is_image;
-pub(crate) use catalog::{fetch_openverse_list, fetch_openverse_list_with_aspect};
+pub(crate) use catalog::{
+    fetch_openverse_json, fetch_openverse_list, fetch_openverse_list_with_aspect,
+};
 pub use catalog::{
-    fetch_openverse_token, parse_openverse_results, parse_wikimedia_results, OriginalImageSource,
-    RawHit,
+    fetch_openverse_token, parse_openverse_results, parse_wikimedia_results, RawHit,
 };
 pub use download::{
-    fetch_image_and_judge_thumbnail, fetch_image_and_judge_thumbnail_for_view, fetch_image_bytes,
-    fetch_image_data_url, fetch_judge_thumbnail, normalize_image_mime_header, read_capped,
-    sniff_image_mime,
+    fetch_image_and_judge_thumbnail, fetch_image_bytes, fetch_image_data_url,
+    fetch_judge_thumbnail, normalize_image_mime_header, read_capped, sniff_image_mime,
 };
-pub(crate) use original_download::fetch_original_image_data_url;
 pub use relevance::simplify_search_query;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-pub(crate) use catalog::fetch_relevant_wikimedia_list_for_intent;
 use catalog::{fetch_relevant_wikimedia_list, materialize_first_thumb, materialize_thumbs};
 use relevance::retain_relevant_hits;
 pub(crate) use relevance::{
-    fence_rejection, retain_relevant_hits_for_intent, retrieval_plan, two_keyword_retry,
+    retain_relevant_hits as retain_relevant_hits_for_fetch, rewrite_queries, two_keyword_retry,
 };
 
 #[cfg(test)]
 use catalog::fetch_relevant_wikimedia_list_with;
-#[cfg(test)]
-pub(crate) use relevance::rewrite_queries;
 #[cfg(test)]
 use relevance::{
     core_query_words, metadata_is_scene_heavy, query_requests_scene, SCENE_HEAVY_RESULT_WORDS,

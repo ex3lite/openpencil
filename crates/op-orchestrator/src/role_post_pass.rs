@@ -39,13 +39,11 @@ use crate::role_layout_post_pass::{fix_horizontal_overflow, fix_text_heights, si
 // test modules mounted below) see the same flat namespace as before.
 mod color_utils;
 mod contrast;
-mod deferred_foreground;
 mod layout_props;
 mod micro_surface_radius;
 mod mobile_cards;
 mod mobile_category_row;
 mod mobile_search_header;
-mod orphan_control;
 mod surface_discipline;
 mod surface_structure;
 
@@ -56,7 +54,6 @@ use micro_surface_radius::*;
 use mobile_cards::*;
 use mobile_category_row::*;
 use mobile_search_header::*;
-use orphan_control::*;
 use surface_discipline::*;
 use surface_structure::*;
 
@@ -171,8 +168,6 @@ pub fn post_pass_forest_with_tier(
         let Ok(mut v) = serde_json::to_value(&*node) else {
             continue;
         };
-        repair_orphan_controls(&mut v);
-        deferred_foreground::repair(&mut v, None);
         post_pass_value(&mut v, None, canvas_width, run_intent, form, &mut echoes);
         if let Ok(new_node) = serde_json::from_value::<PenNode>(v) {
             *node = new_node;
@@ -395,7 +390,3 @@ mod deck_tests;
 #[cfg(test)]
 #[path = "role_post_pass_pill_radius_tests.rs"]
 mod pill_radius_tests;
-
-#[cfg(test)]
-#[path = "role_post_pass_orphan_control_tests.rs"]
-mod orphan_control_tests;

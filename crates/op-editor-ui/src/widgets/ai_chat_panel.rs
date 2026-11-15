@@ -126,12 +126,6 @@ pub struct AIChatPlaceholder<'a> {
     pub composer_only: bool,
     /// Which bottom-toolbar chat control the cursor is over.
     pub footer_hover: Option<op_editor_core::ChatFooterButton>,
-    /// Whether an image-generation profile is usable at all (the 🖼
-    /// toggle paints disabled and routes to Settings when not).
-    pub(crate) image_gen_available: bool,
-    /// The chat image-generation toggle's current flag (`image_gen_active`
-    /// is the two combined — this alone is just the user's switch).
-    pub(crate) image_gen_enabled: bool,
     pub header_pressed: Option<op_editor_core::ChatHeaderButton>,
     pub footer_pressed: Option<op_editor_core::ChatFooterButton>,
     /// Localised empty-state example cards.
@@ -204,7 +198,6 @@ impl<'a> AIChatPlaceholder<'a> {
 
     pub fn from_editor_at(state: &'a EditorState, now_ms: u64) -> Self {
         let ui = &state.editor_ui;
-        let workspace_copy = crate::widgets::ai_chat_workspace_copy::for_editor(state);
         // Build a lightweight snapshot of all tabs so the tab-row painter
         // can iterate titles without holding a borrow on the ChatSessions.
         let tabs_snapshot: Vec<ChatTabInfo> = state
@@ -212,13 +205,7 @@ impl<'a> AIChatPlaceholder<'a> {
             .tabs()
             .iter()
             .map(|tab| ChatTabInfo {
-                // The untitled sentinel is stored in English; show it in
-                // the UI locale ("New Chat" sat in every Chinese UI).
-                title: if op_editor_core::is_default_chat_title(&tab.title) {
-                    op_i18n::translate(ui.effective_locale(), "ai.newChat").to_string()
-                } else {
-                    tab.title.clone()
-                },
+                title: tab.title.clone(),
             })
             .collect();
         let active_tab_index = state.chat.active_index();
@@ -227,18 +214,9 @@ impl<'a> AIChatPlaceholder<'a> {
             theme: theme_for(ui),
             state: &state.chat,
             now_ms,
-            label_start_with_ai: workspace_copy
-                .as_ref()
-                .map(|c| c.hint.clone())
-                .unwrap_or_else(|| translate(ui, "ai.tryExample").to_string()),
-            label_input_placeholder: workspace_copy
-                .as_ref()
-                .map(|c| c.placeholder.clone())
-                .unwrap_or_else(|| translate(ui, "ai.designWithAgent").to_string()),
-            label_tip_select_elements: workspace_copy
-                .as_ref()
-                .map(|c| c.tip.clone())
-                .unwrap_or_else(|| translate(ui, "ai.tipSelectElements").to_string()),
+            label_start_with_ai: translate(ui, "ai.tryExample").to_string(),
+            label_input_placeholder: translate(ui, "ai.designWithAgent").to_string(),
+            label_tip_select_elements: translate(ui, "ai.tipSelectElements").to_string(),
             label_no_models: translate(ui, "ai.noModelsConnected").to_string(),
             selected_count: state.selection_count(),
             selected_label: selection_chip_label_for_state(state),
@@ -257,8 +235,6 @@ impl<'a> AIChatPlaceholder<'a> {
             composer_only: ui.chat_composer_only(),
             header_hover: ui.chat_header_hover,
             footer_hover: ui.chat_footer_hover,
-            image_gen_available: ui.agent_settings.image_gen_available(),
-            image_gen_enabled: ui.agent_settings.image_gen_enabled,
             header_pressed: match ui.pressed_button {
                 Some(op_editor_core::ButtonPressTarget::ChatHeader(button)) => Some(button),
                 _ => None,
@@ -267,18 +243,8 @@ impl<'a> AIChatPlaceholder<'a> {
                 Some(op_editor_core::ButtonPressTarget::ChatFooter(button)) => Some(button),
                 _ => None,
             },
-            examples: workspace_copy
-                .map(|c| c.examples)
-                .unwrap_or_else(|| example_cards(ui.effective_locale())),
-            mcp_notice: if state
-                .chat
-                .selected_model_entry()
-                .is_some_and(|entry| entry.hosted.is_some())
-            {
-                None
-            } else {
-                mcp_notice_label(ui)
-            },
+            examples: example_cards(ui.effective_locale()),
+            mcp_notice: mcp_notice_label(ui),
             locale: ui.effective_locale(),
             tabs_snapshot,
             active_tab_index,
@@ -452,22 +418,10 @@ impl<'a> AIChatPlaceholder<'a> {
     ///
     /// [`max_input_lines`]: crate::widgets::ai_chat_input_text::max_input_lines
     pub(crate) fn input_area_height_for_input_width(&self, input_w: f32, panel_h: f32) -> f32 {
-        // The panel-share rule exists to keep a dragged-down panel's
-        // TRANSCRIPT readable. The composer-only card has no transcript
-        // to protect, and measuring its growth against its own height is
-        // circular: it settled at one visible line, so a long prompt
-        // pasted into it showed a single row. Measure it against a fixed
-        // budget instead, which lets it grow to `INPUT_MAX_LINES` and
-        // stop there.
-        let budget_h = if self.composer_only {
-            COMPOSER_ONLY_PROBE_H
-        } else {
-            panel_h
-        };
         let lines = crate::widgets::ai_chat_input_text::visible_input_line_count(
-            &self.state.input.effective_text(),
+            self.state.input.text(),
             input_w,
-            budget_h,
+            panel_h,
         );
         crate::widgets::ai_chat_input_text::input_area_height(lines)
     }
@@ -556,14 +510,9 @@ impl<'a> AIChatPlaceholder<'a> {
             + self.input_area_height_for_rect(rect)
             + self.attachment_row_h();
         let bottom = toolbar_top - 4.0;
-        let card = Rect {
+        Rect {
             origin: Point2D::new(rect.origin.x + PAD, bottom - height),
             size: Point2D::new(rect.size.x - PAD * 2.0, height),
-        };
-        if self.touch_sheet {
-            crate::widgets::ai_chat_model_picker::fit_picker_to_bounds(card, rect)
-        } else {
-            card
         }
     }
 
@@ -602,17 +551,6 @@ impl<'a> AIChatPlaceholder<'a> {
         Some(self.model_picker_rect(rect, input_rect))
     }
 
-    /// Bounding rect of the footer's image-generation toggle, or `None`
-    /// when the row was too narrow to lay it out. Public so widget hosts
-    /// (and their press tests) can target the control without re-deriving
-    /// the footer geometry.
-    pub fn footer_image_gen_rect(&self, rect: Rect) -> Option<Rect> {
-        let input_rect = self.input_rect(rect);
-        let toolbar_top = input_rect.origin.y + INPUT_AREA_HEIGHT;
-        let footer = self.footer_layout(rect, input_rect, toolbar_top);
-        (footer.image_gen.size.x > 0.0).then_some(footer.image_gen)
-    }
-
     /// Bounding rect of the Parallel Agents picker dropdown overlay.
     /// The picker lists 6 rows of "Nx" (N=1..=6) above the speed chip.
     /// `None` when the picker is closed.
@@ -632,16 +570,15 @@ impl<'a> AIChatPlaceholder<'a> {
     /// focus. Unfocused it is the box alone (the design brief calls for
     /// nothing but the input until you engage with it).
     pub fn composer_only_height(&self, width: f32) -> f32 {
+        let composer = self.input_height_for_width(width, COMPOSER_ONLY_PROBE_H);
         let header = if self.state.focused {
             COMPOSER_HEADER_HEIGHT
         } else {
             0.0
         };
-        // One pass is enough now that the composer measures itself
-        // against a fixed budget rather than the card it is sizing:
-        // paint asking again with the card's own height gets the same
-        // answer, so there is no dead band to iterate away.
-        self.input_height_for_width(width, COMPOSER_ONLY_PROBE_H) + header
+        // No extra padding: the composer block already carries its own,
+        // and a second helping left a dead band above the placeholder.
+        composer + header
     }
 
     pub fn input_rect(&self, rect: Rect) -> Rect {
@@ -742,10 +679,6 @@ pub(crate) struct FooterLayout {
     /// Zero-width when the row is too narrow to hold it (see
     /// `footer_layout`); `contains()` is then always false.
     pub(crate) thinking: Rect,
-    /// Image-generation toggle — 🖼 icon, flips `image_gen_enabled` when a
-    /// profile is configured and opens the Images settings tab otherwise.
-    /// Same zero-width degradation rule as `thinking`.
-    pub(crate) image_gen: Rect,
     /// Speed/effort chip — ⚡ icon + effort label in gold, no bg.
     /// Retained next to the model pill; clicking cycles effort level.
     pub(crate) speed: Rect,

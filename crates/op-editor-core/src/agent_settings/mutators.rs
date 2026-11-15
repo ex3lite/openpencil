@@ -20,26 +20,6 @@ use crate::agent_settings_builtin_presets::{
 const WEB_CREDENTIAL_BUILTIN_PREFIX: &str = "web-credential:builtin:";
 
 impl AgentSettings {
-    /// Apply an explicit provider edit. Imported providers remain derived
-    /// from their source until the user changes them here; changed cards
-    /// become local settings so the edit survives the next source import.
-    pub fn edit_builtin_agent(
-        &mut self,
-        index: usize,
-        edit: impl FnOnce(&mut BuiltinAgentConfig),
-    ) -> bool {
-        let Some(agent) = self.builtin_agents.get_mut(index) else {
-            return false;
-        };
-        let before = agent.clone();
-        edit(agent);
-        if *agent == before {
-            return false;
-        }
-        self.imported_agent_ids.remove(&agent.id);
-        true
-    }
-
     /// Turn a browser-snapshot built-in into a daemon/operator-owned entry
     /// before native settings mutate it. Browser snapshots identify ownership
     /// through the scoped id, so changing the id is the ownership transfer.
@@ -137,13 +117,13 @@ impl AgentSettings {
 
     pub fn set_builtin_agent_preset(&mut self, index: usize, preset: BuiltinAgentPresetKey) {
         let id = self.builtin_agents.get(index).map(|agent| agent.id.clone());
-        self.edit_builtin_agent(index, |agent| {
+        if let Some(agent) = self.builtin_agents.get_mut(index) {
             let api_key = agent.api_key.clone();
             let enabled = agent.enabled;
             agent.apply_preset(preset);
             agent.api_key = api_key;
             agent.enabled = enabled;
-        });
+        }
         if let Some(id) = id {
             self.invalidate_builtin_model_catalog_for_agent(&id);
         }
@@ -459,22 +439,7 @@ impl AgentSettings {
 
     pub fn image_generation_configured(&self) -> bool {
         self.active_image_gen_profile()
-            .is_some_and(|profile| profile.usable())
-    }
-
-    /// Whether any image-generation profile is usable at all. Pure alias of
-    /// [`Self::image_generation_configured`], named for the chat toggle's
-    /// vocabulary so call sites read as "can generation be turned on".
-    pub fn image_gen_available(&self) -> bool {
-        self.image_generation_configured()
-    }
-
-    /// The single predicate every consumer of the chat image-generation
-    /// toggle must use: the user's switch AND a usable profile. A turned-on
-    /// switch without configuration (or a profile with the switch off) must
-    /// behave exactly like no generation at all.
-    pub fn image_gen_active(&self) -> bool {
-        self.image_gen_enabled && self.image_gen_available()
+            .is_some_and(|profile| !profile.api_key.trim().is_empty())
     }
 
     pub fn add_image_gen_profile(&mut self) -> String {

@@ -55,7 +55,7 @@ impl WidgetHostNative {
                 presenting,
                 std::rc::Rc::new(jian_skia::SkiaMeasure::new()),
                 op_preview_core::PreviewHostCapabilities::none(),
-                host_motion_preference(state.editor_ui.reduced_motion),
+                host_motion_preference(),
                 now_ms,
             )
         })
@@ -97,10 +97,6 @@ impl WidgetHostNative {
             op_editor_core::preview_slideshow::slideshow_for_document(&self.editor_state).is_some();
         match build(&self.editor_state, presenting, self.now_ms) {
             Ok(mut session) => {
-                session.bind_asset_source(
-                    self.document_epoch,
-                    self.editor_state.document_generation(),
-                );
                 let source_rect = session.framed_root().map(|(_, rect)| {
                     self.doc_rect_to_screen_rect(rect, canvas_size.0, canvas_size.1)
                 });
@@ -321,10 +317,8 @@ impl WidgetHostNative {
     }
 }
 
-fn host_motion_preference(reduced: bool) -> jian_ops_schema::motion::MotionPreference {
-    // The shell mirrors the system setting into `editor_ui.reduced_motion`;
-    // the variable stays as a direct override for hosts that do not.
-    if reduced || std::env::var("OPENPENCIL_REDUCED_MOTION").ok().as_deref() == Some("1") {
+fn host_motion_preference() -> jian_ops_schema::motion::MotionPreference {
+    if std::env::var("OPENPENCIL_REDUCED_MOTION").ok().as_deref() == Some("1") {
         jian_ops_schema::motion::MotionPreference::Reduced
     } else {
         jian_ops_schema::motion::MotionPreference::Full

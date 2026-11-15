@@ -22,9 +22,6 @@ use crate::chat_agent_loop::{run_anthropic_agent_loop, run_openai_agent_loop, Ag
 use crate::chat_canvas_tools::MAX_TOOL_TURNS;
 use crate::chat_runtime::{resolved_skill_preamble, shared_runtime, BlockingRecvIter};
 
-#[path = "chat_builtin_http_vision.rs"]
-mod vision;
-
 // The error enum, retry ladder, throttle, and provider-client builders moved
 // to `op-chat-agent` (pure code motion) so the mobile FFI hosts share them;
 // re-exported here so every existing path stays valid. Test-only helpers
@@ -239,16 +236,12 @@ impl ChatProvider for ConfiguredBuiltinProvider {
         true
     }
 
-    fn supports_joined_cancellable_send(&self) -> bool {
-        self.supports_evidence_only_send()
-    }
-
     fn supports_evidence_only_send(&self) -> bool {
         self.tools.is_empty() && self.executor.is_none()
     }
 
     fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
-        self.send_inner(request, None, false)
+        self.send_inner(request, None)
     }
 
     fn send_cancellable(
@@ -256,16 +249,7 @@ impl ChatProvider for ConfiguredBuiltinProvider {
         request: ChatRequest,
         cancel: Arc<AtomicBool>,
     ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
-        self.send_inner(request, Some(cancel), false)
-    }
-
-    fn send_cancellable_joined(
-        &self,
-        request: ChatRequest,
-        cancel: Arc<AtomicBool>,
-    ) -> Option<Box<dyn Iterator<Item = ChatDelta> + Send>> {
-        self.supports_joined_cancellable_send()
-            .then(|| self.send_inner(request, Some(cancel), true))
+        self.send_inner(request, Some(cancel))
     }
 }
 
@@ -274,7 +258,6 @@ impl ConfiguredBuiltinProvider {
         &self,
         request: ChatRequest,
         cancel: Option<Arc<AtomicBool>>,
-        joined: bool,
     ) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
         if cancel
             .as_ref()
@@ -300,18 +283,12 @@ impl ConfiguredBuiltinProvider {
                 .into_iter(),
             );
         }
-        let (mut prompt, guard) = if joined {
-            // Native image bytes ride the HTTP body below. A remote vision
-            // model cannot inspect a local file path written into text.
-            (request.user_message.clone(), None)
-        } else {
-            match crate::chat_attachment::prompt_with_attachments(
-                &request.user_message,
-                &request.attachments,
-            ) {
-                Ok(pair) => pair,
-                Err(e) => return crate::chat_attachment::attachment_error_turn(e),
-            }
+        let (mut prompt, guard) = match crate::chat_attachment::prompt_with_attachments(
+            &request.user_message,
+            &request.attachments,
+        ) {
+            Ok(pair) => pair,
+            Err(e) => return crate::chat_attachment::attachment_error_turn(e),
         };
         let mut directive = String::new();
         if let Some(d) = crate::chat_attachment::thinking_directive(request.thinking) {
@@ -339,16 +316,6 @@ impl ConfiguredBuiltinProvider {
                 prompt = format!("{preamble}\n\n---\n\n{prompt}");
             }
         }
-        let user_content = if joined {
-            match vision::user_content(&self.kind, &prompt, &request.attachments) {
-                Ok(content) => content,
-                Err(error) => {
-                    return Box::new([ChatDelta::Error(error)].into_iter());
-                }
-            }
-        } else {
-            Value::String(prompt.clone())
-        };
 
         let provider = self.clone();
         let system_prompt = request.system_prompt;
@@ -360,20 +327,9 @@ impl ConfiguredBuiltinProvider {
         // an earlier version disabling thinking unconditionally for all
         // MiniMax chat.
         let disable_thinking = request.thinking == ThinkingMode::Disabled;
-        if joined
-            && cancel
-                .as_ref()
-                .is_some_and(|cancel| cancel.load(Ordering::Acquire))
-        {
-            return Box::new(std::iter::empty());
-        }
-        let joined_cancel = if joined { cancel.clone() } else { None };
         let (tx, rx) = mpsc::channel::<ChatDelta>(64);
         let task = shared_runtime().spawn(async move {
             let _guard = guard;
-            if joined_cancel.is_some_and(|cancel| cancel.load(Ordering::Acquire)) {
-                return;
-            }
             // Tool-capable turns route through the agent loop: tool
             // defs ride the request, `tool_use` streams back, the
             // executor runs each call, and `tool_result` rides a
@@ -390,7 +346,6 @@ impl ConfiguredBuiltinProvider {
                     system_prompt,
                     history,
                     user_prompt: prompt,
-                    attachments: Vec::new(),
                     max_output_tokens,
                     tools: provider.tools.clone(),
                     executor,
@@ -416,7 +371,7 @@ impl ConfiguredBuiltinProvider {
                             provider,
                             system_prompt,
                             history,
-                            user_content,
+                            prompt,
                             max_output_tokens,
                             &tx,
                         )
@@ -427,7 +382,7 @@ impl ConfiguredBuiltinProvider {
                             provider,
                             system_prompt,
                             history,
-                            user_content,
+                            prompt,
                             max_output_tokens,
                             disable_thinking,
                             &tx,
@@ -458,9 +413,6 @@ impl ConfiguredBuiltinProvider {
             }
         });
         match cancel {
-            Some(cancel) if joined => {
-                Box::new(BlockingRecvIter::cancellable_joined(rx, cancel, task))
-            }
             Some(cancel) => Box::new(BlockingRecvIter::cancellable(rx, cancel, task)),
             None => Box::new(BlockingRecvIter::new(rx)),
         }
@@ -471,7 +423,7 @@ async fn run_openai_chat(
     provider: ConfiguredBuiltinProvider,
     system_prompt: String,
     history: Vec<(ChatHistoryRole, String)>,
-    user_content: Value,
+    prompt: String,
     max_output_tokens: u32,
     disable_thinking: bool,
     tx: &mpsc::Sender<ChatDelta>,
@@ -491,7 +443,7 @@ async fn run_openai_chat(
     }
     messages.push(json!({
         "role": "user",
-        "content": user_content,
+        "content": prompt,
     }));
     let mut body = json!({
         "model": provider.model,
@@ -520,7 +472,6 @@ async fn run_openai_chat(
     // The policy lives in `op_orchestrator::reasoning_wire_control`; the JSON
     // mutation is shared with the agent loop so the two paths stay identical.
     apply_reasoning_wire_control(&mut body, &provider.model, disable_thinking);
-    op_chat_agent::backoff::apply_openrouter_reasoning(&mut body, &url, disable_thinking);
     let client = provider.dial_client(&url).await?;
     let resp = send_with_backoff(
         "openai-compatible",
@@ -537,7 +488,7 @@ async fn run_anthropic_chat(
     provider: ConfiguredBuiltinProvider,
     system_prompt: String,
     history: Vec<(ChatHistoryRole, String)>,
-    user_content: Value,
+    prompt: String,
     max_output_tokens: u32,
     tx: &mpsc::Sender<ChatDelta>,
 ) -> Result<bool, BuiltinHttpError> {
@@ -548,7 +499,7 @@ async fn run_anthropic_chat(
         .iter()
         .map(|(role, text)| json!({ "role": role.as_str(), "content": text }))
         .collect();
-    messages.push(json!({ "role": "user", "content": user_content }));
+    messages.push(json!({ "role": "user", "content": prompt }));
     let mut body = json!({
         "model": provider.model,
         "max_tokens": max_output_tokens,
@@ -585,11 +536,3 @@ mod tests;
 #[cfg(test)]
 #[path = "chat_builtin_http_cancellation_tests.rs"]
 mod cancellation_tests;
-
-#[cfg(test)]
-#[path = "chat_builtin_http_vision_tests.rs"]
-mod vision_tests;
-
-#[cfg(test)]
-#[path = "chat_builtin_http_joined_tests.rs"]
-mod joined_tests;

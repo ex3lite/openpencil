@@ -129,50 +129,6 @@ fn serve_one_standard_ai_route_is_sse_not_404() {
 }
 
 #[test]
-fn hosted_catalog_is_public_metadata_and_online_is_unavailable() {
-    let response = serve("GET", "/api/ai/hosted/models", "");
-    assert!(response.contains("200 OK"), "{response}");
-    let body: serde_json::Value =
-        serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-    assert!(body["routes"].is_array());
-    for field in ["bearer", "token", "issuer", "gateway_base_url", "subject"] {
-        assert!(body.get(field).is_none());
-    }
-
-    let mut stream = mock_stream("GET /api/ai/hosted/models HTTP/1.1\r\nHost: x\r\n\r\n");
-    serve_one_in_mode(
-        &mut stream,
-        &Mutex::new(fresh_state()),
-        &SseHub::default(),
-        ServeMode::Online,
-    )
-    .unwrap();
-    let response = String::from_utf8(stream.output).unwrap();
-    assert!(response.contains(r#""status":"unavailable""#), "{response}");
-    assert!(response.contains(r#""routes":[]"#), "{response}");
-}
-
-#[test]
-fn online_hosted_send_never_resolves_process_account_or_falls_back() {
-    let body = r#"{"hosted_route_id":"not-a-current-route","user":"hello"}"#;
-    let request = format!("POST /api/ai/stream HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
-    let mut stream = mock_stream(&request);
-    serve_one_in_mode(
-        &mut stream,
-        &Mutex::new(fresh_state()),
-        &SseHub::default(),
-        ServeMode::Online,
-    )
-    .unwrap();
-    let response = String::from_utf8(stream.output).unwrap();
-    assert!(
-        response.contains("Hosted models are unavailable on this deployment"),
-        "{response}"
-    );
-    assert!(!response.contains("no model configured"), "{response}");
-}
-
-#[test]
 fn serve_one_builtin_model_discovery_route_is_json_not_404() {
     let response =
         serve_with_content_type("POST", "/api/ai/models/discover", "application/json", "{}");
@@ -291,40 +247,6 @@ fn serve_one_post_mcp_debug_screenshot_uses_web_canvas_renderer() {
         !out.contains("No live canvas available"),
         "web daemon must serve screenshots from its live document, got {out}"
     );
-}
-
-fn listed_tool_names(response: &str) -> Vec<String> {
-    let body = response.split_once("\r\n\r\n").expect("http body").1;
-    let value: serde_json::Value = serde_json::from_str(body).expect("json-rpc body");
-    value["result"]["tools"]
-        .as_array()
-        .expect("tools")
-        .iter()
-        .map(|tool| tool["name"].as_str().expect("name").to_string())
-        .collect()
-}
-
-#[test]
-fn serve_one_lean_mcp_path_lists_the_six_tool_catalog() {
-    let list = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-    let lean = serve("POST", "/mcp/lean", list);
-    assert!(lean.contains("200 OK"), "{lean}");
-    assert_eq!(
-        listed_tool_names(&lean),
-        crate::mcp_serve::tool_catalog::LEAN_TOOLS,
-        "{lean}"
-    );
-    let full = serve("POST", "/mcp", list);
-    assert!(listed_tool_names(&full).len() > 100, "{full}");
-}
-
-#[test]
-fn serve_one_lean_mcp_path_refuses_tools_outside_the_profile() {
-    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_pages","arguments":{}}}"#;
-    let refused = serve("POST", "/mcp/lean", call);
-    assert!(refused.contains("tool-not-in-profile"), "{refused}");
-    let get = serve("GET", "/mcp/lean", "");
-    assert!(get.contains("405 Method Not Allowed"), "{get}");
 }
 
 #[test]

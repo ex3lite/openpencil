@@ -27,7 +27,6 @@ fn req() -> DesignRequest {
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "P".into(),
@@ -40,7 +39,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -60,7 +58,6 @@ fn subtask() -> Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -72,79 +69,7 @@ fn subtask() -> Subtask {
 // on literal id strings.
 const NODE_SCRIPT: &str = r#"I(null, {"type":"frame","name":"Card","x":0,"y":0,"width":1200,"height":200,"children":[{"type":"text","content":"Hero","fontSize":18}]});"#;
 
-// ── rejection-log subtree digest ─────────────────────────────────────────────
-
-#[test]
-fn rejected_subtree_summary_covers_the_node_and_its_direct_children() {
-    let node = serde_json::json!({
-        "type":"frame","id":"n9","name":"breath-ring",
-        "width":220,"height":220,"layout":"none",
-        "children":[
-            {"type":"text","id":"timer","name":"计时","x":70,"y":80,"width":80,"height":40},
-            {"type":"ellipse","id":"progress","name":"Ring Progress",
-             "x":10,"y":0,"width":220,"height":220,"layout":null},
-            {"type":"frame","id":"halo","name":"Halo","children":[
-                {"type":"ellipse","id":"grandchild","width":10,"height":10}
-            ]}
-        ]
-    });
-
-    let summary = rejected_subtree_summary(&node);
-
-    assert!(
-        summary.contains("\"id\":\"n9\""),
-        "rejected node: {summary}"
-    );
-    assert!(
-        summary.contains("\"id\":\"timer\""),
-        "direct child: {summary}"
-    );
-    assert!(
-        summary.contains("\"id\":\"progress\""),
-        "direct child: {summary}"
-    );
-    assert!(summary.contains("\"x\":10"), "child geometry: {summary}");
-    assert!(
-        !summary.contains("\"id\":\"grandchild\""),
-        "depth stops at direct children"
-    );
-    assert!(!summary.contains('\n'), "must stay one line");
-}
-
-#[test]
-fn rejected_subtree_summary_truncates_beyond_twelve_children() {
-    let mut node = serde_json::json!({
-        "type":"frame","id":"big","width":300,"height":300,
-        "children":[]
-    });
-    let kids = node["children"].as_array_mut().expect("children");
-    for index in 0..14 {
-        kids.push(serde_json::json!({
-            "type":"text","id":format!("c{index}"),"content":"x"
-        }));
-    }
-
-    let summary = rejected_subtree_summary(&node);
-
-    assert!(
-        summary.contains("\"id\":\"c11\""),
-        "12th child kept: {summary}"
-    );
-    assert!(
-        !summary.contains("\"id\":\"c12\""),
-        "13th child dropped: {summary}"
-    );
-    assert!(
-        summary.contains("\"+2 more\""),
-        "truncation marker: {summary}"
-    );
-}
-
 #[path = "subagent_coalesce_tests.rs"]
 mod coalesce_tests;
-#[path = "subagent_content_contract_tests.rs"]
-mod content_contract_tests;
-#[path = "subagent_empty_button_tests.rs"]
-mod empty_button_tests;
 #[path = "subagent_run_subtask_tests.rs"]
 mod run_subtask_tests;

@@ -14,12 +14,15 @@
 //! pass never sees the pair at all.
 //!
 //! The contract here is deliberately flatter than the box-overlap one:
-//! Different reading copy landing on the same pixels is a defect. A proven
-//! same-copy offset treatment is one text effect, not two competing messages;
-//! the shared text-effect proof scopes that exception to one tiny wrapper.
-//! Detect-only: which reading text should move belongs to the model.
+//! unlike containers (where overlap is often the deliberate point — deck
+//! stacking, ring badges, notification dots), two rendered TEXT blocks
+//! landing on the same pixels is never design intent. So this detector
+//! applies a single fact-level rule with no name/role exceptions: real
+//! resolved overlap between two non-empty visible text leaves is always a
+//! defect. Detect-only — which text should move is an intent judgment for
+//! the model in the loop, not a fixer here.
 //!
-//! The other carve-out is about INK rather than
+//! The rule has exactly one carve-out, and it is about INK rather than
 //! intent: a block set at watermark opacity contributes no ink to obscure
 //! with, so the premise "neither is readable" never holds for it. See
 //! [`WATERMARK_MAX_OPACITY`].
@@ -96,70 +99,34 @@ fn is_visible_nonempty_text(v: &Value) -> bool {
     v.get("type").and_then(Value::as_str) == Some("text")
         && v.get("visible").and_then(Value::as_bool) != Some(false)
         && !is_watermark(v)
-        && crate::text_effect_overlay::content(v).is_some_and(|c| !c.trim().is_empty())
+        && v.get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|c| !c.trim().is_empty())
 }
 
 /// Depth-first collection of every visible, non-empty text LEAF under `v`
-/// that has a positive-area visible rect. Ancestor clips limit the ink that
-/// can collide; text outside a scroll viewport must not collide with fixed
-/// chrome. Document order keeps pairwise comparison deterministic.
+/// that has a positive-area resolved rect. Document order, so pairwise
+/// comparison downstream is deterministic.
 fn collect_text_leaves<'a>(
     v: &'a Value,
     rects: &HashMap<String, Rect>,
-    ancestor_clip: Option<Rect>,
     out: &mut Vec<(&'a str, &'a str, Rect)>,
 ) {
     if is_visible_nonempty_text(v) {
         if let Some(id) = v.get("id").and_then(Value::as_str) {
-            if let Some(rect) = rects
-                .get(id)
-                .and_then(|rect| visible_rect(*rect, ancestor_clip))
-            {
-                let name = v.get("name").and_then(Value::as_str).unwrap_or("text");
-                out.push((id, name, rect));
+            if let Some(rect) = rects.get(id) {
+                if rect.w > 0.0 && rect.h > 0.0 {
+                    let name = v.get("name").and_then(Value::as_str).unwrap_or("text");
+                    out.push((id, name, *rect));
+                }
             }
         }
     }
-    // Match the painter: only positive-size bounded containers clip their
-    // descendants. A missing/degenerate container rect is not a proven clip.
-    let child_clip = if v.get("clipContent").and_then(Value::as_bool) == Some(true) {
-        match v
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| rects.get(id))
-        {
-            Some(rect) if rect.w > 0.0 && rect.h > 0.0 => {
-                let Some(clip) = visible_rect(*rect, ancestor_clip) else {
-                    return;
-                };
-                Some(clip)
-            }
-            _ => ancestor_clip,
-        }
-    } else {
-        ancestor_clip
-    };
     // Text is a leaf in this schema; recursing defensively costs nothing
     // and matches the `bears_text` convention elsewhere in this module.
     for c in children(v) {
-        collect_text_leaves(c, rects, child_clip, out);
+        collect_text_leaves(c, rects, out);
     }
-}
-
-fn visible_rect(rect: Rect, clip: Option<Rect>) -> Option<Rect> {
-    let visible = if let Some(clip) = clip {
-        let x = rect.x.max(clip.x);
-        let y = rect.y.max(clip.y);
-        Rect {
-            x,
-            y,
-            w: (rect.x + rect.w).min(clip.x + clip.w) - x,
-            h: (rect.y + rect.h).min(clip.y + clip.h) - y,
-        }
-    } else {
-        rect
-    };
-    (visible.w > 0.0 && visible.h > 0.0).then_some(visible)
 }
 
 /// All TEXT-vs-TEXT collisions inside `root`'s subtree (root included),
@@ -170,20 +137,11 @@ pub(crate) fn collect_text_collisions(
     rects: &HashMap<String, Rect>,
 ) -> Vec<TextCollision> {
     let mut leaves = Vec::new();
-    collect_text_leaves(root, rects, None, &mut leaves);
-    let effects = crate::text_effect_overlay::effect_pairs(root);
+    collect_text_leaves(root, rects, &mut leaves);
     let mut out = Vec::new();
     for i in 0..leaves.len() {
         let (a_id, a_name, a) = leaves[i];
         for &(b_id, b_name, b) in &leaves[i + 1..] {
-            let key = if a_id < b_id {
-                (a_id.into(), b_id.into())
-            } else {
-                (b_id.into(), a_id.into())
-            };
-            if effects.contains(&key) {
-                continue;
-            }
             let overlap_x = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
             let overlap_y = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
             if overlap_x <= MIN_AXIS_OVERLAP_PX || overlap_y <= MIN_AXIS_OVERLAP_PX {
@@ -256,7 +214,3 @@ pub(crate) fn push_text_collision_diagnostics(
 #[cfg(test)]
 #[path = "text_collision_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "text_collision_clip_tests.rs"]
-mod clip_tests;

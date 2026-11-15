@@ -43,13 +43,6 @@ impl WidgetHostNative {
             // the rebuild would be a no-op.
             if let Some(scene) = self.scene_cache.maybe_rebuild(&self.editor_state) {
                 self.layout_scene = scene;
-                if let Some(preview) = self.preview.as_mut() {
-                    preview.sync_image_assets(
-                        &self.editor_state.doc,
-                        self.document_epoch,
-                        self.editor_state.document_generation(),
-                    );
-                }
                 // A rebuilt scene invalidates the pan bitmap cache
                 // (covers the font-generation path, which bypasses
                 // `mark_dirty`).
@@ -266,7 +259,6 @@ impl WidgetHostNative {
         self.scene_cache.invalidate();
         self.editor_state_dirty = true;
         self.drop_pan_cache();
-        self.take_reader_on_open();
         true
     }
 
@@ -308,7 +300,6 @@ impl WidgetHostNative {
         self.editor_state_dirty = true;
         self.drop_pan_cache();
         self.arm_missing_fonts_detection();
-        self.take_reader_on_open();
         Ok(())
     }
 
@@ -321,33 +312,15 @@ impl WidgetHostNative {
     /// second, hand-rolled swap seam would reproduce. The transcript is
     /// reset too, because the new document's run must not read the last
     /// design's conversation as its own history.
-    ///
-    /// The replaced document is parked for the shell (see
-    /// `home_document_swap`): its unsaved work must survive and its file
-    /// path must not receive the new design. Staged attachments belong to
-    /// the brief being sent, so they cross the swap instead of being
-    /// cleared with the old transcript.
     pub fn start_fresh_document_for_home(&mut self) -> bool {
         let starter = op_editor_core::EditorState::starter();
-        self.swap_in_document_for_home(starter.doc.clone())
-    }
-
-    /// The one Home document swap: park the open document for the shell,
-    /// install `document`, and start a fresh transcript.
-    /// `start_fresh_document_for_home` swaps in the starter; a website
-    /// import swaps in the imported site.
-    pub(in crate::widget_host) fn swap_in_document_for_home(
-        &mut self,
-        document: jian_ops_schema::PenDocument,
-    ) -> bool {
-        self.park_document_replaced_by_home();
-        if self.install_open_document(document, None, None).is_err() {
-            self.replaced_home_document = None;
+        if self
+            .install_open_document(starter.doc.clone(), None, None)
+            .is_err()
+        {
             return false;
         }
-        let attachments = std::mem::take(&mut self.editor_state.chat.pending_attachments);
         self.editor_state.chat.new_chat();
-        self.editor_state.chat.pending_attachments = attachments;
         true
     }
 
@@ -392,12 +365,6 @@ impl WidgetHostNative {
         // replaced document's scenario would leave the editor presenting an
         // import as though it were the deck the user had open before.
         preserved.scenario = state.editor_ui.scenario;
-        // The share recipe says how the DOCUMENT was made; an import is
-        // not the replaced document's recipe.
-        preserved.home.recipe = state.editor_ui.home.recipe.take();
-        preserved.home.work_family = state.editor_ui.home.work_family;
-        // Likewise the import origin: it belongs to the incoming document.
-        preserved.home.imported_from = state.editor_ui.home.imported_from.take();
         // Dirty/saved state belongs to the incoming document. The rest of the
         // live shell UI is intentionally retained, but inheriting this flag
         // from the replaced editor would make a saved import appear dirty (or

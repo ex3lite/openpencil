@@ -13,7 +13,7 @@ use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::variables_panel::VariablesPanel;
 use op_editor_ui::widgets::{
     AIChatPlaceholder, CanvasViewport, LayerPanel, LayoutCx, LocalePicker, PaintCx, PropertyPanel,
-    ShapePicker, StatusBar, Toolbar, Widget, TOOLBAR_WIDTH,
+    ShapePicker, StatusBar, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
@@ -132,12 +132,6 @@ impl WidgetHost {
 
         let dpi = backend.dpi_scale();
 
-        // Studio Home is a full-surface takeover: it and the overlays it
-        // opens are the whole frame (native `paint.rs` returns the same way).
-        if self.paint_home(&mut *backend, viewport_width, viewport_height) {
-            return;
-        }
-
         // During a document import, keep the frame path independent from
         // document layout/canvas paint (mirrors native — the parser is
         // CPU-heavy and repainting the old scene reads as frozen).
@@ -168,19 +162,10 @@ impl WidgetHost {
         // paint pass. Every widget builder below reads `editor_state`
         // directly; the canvas reads `self.layout_scene`.
         self.refresh_layout_scene();
-        // The Studio generation workspace replaces the TopBar and the rails
-        // while docked: its chrome paints UNDER the canvas here, the canvas
-        // and the pinned chat paint through the ordinary sections below at
-        // the docked `canvas_region`, and the strip / banners / report paint
-        // over them after the chat (native `paint.rs` §8.1).
-        let workspace_visible = self.workspace_visible() && !self.preview_slideshow_active();
-        if workspace_visible {
-            self.paint_workspace_chrome(&mut *backend, viewport_width, viewport_height);
-        }
         // The rail's slides tab, resolved ahead of the long immutable
         // borrow below because deriving it needs `&mut self` (mirrors
         // native paint.rs), and it OWNS the rail when it is on show.
-        let rail_open = self.editor_state.editor_ui.sidebar_open && !workspace_visible;
+        let rail_open = self.editor_state.editor_ui.sidebar_open;
         let slides_panel = if rail_open {
             self.slides_panel_frame(viewport_width, viewport_height)
         } else {
@@ -196,7 +181,7 @@ impl WidgetHost {
 
         let top_bar = self.top_bar();
         let top_bar_rect = self.top_bar_rect(viewport_width);
-        if !workspace_visible {
+        {
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
@@ -295,12 +280,10 @@ impl WidgetHost {
             }
         }
 
-        // The region's own top edge: the TopBar's bottom in the editor, the
-        // workspace toolbar's bottom while the workspace is docked.
-        let (canvas_left, canvas_top, canvas_w, canvas_h) =
+        let (canvas_left, _canvas_y, canvas_w, canvas_h) =
             self.canvas_region(viewport_width, viewport_height);
         let canvas_rect = Rect {
-            origin: Point2D::new(canvas_left, canvas_top),
+            origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
             size: Point2D::new(canvas_w, canvas_h),
         };
         if canvas_w > 0.0 && canvas_h > 0.0 {
@@ -390,8 +373,7 @@ impl WidgetHost {
             &self.editor_state,
             &self.layout_scene,
             self.now_ms,
-        )
-        .filter(|_| !workspace_visible);
+        );
         if let Some(panel) = property_panel.as_ref() {
             let property_rect = canvas_geometry::property_panel_rect(
                 &self.editor_state,
@@ -408,10 +390,7 @@ impl WidgetHost {
         //     floating canvas overlay next to the toolbar (#21: same
         //     interactive grid as the native host; the old read-only
         //     right-rail copy is gone).
-        if let Some(vars_rect) = self
-            .variables_panel_rect(viewport_width, viewport_height)
-            .filter(|_| !workspace_visible)
-        {
+        if let Some(vars_rect) = self.variables_panel_rect(viewport_width, viewport_height) {
             let vars = VariablesPanel::for_editor_at(&self.editor_state, self.now_ms);
             let mut cx = PaintCx {
                 backend: &mut *backend,
@@ -422,9 +401,8 @@ impl WidgetHost {
         // 5b-1. Theme-preset dropdown (#20) — painted after the panel so the
         //       functional menu covers the panel's static stub rows
         //       (variables_preset_press.rs owns the geometry).
-        if let Some((preset_menu, preset_menu_rect)) = self
-            .variables_preset_menu_with_rect(viewport_width, viewport_height)
-            .filter(|_| !workspace_visible)
+        if let Some((preset_menu, preset_menu_rect)) =
+            self.variables_preset_menu_with_rect(viewport_width, viewport_height)
         {
             let mut cx = PaintCx {
                 backend: &mut *backend,
@@ -442,7 +420,7 @@ impl WidgetHost {
             .size
             .y;
         let toolbar_rect = canvas_geometry::toolbar_rect(&self.editor_state, toolbar_h);
-        if canvas_geometry::toolbar_fits(canvas_w) && !workspace_visible {
+        if canvas_geometry::toolbar_fits(canvas_w) {
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
@@ -470,19 +448,16 @@ impl WidgetHost {
             status.paint(&mut cx, status_rect);
         }
 
-        // Workspace deck strip previews, canvas banners and the quality
-        // report — above the canvas and the pinned chat, below every
-        // picker / modal (native §8.1).
-        if workspace_visible {
-            self.paint_workspace_overlays(&mut *backend, viewport_width, viewport_height);
-        }
-
         // Floating align/distribute toolbar — visible whenever 2+
         // nodes are selected. Sits above the canvas but below
         // marquee / pickers / modals.
-        if !workspace_visible {
+        {
             use op_editor_ui::widgets::AlignToolbar;
-            if let Some(tb) = AlignToolbar::for_canvas_region(canvas_rect, &self.editor_state) {
+            let canvas_region = Rect {
+                origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
+                size: Point2D::new(canvas_w, canvas_h),
+            };
+            if let Some(tb) = AlignToolbar::for_canvas_region(canvas_region, &self.editor_state) {
                 let hover = self.editor_state.editor_ui.align_toolbar_hover;
                 tb.paint(&mut *backend, &self.theme, hover);
             }
@@ -494,7 +469,6 @@ impl WidgetHost {
         if let Some(rect) = self
             .marquee_drag
             .as_ref()
-            .filter(|_| !workspace_visible)
             .and_then(canvas_geometry::marquee_rect)
         {
             let primary = self.theme.primary;
@@ -530,7 +504,7 @@ impl WidgetHost {
         // TopBar hover tooltip — hangs off a chrome button into whatever
         // is under the bar, so it paints after the rails and canvas but
         // below every dropdown and modal (native §8.65).
-        if !workspace_visible {
+        {
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };

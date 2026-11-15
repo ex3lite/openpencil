@@ -104,17 +104,6 @@ impl RepairRecord {
         out
     }
 
-    /// The structured form hosts fold into `op_editor_core::QualityReport`.
-    pub fn quality_item(&self) -> op_editor_core::QualityRepairRecord {
-        op_editor_core::QualityRepairRecord {
-            pass: self.pass.clone(),
-            family: self.category.key().to_string(),
-            node_id: self.node_id.clone(),
-            node_name: self.node_name.clone(),
-            detail: self.detail.clone(),
-        }
-    }
-
     /// `Name [id]`, `[id]`, or empty — whichever the node actually has.
     fn node_label(&self) -> String {
         let name = self
@@ -483,9 +472,6 @@ fn numeric_tile_width_count(value: &Value) -> usize {
 }
 
 fn category_grid_target_row_lengths(tile_count: usize) -> Vec<usize> {
-    if tile_count == 9 {
-        return vec![3, 3, 3];
-    }
     if matches!(tile_count % 5, 1 | 2) {
         let row_count = tile_count.div_ceil(5);
         let base = tile_count / row_count;

@@ -15,11 +15,6 @@ impl WidgetHost {
     /// Push a typed character into the focused chat / settings input.
     /// Returns true if anything changed.
     pub fn apply_text(&mut self, c: char) -> bool {
-        // Studio Home IS the composer while it is up (the settings modal
-        // over it keeps its own fields — `home_text` declines then).
-        if let Some(consumed) = self.home_text(c) {
-            return consumed;
-        }
         if let Some(changed) = shared::prompt_center_text(&mut self.editor_state, c, self.now_ms) {
             if changed {
                 self.mark_dirty();
@@ -136,9 +131,6 @@ impl WidgetHost {
     }
 
     pub fn apply_backspace(&mut self) -> bool {
-        if let Some(consumed) = self.home_backspace() {
-            return consumed;
-        }
         if let Some(changed) = shared::prompt_center_backspace(&mut self.editor_state, self.now_ms)
         {
             if changed {
@@ -257,9 +249,6 @@ impl WidgetHost {
     }
 
     pub fn apply_send(&mut self) -> bool {
-        if let Some(consumed) = self.home_enter() {
-            return consumed;
-        }
         if self.editor_state.editor_ui.prompt_center.open {
             return true;
         }
@@ -343,11 +332,6 @@ impl WidgetHost {
         if self.editor_state.chat.available_models.is_empty() {
             return false;
         }
-        // Same as the click path: a send from the composer-only card
-        // moves the user to the rail's Agent tab, where the reply is.
-        if self.editor_state.editor_ui.chat_composer_only() {
-            self.editor_state.editor_ui.enter_chat_tab();
-        }
         // Real send with the AI transport (`codegen`); an honest
         // offline error on transport-less builds. See
         // `click.rs::begin_chat_send`.
@@ -362,9 +346,6 @@ impl WidgetHost {
     /// drafts unless rename / text-edit owns the keyboard. Mirrors
     /// the native shell's `apply_delete`.
     pub fn apply_delete(&mut self) -> bool {
-        if let Some(consumed) = self.home_delete() {
-            return consumed;
-        }
         if let Some(changed) =
             shared::prompt_center_delete_forward(&mut self.editor_state, self.now_ms)
         {

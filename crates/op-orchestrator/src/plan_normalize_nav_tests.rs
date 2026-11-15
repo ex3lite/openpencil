@@ -33,14 +33,12 @@ fn section(id: &str, label: &str) -> Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
 
 fn mobile_plan(name: &str, labels: &[(&str, &str)]) -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: name.into(),
@@ -56,7 +54,6 @@ fn mobile_plan(name: &str, labels: &[(&str, &str)]) -> OrchestratorPlan {
             .map(|(id, label)| section(id, label))
             .collect(),
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -224,87 +221,4 @@ fn explicit_no_nav_request_removes_planned_bottom_navigation() {
         !has_bottom_nav(&plan),
         "an explicit no-nav instruction must override the model plan"
     );
-}
-
-#[test]
-fn a_chinese_bottom_nav_is_recognised_and_not_doubled() {
-    // Measured (GLM-5.3-Flash, coffee-shop mini program): the plan carried
-    // `bottom-nav(底部导航栏)` and normalize still appended an English
-    // "Bottom Navigation", so the screen drew two tab bars.
-    let mut plan = mobile_plan(
-        "咖啡店首页",
-        &[
-            ("store-header", "门店信息头部"),
-            ("today-recommend", "今日推荐饮品卡片"),
-            ("points-progress", "积分进度卡片"),
-            ("bottom-nav", "底部导航栏"),
-        ],
-    );
-
-    normalize(
-        &mut plan,
-        &request("设计一个咖啡店小程序首页：顶部门店信息、今日推荐饮品卡片、积分进度、底部导航"),
-    );
-
-    let ids: Vec<&str> = plan.subtasks.iter().map(|s| s.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        [
-            "store-header",
-            "today-recommend",
-            "points-progress",
-            "bottom-nav"
-        ],
-        "the planned Chinese tab bar is the only one"
-    );
-}
-
-#[test]
-fn multiscreen_whole_page_plan_gets_nav_only_for_home() {
-    let mut plan = mobile_plan(
-        "App",
-        &[
-            ("home", "首页"),
-            ("detail", "商家详情"),
-            ("checkout", "订单确认"),
-        ],
-    );
-    for st in &mut plan.subtasks {
-        st.screen = Some(st.label.clone());
-        st.region.height = 812.0;
-    }
-    normalize(
-        &mut plan,
-        &request("外卖 App 三个页面：首页、商家详情、订单确认。"),
-    );
-    let navs: Vec<_> = plan
-        .subtasks
-        .iter()
-        .filter(|st| is_bottom_nav_subtask(st))
-        .collect();
-    assert_eq!(navs.len(), 1);
-    assert_eq!(navs[0].screen.as_deref(), Some("首页"));
-    assert_eq!(navs[0].parent_frame_id.as_deref(), Some("root-首页"));
-    normalize(
-        &mut plan,
-        &request("外卖 App 三个页面：首页、商家详情、订单确认。"),
-    );
-    assert_eq!(
-        plan.subtasks
-            .iter()
-            .filter(|st| is_bottom_nav_subtask(st))
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn multiscreen_nav_backstop_honors_explicit_opt_out() {
-    let mut plan = mobile_plan("App", &[("home", "首页"), ("detail", "商家详情")]);
-    for st in &mut plan.subtasks {
-        st.screen = Some(st.label.clone());
-        st.region.height = 812.0;
-    }
-    normalize(&mut plan, &request("首页和详情，不需要底部导航"));
-    assert!(!has_bottom_nav(&plan));
 }

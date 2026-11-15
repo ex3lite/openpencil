@@ -145,15 +145,6 @@ impl WidgetHost {
         // Refresh the derived paint doc once up front — every hit-test
         // below reads `&self.layout_scene`, so it must be current.
         self.refresh_layout_scene();
-        // Studio Home is a full-surface takeover and owns every press before
-        // the document chrome can see it — except the overlays Home itself
-        // opens, which paint above it and so hit-test first.
-        if let Some(consumed) = self.press_home_overlays(x, y, viewport_width, viewport_height) {
-            return consumed;
-        }
-        if let Some(consumed) = self.press_home(x, y, viewport_width, viewport_height) {
-            return consumed;
-        }
         // 0-pre. Commit any in-flight rename + canvas text-edit on
         // first press anywhere. Tracked so the final return reports
         // the visible change.
@@ -196,25 +187,13 @@ impl WidgetHost {
         ctx.over_chat_model_picker = self
             .chat_model_picker_rect(viewport_width, viewport_height)
             .is_some_and(|rect| rect.contains(Point2D::new(x, y)));
-        // Tier 4b — the Studio workspace chrome (header, toolbar, deck
-        // strip, dock handle, banners, report). While it is docked the
-        // TopBar, rails, variables panel and tool column are not painted, so
-        // their tiers below must not claim presses either.
-        if let Some(consumed) = self.press_workspace(x, y, viewport_width, viewport_height) {
+        // Tier 5 — theme-preset dropdown + floating VariablesPanel.
+        if let Some(consumed) = self.press_variables_tiers(&ctx) {
             return consumed;
         }
-        let workspace_docked = self.workspace_visible();
-        // Tier 5 — theme-preset dropdown + floating VariablesPanel.
-        if !workspace_docked {
-            if let Some(consumed) = self.press_variables_tiers(&ctx) {
-                return consumed;
-            }
-        }
         // Tier 6 — TopBar chrome (and its blank-press gaps).
-        if !workspace_docked {
-            if let Some(consumed) = self.press_top_bar_tier(&ctx) {
-                return consumed;
-            }
+        if let Some(consumed) = self.press_top_bar_tier(&ctx) {
+            return consumed;
         }
         // Tier 7 — property-panel popovers, then the fonts + model-picker
         // overlay band.
@@ -225,10 +204,8 @@ impl WidgetHost {
             return consumed;
         }
         // Tier 8 — PropertyPanel input row.
-        if !workspace_docked {
-            if let Some(consumed) = self.press_property_panel_tier(&ctx) {
-                return consumed;
-            }
+        if let Some(consumed) = self.press_property_panel_tier(&ctx) {
+            return consumed;
         }
         ctx.property_focus_committed = self.commit_property_family_focus_if_any();
         let property_focus_committed = ctx.property_focus_committed;
@@ -237,10 +214,8 @@ impl WidgetHost {
             return consumed;
         }
         // Tier 10 — toolbar.
-        if !workspace_docked {
-            if let Some(consumed) = self.press_toolbar_tier(&ctx) {
-                return consumed;
-            }
+        if let Some(consumed) = self.press_toolbar_tier(&ctx) {
+            return consumed;
         }
         // Tier 11 — LayerPanel drag peek, align toolbar, `apply_click`.
         if let Some(consumed) = self.press_layer_align_click_tiers(&ctx) {

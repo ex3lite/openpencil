@@ -6,7 +6,6 @@
 //! [`descendant_count`] 给 `run()` 的"零内容"判定提供基线:
 //! scaffold 之后数一次,subtask 全跑完再数一次,没涨即零内容。
 
-use crate::cleanup_image_fallback::settle_map_geometry;
 use crate::cleanup_layout::root_content_height;
 use crate::cleanup_typography::repair_overbold_text_hierarchy;
 use crate::plan::OrchestratorPlan;
@@ -29,12 +28,6 @@ mod cleanup_desktop_dashboard;
 mod cleanup_mobile_chrome;
 #[path = "cleanup_root_patches.rs"]
 mod cleanup_root_patches;
-#[path = "cleanup_fixed_board_backdrops.rs"]
-mod fixed_board_backdrops;
-#[path = "cleanup_fixed_board_spacing.rs"]
-mod fixed_board_spacing;
-#[path = "cleanup_mobile_viewport.rs"]
-mod mobile_viewport;
 pub(crate) use cleanup_mobile_chrome::{
     anchor_bottom_nav_last_for_all_roots, repair_mobile_structural_chrome_for_all_roots,
 };
@@ -56,12 +49,8 @@ mod cleanup_empty_content_bar;
 mod cleanup_equalize_siblings;
 #[path = "cleanup_image_slots.rs"]
 pub(crate) mod cleanup_image_slots;
-#[path = "cleanup_light_plate_on_dark.rs"]
-mod cleanup_light_plate_on_dark;
 #[path = "cleanup_overflow_prepass.rs"]
 mod cleanup_overflow_prepass;
-#[path = "cleanup_path_stage_coords.rs"]
-mod cleanup_path_stage_coords;
 #[path = "cleanup_root_and_nav.rs"]
 mod cleanup_root_and_nav;
 #[path = "cleanup_root_transform.rs"]
@@ -79,13 +68,11 @@ mod cleanup_status_bar;
 mod motion_recipes;
 #[path = "sibling_style_drift.rs"]
 mod sibling_style_drift;
-use cleanup_status_bar::remove_duplicate_status_bars;
 pub(crate) use cleanup_status_bar::{is_status_bar, is_status_bar_from_json};
 pub(crate) use sibling_style_drift::structural_signature;
 #[path = "finalize_enforce_status_bar.rs"]
 mod finalize_enforce_status_bar;
 
-use crate::repair_tier::TieredPass;
 use category_grid_density::repair_category_grid_density;
 use cleanup_bottom_nav_repairs::*;
 use cleanup_clip_row_stroke::*;
@@ -121,6 +108,32 @@ pub fn descendant_count(state: &EditorState, root_id: &str) -> usize {
         .find(|n| n.id_str() == root_id)
         .map(count_descendants)
         .unwrap_or(0)
+}
+
+/// Pass ①:移动端重复状态栏去重。scaffold 注入了一个固定状态栏,
+/// 若某个 sub-agent 又生成了状态栏,根下就会有多个 —— 保留第一个,
+/// 删掉其余。对齐 TS `removeDuplicateStatusBars`。
+fn remove_duplicate_status_bars(sink: &mut dyn DocSink, root_id: &str) {
+    let dupes: Vec<NodeId> = {
+        let Some(root) = find_root(sink.state(), root_id) else {
+            return;
+        };
+        let Some(children) = root.children() else {
+            return;
+        };
+        children
+            .iter()
+            .filter(|c| is_status_bar(c))
+            .skip(1) // 保留第一个
+            .map(|c| NodeId::new(c.id_str().to_string()))
+            .collect()
+    };
+    for id in dupes {
+        sink.apply(EditorCommand::DeleteNode {
+            node_id: id,
+            page_id: None,
+        });
+    }
 }
 
 pub(crate) fn remove_duplicate_bottom_nav_sections_for_all_roots(sink: &mut dyn DocSink) {
@@ -336,26 +349,6 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
     run_cleanup_passes_with_summary(sink, plan, root_ids, &mut summary);
 }
 
-/// Async image landing reads the final mobile rails, which may have changed
-/// after the generation-time geometry pass. Preserve the phone viewport.
-pub(crate) fn settle_mobile_image_geometry(sink: &mut dyn DocSink, root_id: &str) {
-    let mobile = find_root(sink.state(), root_id)
-        .and_then(|root| serde_json::to_value(root).ok())
-        .is_some_and(|v| {
-            v["width"]
-                .as_f64()
-                .is_some_and(|w| (240.0..=480.0).contains(&w))
-                && v["height"].as_f64().is_some_and(|h| h >= 500.0)
-        });
-    if mobile {
-        let mut guarded = PreserveRootHeightSink {
-            inner: sink,
-            root_id,
-        };
-        crate::geometry_validation::geometry_validate_and_fix(&mut guarded, root_id);
-    }
-}
-
 /// The real cleanup driver. `summary` accumulates what each contiguous group
 /// of passes checked and how many document edits it applied — see
 /// `crate::repair_summary` for what one "repair" counts as. The measurement
@@ -399,7 +392,6 @@ fn run_cleanup_passes_with_summary_and_policy(
     let mut counter = RepairCounter::new();
     let mut counting = counter.wrap(sink);
     let sink: &mut dyn DocSink = &mut counting;
-    let mut settled_root_ids = Vec::new();
 
     let effective_root_ids: Vec<String> = if root_ids.is_empty() {
         Vec::new()
@@ -477,16 +469,6 @@ fn run_cleanup_passes_with_summary_and_policy(
         // [bell icon, 8px square] flow pairs → round the dot and pin it on
         // the icon's top-right corner.
         rid = apply_root_transform(sink, &rid, crate::chip_repair::adopt_notification_dots);
-        // [empty centring chip, label] × ≥2 flow pairs in a row → move each
-        // label into its chip (segmented switchers authored flat).
-        crate::chip_label_adopt::adopt_empty_chip_labels(sink, &rid);
-        // A radio group squeezed into a single-row box paints its options on
-        // top of each other → re-type it as the segmented control it is sized as.
-        rid = apply_root_transform(
-            sink,
-            &rid,
-            crate::radio_segment_repair::segment_single_row_radio_groups,
-        );
         // A progress ring's track + progress arc authored as FLEX SIBLINGS of a
         // general container (a padded card, a section with its own heading) →
         // extract them into a dedicated concentric `layout:none` wrapper.
@@ -498,6 +480,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         rid = apply_root_transform(sink, &rid, crate::ring_repair::wrap_ring_fragments);
         debug_probe_child_height(sink, &rid, "table_flush");
         counter.checkpoint(summary, CheckCategory::Structure, "chip+ring-extract");
+        super::cleanup_image_fallback::repair_map_placeholders(sink, &rid, summary, &mut counter);
         // Chip/badge text contrast (DS P1-a): the specific, provable chip
         // branch runs BEFORE the generic contrast repair so the chip-scoped
         // proof (solid chip fill, chip shape) wins the repair and the generic
@@ -512,23 +495,19 @@ fn run_cleanup_passes_with_summary_and_policy(
         if policy.is_deck || (policy.roots_are_run_output && root_is_deck_board(sink, &rid)) {
             centre_deck_board_content(sink, &rid);
         }
-        if intent_allows(sink, TieredPass::HeroBleed) {
-            crate::hero_bleed::enforce(sink, plan, &rid);
-        }
+        // Text that resolves to ~1:1 against its own background is not
+        // styled, it is missing. The lint crate has detected this since
+        // 2026-05, but the generation path called exactly one of its
+        // detectors, so it only ever fired for a user running
+        // `lint_document` by hand.
+        crate::text_contrast_repair::repair_text_contrast(sink, &rid);
+        crate::hero_bleed::enforce(sink, plan, &rid);
         counter.checkpoint(summary, CheckCategory::Structure, "hero-bleed");
-        // Materialize map slots here; final geometry is settled after all rails.
-        super::cleanup_image_fallback::repair_map_placeholders(sink, &rid, summary, &mut counter);
         repair_category_grid_density(sink, &rid);
         counter.checkpoint(summary, CheckCategory::Structure, "category-grid-density");
         cleanup_empty_content_bar::remove_empty_content_bars(sink, &rid);
         counter.checkpoint(summary, CheckCategory::Structure, "empty-content-bar");
-        cleanup_light_plate_on_dark::strip_light_plates_on_dark(sink, &rid);
-        counter.checkpoint(summary, CheckCategory::Palette, "light-plate-on-dark");
-        cleanup_path_stage_coords::crop_stage_boxed_paths(sink, &rid);
-        counter.checkpoint(summary, CheckCategory::Layout, "path-stage-coords");
-        if intent_allows(sink, TieredPass::MotionRecipes) {
-            motion_recipes::apply(sink, &rid);
-        }
+        motion_recipes::apply(sink, &rid);
         counter.checkpoint(summary, CheckCategory::Structure, "motion-recipes");
         // Section-margin ownership (DS P1.5) runs BEFORE the wrapper-double-inset
         // stripper below: unifying first hands the stripper the group already
@@ -575,7 +554,6 @@ fn run_cleanup_passes_with_summary_and_policy(
 
         remove_duplicate_status_bars(sink, rid);
         remove_duplicate_bottom_nav_sections(sink, rid);
-        mobile_viewport::prepare_status(sink, rid, policy);
         counter.checkpoint(summary, CheckCategory::Structure, "chrome-dedupe");
         distribute_bottom_nav_tabs(sink, rid);
         collapse_nested_horizontal_padding(sink, rid);
@@ -608,22 +586,14 @@ fn run_cleanup_passes_with_summary_and_policy(
         // the wrapped card came out 279px wide against 327px siblings.
         let rid_owned = strip_wrapper_double_inset_if_intent(sink, rid);
         let rid = rid_owned.as_str();
-        mobile_viewport::reflow_root(sink, rid, policy);
+        crate::mobile_reflow::repair_mobile_trailing_nav_reflow_for_root_in_sink(sink, rid);
         cleanup_mobile_dense::repair_dense_mobile_rows(sink, rid);
         cleanup_desktop_dashboard::repair_sparse_desktop_dashboard_rows(sink, plan, rid);
         counter.checkpoint(summary, CheckCategory::Layout, "mobile-chrome+content-rail");
-        if intent_allows(sink, TieredPass::OverboldTextHierarchy) {
-            repair_overbold_text_hierarchy(sink, rid);
-        }
+        repair_overbold_text_hierarchy(sink, rid);
         strip_decorative_filled_strokes(sink, rid);
         counter.checkpoint(summary, CheckCategory::Hierarchy, "text-hierarchy+strokes");
         crate::radial_repair::repair_radial_stacks(sink, rid);
-        crate::square_ring_repair::repair_square_ring_wrappers(sink, rid);
-        // Fake count-up rolls (start/end texts stacked at the same x/y in a
-        // `layout:none` window) paint BOTH layers statically — and the lower
-        // index (the START value) paints on top. Hide every layer but the
-        // last before geometry validation sees the window.
-        crate::stacked_text_repair::repair_stacked_overlapping_texts(sink, rid);
         crate::stub_repair::remove_empty_decorated_stubs(sink, rid);
         // A section's header row whose second child is the ENTIRE content
         // body (not a chevron/badge), with the body redundantly repeating
@@ -673,11 +643,6 @@ fn run_cleanup_passes_with_summary_and_policy(
         // shrink single-line text that outgrew its rail, so the geometry loop
         // below only sees what a move or a shrink cannot fix.
         run_overflow_prepass(sink, rid, summary, &mut counter);
-        repair_generated_prose_gutters(sink, rid, summary, &mut counter, policy);
-        if policy.preserve_requested_root_height && policy.roots_are_run_output {
-            fixed_board_backdrops::repair(sink, rid, plan);
-            counter.checkpoint(summary, CheckCategory::Layout, "fixed-board-backdrops");
-        }
         let preserve_root_height = policy.preserve_requested_root_height
             || find_root(sink.state(), rid).is_some_and(|root| {
                 root_has_explicit_fit_content_height(root)
@@ -709,20 +674,9 @@ fn run_cleanup_passes_with_summary_and_policy(
         // `fill_container`; re-centre against the final resolved bounds so
         // arc/label coordinates do not drift off-centre.
         crate::radial_repair::repair_radial_stacks(sink, rid);
-        crate::square_ring_repair::repair_square_ring_wrappers(sink, rid);
-        crate::stacked_text_repair::repair_stacked_overlapping_texts(sink, rid);
         adjust_root_height_to_content(sink, rid, preserve_root_height);
-        if policy.preserve_requested_root_height && policy.roots_are_run_output {
-            fixed_board_spacing::repair(sink, rid);
-        }
         debug_probe_child_height(sink, rid, "adjust_root_height");
         counter.checkpoint(summary, CheckCategory::Layout, "radial+root-height");
-        crate::app_shell::repair_height_contract(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Layout, "desktop-shell-height");
-        // Contrast reads photo pixels after final shell geometry settles.
-        crate::text_contrast_repair::repair_text_contrast(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Layout, "text-contrast");
-        settled_root_ids.push(rid.to_string());
     }
 
     crate::avatar_repair::repair_avatar_slots_for_all_roots(sink);
@@ -735,7 +689,7 @@ fn run_cleanup_passes_with_summary_and_policy(
     // where that section belongs is intent — the geometry echo handles it.
     anchor_bottom_nav_last_for_all_roots(sink);
     counter.checkpoint(summary, CheckCategory::Structure, "avatar+nav-anchor");
-    mobile_viewport::reflow_remaining(sink, &settled_root_ids, policy);
+    crate::mobile_reflow::repair_mobile_trailing_nav_reflow_in_sink(sink);
     counter.checkpoint(summary, CheckCategory::Layout, "mobile-trailing-nav-reflow");
 
     // Multi-screen root position deconfliction: screen-shaped top-level
@@ -766,7 +720,12 @@ fn run_cleanup_passes_with_summary_and_policy(
     // point, so both the classic and loop-finalize paths pick it up.
     crate::unify_shared_status_bar::unify_shared_status_bar(sink);
 
-    // Final status enforcement also covers escaped root-seeding and missing bars.
+    // Finalize-time enforcement of the OS status-bar contract: every mobile
+    // screen root must carry exactly one canonical status bar (role="status-bar"
+    // with Levels child) as its first child. Runs after unify_shared_status_bar
+    // to enforce the contract even when root-seeding was escaped (model-built
+    // bar, fit_content root, or later batches). Three cases: missing → insert,
+    // non-canonical → replace, canonical → untouched.
     finalize_enforce_status_bar::finalize_enforce_status_bar_contract(sink);
 
     // Establish final screen routes first. The cleanup-only semantic pass can
@@ -785,7 +744,6 @@ fn run_cleanup_passes_with_summary_and_policy(
     counter.checkpoint(summary, CheckCategory::Structure, "shared-chrome+nav");
 
     super::cleanup_image_fallback::repair_image_fallback_policy(sink, summary, &mut counter);
-    settle_map_geometry(sink, &settled_root_ids, summary, &mut counter);
 }
 
 #[cfg(test)]

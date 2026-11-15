@@ -11,54 +11,6 @@ const SIDE_CUES: &[&str] = &[
     "side", "vertical", "right", "left", "rail", "竖向", "纵向", "右侧", "左侧", "侧边",
 ];
 
-const PAGE_SCROLL_CUES: &[&str] = &[
-    "scroll",
-    "scrolling",
-    "reading",
-    "阅读进度",
-    "滚动进度",
-    "页面滚动",
-];
-
-const RAIL_LABEL_CUES: &[&str] = &["rail", "bar", "indicator", "进度条", "指示", "阅读进度"];
-
-/// Cues that mark a progress subtask as something other than a page-edge
-/// scroll rail: a horizontal card rail whose cards carry progress bars, or a
-/// goal/progress ring. arena-m02 (0925): `今日目标环形进度` ("circular goal ring
-/// … calories left") and a course-card rail ("horizontal rail … progress per
-/// card") both matched progress + side (`left` / `rail`) and would have been
-/// folded into the bottom nav as a 4px bar — silently deleting two sections
-/// the brief asked for.
-const NOT_SIDE_RAIL_CUES: &[&str] = &[
-    "horizontal",
-    "carousel",
-    "card",
-    "cards",
-    "ring",
-    "circular",
-    "goal",
-    "横向",
-    "水平",
-    "卡片",
-    "课程卡",
-    "环形",
-    "圆环",
-    "目标",
-];
-
-/// Labels naming a docked surface rather than a page-edge rail.
-const DOCKED_SURFACE_CUES: &[&str] = &[
-    "drawer",
-    "inspector",
-    "panel",
-    "detail",
-    "details",
-    "抽屉",
-    "面板",
-    "详情",
-    "检查器",
-];
-
 fn matches_cue(text: &str, cues: &[&str]) -> bool {
     let lower = text.to_lowercase();
     cues.iter().any(|cue| {
@@ -83,35 +35,6 @@ fn is_page_navigation_label(label: &str) -> bool {
 }
 
 fn is_side_progress_candidate(st: &Subtask) -> bool {
-    // Progress plus a right/left-aligned control is not evidence of a page
-    // scroll rail. Folding a player's track information into the header
-    // deletes its title, artist and seek controls. Require page-scroll intent.
-    let scroll_intent = matches_cue(&st.label, PAGE_SCROLL_CUES)
-        || st
-            .elements
-            .as_deref()
-            .is_some_and(|elements| matches_cue(elements, PAGE_SCROLL_CUES));
-    // A whole article that mentions a scroll indicator is still content,
-    // not a dedicated rail. Only the rail itself may be folded away.
-    if !scroll_intent || !matches_cue(&st.label, RAIL_LABEL_CUES) {
-        return false;
-    }
-    // A docked side surface (drawer, inspector, detail panel) lives on the
-    // side and often lists a progress row, yet it is a whole region the brief
-    // asked for. arena-w01 (Opus 5.5, 2026-10-01, both runs): `右侧任务详情抽屉`
-    // with "vertical stack … subtask progress 2/5" was folded into the nav
-    // as a 4px scroll bar and the drawer vanished.
-    if matches_cue(&st.label, DOCKED_SURFACE_CUES) {
-        return false;
-    }
-    let not_a_side_rail = matches_cue(&st.label, NOT_SIDE_RAIL_CUES)
-        || st
-            .elements
-            .as_deref()
-            .is_some_and(|elements| matches_cue(elements, NOT_SIDE_RAIL_CUES));
-    if not_a_side_rail {
-        return false;
-    }
     matches_side_progress_field(&st.label)
         || st
             .elements
@@ -168,44 +91,12 @@ pub(crate) fn fold_side_progress_rail(plan: &mut OrchestratorPlan) -> usize {
         nav_elements.push_str(PROGRESS_BAR_ELEMENTS);
     }
 
-    // The nav now draws the folded rail, so it inherits what the rail
-    // claimed to cover — otherwise the coverage gate reports a brief
-    // section as dropped although its content lives on in the nav.
-    let inherited: Vec<String> = plan
-        .subtasks
-        .iter()
-        .enumerate()
-        .filter(|(index, st)| {
-            *index != 0 && *index != navigation_index && is_side_progress_candidate(st)
-        })
-        .flat_map(|(_, st)| {
-            st.covers
-                .iter()
-                .flatten()
-                .cloned()
-                .chain(std::iter::once(st.label.clone()))
-        })
-        .filter(|entry| !entry.trim().is_empty())
-        .collect();
-    let nav_covers = plan.subtasks[navigation_index]
-        .covers
-        .get_or_insert_with(Vec::new);
-    for entry in inherited {
-        if !nav_covers.contains(&entry) {
-            nav_covers.push(entry);
-        }
-    }
-
     let subtasks = std::mem::take(&mut plan.subtasks);
     plan.subtasks = subtasks
         .into_iter()
         .enumerate()
         .filter_map(|(index, st)| {
             if index != 0 && index != navigation_index && is_side_progress_candidate(&st) {
-                eprintln!(
-                    "[PLAN] normalize: folded side progress rail {}({}) into the nav",
-                    st.id, st.label
-                );
                 None
             } else {
                 Some(st)

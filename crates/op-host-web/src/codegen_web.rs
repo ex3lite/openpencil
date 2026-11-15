@@ -411,11 +411,7 @@ pub fn start_codegen<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, base: S
         // Model id: the selected chat model's wire value, else "default" (the
         // proxy then picks the configured provider).
         let selected = state.chat.selected_model_entry();
-        // Deterministic targets never reach the provider (the pipeline
-        // finishes on its first step), so any model selection is fine.
-        if !state.codegen.framework.is_deterministic()
-            && selected.is_some_and(|entry| entry.builtin_provider_id.is_none())
-        {
+        if selected.is_some_and(|entry| entry.builtin_provider_id.is_none()) {
             drop(b);
             let mut bm = inner.borrow_mut();
             let cg = &mut bm.host_mut().editor_state_mut().codegen;
@@ -604,7 +600,7 @@ fn fire_request<C: RepaintContext + 'static>(
             }
             // Reasoning fragments are a chat-transcript affordance; the codegen
             // pipeline consumes only the answer text.
-            AiEvent::Thinking(_) | AiEvent::QualityReport(_) | AiEvent::Variant(_) => {}
+            AiEvent::Thinking(_) => {}
             AiEvent::Done => {
                 // Feed the buffered text into the pipeline, mark complete, queue a
                 // progress delta, then re-drive (next batch req or re-step).

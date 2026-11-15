@@ -93,7 +93,7 @@ pub(super) fn paint_model_chip(
     let fill = if hovered || pressed {
         palette.button_hover
     } else {
-        palette.raised
+        palette.panel
     };
     cx.backend.fill_round_rect(rect, 9.0, fill);
     cx.backend.stroke_round_rect(
@@ -102,7 +102,7 @@ pub(super) fn paint_model_chip(
         if hovered {
             palette.button_hover_line
         } else {
-            palette.raised_line
+            palette.line
         },
         1.0,
     );

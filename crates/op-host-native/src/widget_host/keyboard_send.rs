@@ -16,7 +16,6 @@ impl WidgetHostNative {
                 // Fall through to the settings handling below.
             } else if self.editor_state.editor_ui.chat_model_picker.open
                 || self.editor_state.editor_ui.login_modal_open
-                || self.editor_state.editor_ui.home.references_open
             {
                 return true;
             } else {
@@ -29,16 +28,9 @@ impl WidgetHostNative {
                 {
                     return true;
                 }
-                // The unchanged example takes the Send button's one-click
-                // path (instant template draft). A typed brief keeps the
-                // wrapped-launch path it always had. An EMPTY box stays a
-                // no-op on Enter (above): the one-click start is the
-                // button's labelled action, not a stray key.
-                let sent = if self.home_draft_uses_example() {
-                    self.home_send()
-                } else {
-                    self.queue_home_send()
-                };
+                // Same wrapped-launch path as the sheet's Send button — one
+                // implementation arms the result view and queues the turn.
+                let sent = self.queue_home_send();
                 self.mark_dirty();
                 return sent;
             }

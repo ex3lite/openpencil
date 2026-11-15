@@ -4,7 +4,6 @@ import android.content.Context
 import android.text.InputType
 import android.util.Log
 import android.view.Choreographer
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -159,9 +158,6 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     fun setImportImageOrSvgHandler(handler: () -> Unit) =
         shellBridge.setImportImageOrSvgHandler(handler)
 
-    fun setPickChatAttachmentHandler(handler: () -> Unit) =
-        shellBridge.setPickChatAttachmentHandler(handler)
-
     fun setExportDocumentHandler(handler: () -> Unit) =
         shellBridge.setExportDocumentHandler(handler)
 
@@ -217,11 +213,6 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     }
 
     override fun onCheckIsTextEditor(): Boolean = editorMode && engine != 0L
-
-    override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
-        if (ime.handleBackKey(keyCode, event)) return true
-        return super.onKeyPreIme(keyCode, event)
-    }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         if (!editorMode || engine == 0L) return null
@@ -714,10 +705,6 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     fun importImageOrSvg(bytes: ByteArray, displayName: String): Int =
         shellBridge.importImageOrSvg(bytes, displayName)
 
-    /** Stages one photo-picker image as a chat / Home attachment. */
-    fun attachChatImage(bytes: ByteArray, mediaType: String?, fileName: String?): Int =
-        shellBridge.attachChatImage(bytes, mediaType, fileName)
-
     /** Editor-mode IME sync kept in sync with the engine's focus each frame. */
     fun syncIme() {
         ime.sync()
@@ -735,7 +722,6 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     fun setImeOwnedByOverlay(owned: Boolean) {
         if (imeOwnedByOverlay == owned) return
         imeOwnedByOverlay = owned
-        if (owned) ime.releaseBackDispatcher()
         if (!owned) {
             ime.retryAfterConfiguration()
             requestFrame()

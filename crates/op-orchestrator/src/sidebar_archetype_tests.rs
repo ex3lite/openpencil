@@ -8,7 +8,6 @@ use serde_json::{json, Value};
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Dashboard".into(),
@@ -21,7 +20,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 

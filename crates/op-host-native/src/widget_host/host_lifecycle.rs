@@ -42,7 +42,6 @@ impl WidgetHostNative {
             design_md_drag: None,
             component_browser_drag: None,
             icon_picker_drag: None,
-            replaced_home_document: None,
             image_adjustment_drag: None,
             image_crop_drag: None,
             effect_radius_drag: None,
@@ -50,7 +49,6 @@ impl WidgetHostNative {
             chat_input_selection_drag: None,
             image_input_selection_drag: None,
             image_input_geometry: None,
-            home_input_geometry: None,
             chat_text_selection_drag: None,
             text_edit_selection_drag: None,
             text_measure: std::cell::RefCell::new(None),
@@ -100,10 +98,6 @@ impl WidgetHostNative {
             slide_thumbs: Default::default(),
             last_chat_session_index,
             workspace_dock_drag: None,
-            reader_drag: None,
-            reader_on_next_open_ms: None,
-            reader_open_from_picker: false,
-            reader_framed_stage: None,
             auth_login_handle: None,
             auth_pending_browser_url: None,
             auth_browser_opened: false,
@@ -205,7 +199,6 @@ impl WidgetHostNative {
         if changed {
             self.reveal_property_keyboard_owner();
         }
-        self.sync_reader_stage(viewport_w, viewport_h);
         self.ensure_focused_agent_settings_visible(viewport_w, viewport_h);
     }
 
@@ -218,16 +211,11 @@ impl WidgetHostNative {
             0.0
         };
         if (self.keyboard_occlusion - next).abs() <= f32::EPSILON {
-            self.ensure_home_composer_visible(self.last_viewport_w, self.last_viewport_h);
             return self
                 .ensure_focused_agent_settings_visible(self.last_viewport_w, self.last_viewport_h);
         }
         self.keyboard_occlusion = next;
-        // Surfaces the keyboard overlaps read the band from the shared UI
-        // state so paint, hit-test and scroll clamping all agree on it.
-        self.editor_state.editor_ui.keyboard_occlusion = next;
         self.reveal_property_keyboard_owner();
-        self.ensure_home_composer_visible(self.last_viewport_w, self.last_viewport_h);
         self.ensure_focused_agent_settings_visible(self.last_viewport_w, self.last_viewport_h);
         true
     }

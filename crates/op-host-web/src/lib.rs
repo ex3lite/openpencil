@@ -119,10 +119,6 @@ mod collab_avatar_fetch;
 // Web chat session — drains `chat.pending_send` / Stop / New Chat and streams
 // real standard-mode turns through the daemon's `/api/ai/standard` route.
 #[cfg(feature = "canvaskit")]
-mod studio_web;
-#[cfg(feature = "canvaskit")]
-mod studio_web_site_import;
-#[cfg(feature = "canvaskit")]
 mod web_chat;
 #[cfg(feature = "canvaskit")]
 mod web_credential_sync;
@@ -130,10 +126,6 @@ mod web_credential_sync;
 mod web_design_md;
 // Web image-panel drain — Search / Generate popover network via the daemon's
 // `/api/ai/image/*` routes (desktop `image_panel_host` counterpart).
-#[cfg(feature = "canvaskit")]
-mod web_generator_cache;
-#[cfg(feature = "canvaskit")]
-mod web_generator_runner;
 #[cfg(feature = "canvaskit")]
 mod web_image_panel;
 #[cfg(feature = "canvaskit")]

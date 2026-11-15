@@ -82,26 +82,6 @@ pub(super) fn open_recent_file(body: &str, state: &mut WebCanvasState) -> WebRep
     }
 }
 
-/// `POST /api/file/unbind`: the browser replaced its document with one the
-/// bound file does not hold (Studio Home's fresh page, File > New, a file
-/// picked in the browser), so Save must stop writing to that path. After
-/// this `POST /api/file/save` answers "no file path is bound" and the
-/// browser falls back to a download, and `fileBound` reads `false`.
-///
-/// Touches neither the document nor the filesystem, so it needs no
-/// collaboration gate and is idempotent: an unbound daemon (or an online
-/// tenant, which never has a path) answers the same way.
-pub(super) fn unbind_current_file(state: &mut WebCanvasState) -> WebReply {
-    let unbound = state.current_path.take().is_some();
-    if unbound {
-        state.editor.editor_ui.file_name_display = None;
-    }
-    WebReply {
-        status: "200 OK",
-        body: serde_json::json!({ "ok": true, "unbound": unbound }).to_string(),
-    }
-}
-
 pub(super) fn preserve_web_canvas_preferences(previous: &EditorState, next: &mut EditorState) {
     let previous_selected_model = previous.chat.selected_model_entry().cloned();
     next.editor_ui.theme_mode = previous.editor_ui.theme_mode;
@@ -119,23 +99,17 @@ pub(super) fn preserve_web_canvas_preferences(previous: &EditorState, next: &mut
     next.editor_ui.agent_settings = previous.editor_ui.agent_settings.clone();
     next.editor_ui.chat_selected_agent = previous.editor_ui.chat_selected_agent;
     next.chat.discovered_models = previous.chat.discovered_models.clone();
-    let _ = next.replace_hosted_model_catalog(previous.editor_ui.hosted_model_routes().to_vec());
     next.rebuild_chat_models();
     if let Some(prev) = previous_selected_model {
         if let Some(idx) = next.chat.available_models.iter().position(|m| {
             m.provider == prev.provider
                 && m.value == prev.value
                 && m.builtin_provider_id == prev.builtin_provider_id
-                && m.hosted_route_id() == prev.hosted_route_id()
         }) {
             next.select_chat_model(idx);
         }
     }
 }
-
-#[cfg(test)]
-#[path = "doc_routes_hosted_tests.rs"]
-mod hosted_tests;
 
 pub(super) fn set_file_name_display(state: &mut EditorState, path: &std::path::Path) {
     state.editor_ui.file_name_display = path.file_name().map(|n| n.to_string_lossy().into_owned());

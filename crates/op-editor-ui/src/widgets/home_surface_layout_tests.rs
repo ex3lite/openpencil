@@ -26,16 +26,6 @@ fn overlaps(a: Rect, b: Rect) -> bool {
         && b.origin.y < a.origin.y + a.size.y
 }
 
-fn assert_page_choices_clear_input(layout: &HomeLayout) {
-    for option in layout.app_page_options {
-        assert!(option.size.y >= 44.0, "keep the touch target height");
-        assert!(
-            layout.input_box.origin.y - (option.origin.y + option.size.y) >= 12.0,
-            "page choices must leave room above the input's focus halo"
-        );
-    }
-}
-
 #[test]
 fn layout_at_1440_matches_the_approved_composition() {
     let layout = layout(1440.0, 900.0, HomeFamily::AppUi);
@@ -52,7 +42,7 @@ fn layout_at_1440_matches_the_approved_composition() {
         184.57,
         0.5,
     );
-    // Both panels: same y, both 370 tall; the page-count row uses input space, 18 px column gap, ≈1.05:1.
+    // Both panels: same y, both 370 tall, 18 px column gap, ≈1.05:1.
     assert_eq!(layout.composer.origin.y, layout.preview.origin.y);
     assert_close(layout.composer.size.y, 370.0, 0.5);
     assert_close(layout.preview.size.y, 370.0, 0.5);
@@ -67,8 +57,8 @@ fn layout_at_1440_matches_the_approved_composition() {
         "composer:preview = {} must be ≈1.05",
         ratio
     );
-    // The composer internals stack inside the panel with room for the
-    // label, page choices, and a multiline input.
+    // The composer internals stack inside the panel (the wide variant's
+    // 41 px label row leaves a 199 px input box).
     assert!(inside(layout.label_row, layout.composer));
     assert!(inside(layout.input_box, layout.composer));
     assert!(inside(layout.tools_row, layout.composer));
@@ -76,7 +66,6 @@ fn layout_at_1440_matches_the_approved_composition() {
     assert!(inside(layout.send, layout.composer));
     assert!(inside(layout.model_chip, layout.composer));
     assert!(layout.input_box.size.y >= 130.0, "min input height");
-    assert_page_choices_clear_input(&layout);
     assert_close(layout.label_row.size.y, 41.0, 0.5);
     assert_close(
         layout.label_row.origin.y,
@@ -171,7 +160,6 @@ fn inside(inner: Rect, outer: Rect) -> bool {
 #[test]
 fn layout_at_1180_keeps_the_same_contracts_on_a_1164_column() {
     let layout = layout(1180.0, 820.0, HomeFamily::AppUi);
-    assert_page_choices_clear_input(&layout);
     assert_close(layout.tabs_row.origin.x, 8.0, 0.5);
     assert_close(layout.tabs_row.size.x, 1164.0, 0.5);
     // The ≤1180 tab gap drops to 8: (1164 − 48) / 7 ≈ 159.4, tabs stay
@@ -197,11 +185,10 @@ fn layout_at_1180_keeps_the_same_contracts_on_a_1164_column() {
 #[test]
 fn narrow_viewports_stack_the_panels() {
     let layout = layout(840.0, 900.0, HomeFamily::AppUi);
-    // Composer over preview, both full-width, 395 + 400 tall (the wide
+    // Composer over preview, both full-width, 335 + 400 tall (the wide
     // variant's stacked heights).
     assert!(layout.preview.origin.y > layout.composer.origin.y + layout.composer.size.y);
-    assert_close(layout.composer.size.y, 395.0, 0.5);
-    assert_page_choices_clear_input(&layout);
+    assert_close(layout.composer.size.y, 335.0, 0.5);
     assert_close(layout.preview.size.y, 400.0, 0.5);
     assert_close(layout.composer.origin.x, layout.preview.origin.x, 0.5);
     assert_close(layout.composer.size.x, layout.preview.size.x, 0.5);
@@ -209,7 +196,7 @@ fn narrow_viewports_stack_the_panels() {
 
 #[test]
 fn compact_rows_show_four_tabs_and_a_more_button() {
-    // 700 px viewport → 684 px content cannot fit seven readable tabs.
+    // 700 px viewport → 684 px content < 700 → compact row.
     let layout = layout(700.0, 900.0, HomeFamily::AppUi);
     assert!(layout.more_button.size.x > 0.0);
     for index in 0..4 {
@@ -221,7 +208,7 @@ fn compact_rows_show_four_tabs_and_a_more_button() {
     assert_eq!(
         HomeLayout::hidden_tasks(684.0, HomeFamily::AppUi).len(),
         3,
-        "tutorial / infographic / poster are in the popover"
+        "knowledge / tutorial / poster are in the popover"
     );
 }
 
@@ -292,76 +279,7 @@ fn the_stack_reports_scroll_when_the_viewport_is_short() {
     // The top bar rect is pinned; the recent row scrolls up.
     assert_eq!(scrolled.open_file, unscrolled.open_file);
     assert!(scrolled.recent.origin.y < unscrolled.recent.origin.y);
-    assert_close(
-        scrolled.recent.origin.y + scrolled.recent.size.y,
-        600.0,
-        0.01,
-    );
-}
-
-#[test]
-fn scrolling_preserves_section_spacing_and_sizes_across_viewports() {
-    for (width, height) in [
-        (1440.0, 1000.0),
-        (1440.0, 900.0),
-        (1180.0, 620.0),
-        (840.0, 900.0),
-        (700.0, 900.0),
-    ] {
-        for task in HomeFamily::ALL {
-            let unscrolled = layout(width, height, task);
-            let max_scroll = HomeSurface::max_scroll_for(width, height, task, CHIP_W);
-            // Cover both directions as well as the bottom boundary.
-            for scroll in [max_scroll * 0.5, max_scroll, max_scroll * 0.25, 0.0] {
-                let scrolled =
-                    HomeSurface::layout_for_scrolled(width, height, task, scroll, CHIP_W);
-                assert_eq!(scrolled.account, unscrolled.account);
-                assert_eq!(scrolled.open_file, unscrolled.open_file);
-                assert_eq!(scrolled.professional, unscrolled.professional);
-                for (before, after) in [
-                    (unscrolled.welcome, scrolled.welcome),
-                    (unscrolled.welcome_sub, scrolled.welcome_sub),
-                    (unscrolled.tabs_row, scrolled.tabs_row),
-                    (unscrolled.composer, scrolled.composer),
-                    (unscrolled.preview, scrolled.preview),
-                    (unscrolled.model_chip, scrolled.model_chip),
-                    (unscrolled.send, scrolled.send),
-                    (unscrolled.use_example, scrolled.use_example),
-                    (unscrolled.explore_heading, scrolled.explore_heading),
-                    (unscrolled.recent, scrolled.recent),
-                    (unscrolled.new_canvas, scrolled.new_canvas),
-                ]
-                .into_iter()
-                .chain(
-                    unscrolled
-                        .explore_cards
-                        .into_iter()
-                        .zip(scrolled.explore_cards),
-                )
-                .chain(
-                    unscrolled
-                        .recent_chips
-                        .into_iter()
-                        .zip(scrolled.recent_chips),
-                ) {
-                    assert_eq!(after.size, before.size);
-                    assert_close(after.origin.x, before.origin.x, 0.01);
-                    assert_close(after.origin.y, before.origin.y - scroll, 0.01);
-                }
-                let panels_bottom = (scrolled.composer.origin.y + scrolled.composer.size.y)
-                    .max(scrolled.preview.origin.y + scrolled.preview.size.y);
-                assert!(scrolled.explore_heading.origin.y > panels_bottom);
-                assert!(
-                    scrolled.explore_cards[0].origin.y
-                        > scrolled.explore_heading.origin.y + scrolled.explore_heading.size.y
-                );
-                assert!(
-                    scrolled.recent.origin.y
-                        > scrolled.explore_cards[0].origin.y + scrolled.explore_cards[0].size.y
-                );
-            }
-        }
-    }
+    assert!(scrolled.recent.origin.y + scrolled.recent.size.y <= 620.0);
 }
 
 /// Home is where a first-run user lands, so the account entry has to be

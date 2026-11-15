@@ -71,7 +71,6 @@ pub fn chat_button_press_target(hit: &AIChatHit) -> Option<ButtonPressTarget> {
         AIChatHit::ToggleParallelAgentsPicker => ChatFooterButton::SpeedChip,
         AIChatHit::CycleAgentTeam => ChatFooterButton::AgentTeam,
         AIChatHit::CycleThinking => ChatFooterButton::ThinkingMode,
-        AIChatHit::ToggleImageGen => ChatFooterButton::ImageGen,
         AIChatHit::AddAttachment => ChatFooterButton::AddAttachment,
         AIChatHit::Send => ChatFooterButton::Send,
         AIChatHit::Stop => ChatFooterButton::Stop,
@@ -217,14 +216,6 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             state.editor_ui.chat_model_picker_input.touch(now_ms);
             ChatClickStep::Dirty
         }
-        AIChatHit::ConnectMoreModels => {
-            // Same destination Home's picker sends it to: the agent
-            // settings, on the tab that lists agents.
-            state.editor_ui.close_chat_model_picker();
-            state.editor_ui.agent_settings_open = true;
-            state.editor_ui.agent_settings.tab = op_editor_core::AgentSettingsTab::Agents;
-            ChatClickStep::Dirty
-        }
         AIChatHit::ClearModelSearch => {
             state.editor_ui.chat_model_picker_input.set_text("");
             state.editor_ui.chat_model_picker.scroll.offset = 0.0;
@@ -246,21 +237,6 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         }
         AIChatHit::CycleThinking => {
             state.chat.cycle_thinking_mode();
-            ChatClickStep::Dirty
-        }
-        AIChatHit::ToggleImageGen => {
-            // A configured toggle flips in place. An unconfigured one must
-            // NOT flip (an on-switch with nothing behind it is a lie) — the
-            // press jumps to the Images settings tab instead, the same
-            // destination the model picker's "connect more models" action
-            // uses.
-            let settings = &mut state.editor_ui.agent_settings;
-            if settings.image_gen_available() {
-                settings.image_gen_enabled = !settings.image_gen_enabled;
-            } else {
-                state.editor_ui.agent_settings_open = true;
-                settings.tab = op_editor_core::AgentSettingsTab::Images;
-            }
             ChatClickStep::Dirty
         }
         AIChatHit::CycleEffort => {

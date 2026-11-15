@@ -200,10 +200,7 @@ mod tests {
             active_page_index: 1,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         };
         let disk = externalize_for_disk(&serialized, meta.clone());
         assert_eq!(

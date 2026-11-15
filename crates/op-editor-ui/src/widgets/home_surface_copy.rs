@@ -3,7 +3,7 @@
 //! and the tab icon mapping. One module so paint, hit-test, and the host
 //! read the same copy.
 
-use op_editor_core::{AppPages, HomeDevice, HomeFamily, InfoKind, Locale, SlideRatio, TaskDraft};
+use op_editor_core::{HomeDevice, HomeFamily, InfoKind, Locale, SlideRatio, TaskDraft};
 use op_i18n::translate;
 
 pub(crate) const SANS: &str = "system-ui";
@@ -34,30 +34,14 @@ pub(crate) fn task_copy(locale: Locale, family: HomeFamily, draft: &TaskDraft) -
             "home.task.app.summary",
             "home.task.app.label",
             if draft.device == HomeDevice::Desktop {
-                if draft.app_pages == AppPages::Single {
-                    "home.task.app.desktopSinglePlaceholder"
-                } else {
-                    "home.task.app.desktopPlaceholder"
-                }
+                "home.task.app.desktopPlaceholder"
             } else {
-                if draft.app_pages == AppPages::Single {
-                    "home.task.app.singlePlaceholder"
-                } else {
-                    "home.task.app.placeholder"
-                }
+                "home.task.app.placeholder"
             },
             if draft.device == HomeDevice::Desktop {
-                if draft.app_pages == AppPages::Single {
-                    "home.task.app.desktopSingleExample"
-                } else {
-                    "home.task.app.desktopExample"
-                }
+                "home.task.app.desktopExample"
             } else {
-                if draft.app_pages == AppPages::Single {
-                    "home.task.app.singleExample"
-                } else {
-                    "home.task.app.example"
-                }
+                "home.task.app.example"
             },
             if draft.device == HomeDevice::Desktop {
                 "home.task.app.desktopTitle"
@@ -222,66 +206,17 @@ pub(crate) fn task_icon(family: HomeFamily) -> crate::widgets::icons::Icon {
     }
 }
 
-/// The Send button's label for what the press will actually do — the
-/// wide and compact composers both read it so the two faces of one button
-/// cannot drift.
-/// `importing` is a website import already running (the button then
-/// says so instead of offering a second one).
-pub(crate) fn send_label_key(mode: op_editor_core::HomeSendMode, importing: bool) -> &'static str {
-    match mode {
-        op_editor_core::HomeSendMode::Start => "home.submit.start",
-        op_editor_core::HomeSendMode::UseExample => "home.submit.example",
-        op_editor_core::HomeSendMode::Connect => "home.submit.connect",
-        op_editor_core::HomeSendMode::ImportSite if importing => "home.siteImport.running",
-        op_editor_core::HomeSendMode::ImportSite => "home.siteImport.action",
-    }
-}
-
-/// The largest label size (from `base` down to 11 px) whose measured width
-/// fits `max_w`, so a long translation of the Send label shrinks inside the
-/// fixed button instead of spilling past its rounded edge.
-pub(crate) fn fit_label_size(
-    backend: &mut dyn crate::RenderBackend,
-    label: &str,
-    base: f32,
-    max_w: f32,
-) -> f32 {
-    let mut size = base;
-    while size > 11.0 && backend.measure_text_family(label, size, SANS) > max_w {
-        size -= 0.5;
-    }
-    size
-}
-
-/// Backend-free width estimate for the studio labels: a full-width glyph
-/// (CJK, kana, hangul, fullwidth forms) is its point size, every other
-/// letter ≈ 0.55 em — Cyrillic, Greek and accented Latin included, which
-/// counting as full width spread the Russian tool row off the composer.
-/// Sizes rects in the layout; paint still measures for real.
+/// Backend-free width estimate for the fixed studio labels (CJK glyph =
+/// its point size, Latin/digit ≈ 0.55 em). Only used to size rects whose
+/// text is known at compile time; paint still measures for real.
 pub(crate) fn estimate_text_w(text: &str, size: f32) -> f32 {
     text.chars()
         .map(|character| {
-            if is_full_width(character) {
-                size
-            } else {
+            if character.is_ascii() {
                 size * 0.55
+            } else {
+                size
             }
         })
         .sum()
-}
-
-fn is_full_width(character: char) -> bool {
-    matches!(
-        u32::from(character),
-        0x1100..=0x115F     // Hangul Jamo
-            | 0x2E80..=0x303F // CJK radicals, punctuation
-            | 0x3040..=0x33FF // kana, CJK compatibility
-            | 0x3400..=0x4DBF // CJK extension A
-            | 0x4E00..=0x9FFF // CJK unified ideographs
-            | 0xAC00..=0xD7AF // Hangul syllables
-            | 0xF900..=0xFAFF // CJK compatibility ideographs
-            | 0xFE30..=0xFE4F // CJK compatibility forms
-            | 0xFF00..=0xFF60 // fullwidth forms
-            | 0xFFE0..=0xFFE6
-    )
 }

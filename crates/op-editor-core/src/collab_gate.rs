@@ -253,8 +253,7 @@ impl PropertyFocus {
             | P::WidgetMin
             | P::WidgetMax
             | P::WidgetStep
-            | P::VideoSrc
-            | P::GeneratorParam(_) => D::Unsupported(U::UnsupportedNodeProperty),
+            | P::VideoSrc => D::Unsupported(U::UnsupportedNodeProperty),
         }
     }
 }

@@ -11,9 +11,9 @@
 //! so dark mode derives each value from the closest `Theme` field.
 
 use super::{
-    is_acp, is_builtin, model_list_rect, model_row_pill_rect, normalized_query, paint_model_logo,
-    search_field_rect, visible_model_indices, walk_rows, Row, MODEL_EMPTY_H, MODEL_FOOTER_H,
-    MODEL_GROUP_H, MODEL_PICKER_PAD_Y, MODEL_ROW_H,
+    is_acp, is_builtin, model_list_rect, model_row_pill_rect, normalized_query,
+    paint_provider_logo, search_field_rect, visible_model_indices, walk_rows, Row, MODEL_EMPTY_H,
+    MODEL_FOOTER_H, MODEL_GROUP_H, MODEL_PICKER_PAD_Y, MODEL_ROW_H,
 };
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
@@ -197,9 +197,6 @@ fn row_qualifier(
     locale: Locale,
 ) -> Option<String> {
     let entry = entry?;
-    if entry.hosted_route_id().is_some() {
-        return Some("Hosted".to_string());
-    }
     if is_builtin(entry) {
         return Some(op_i18n::translate(locale, "builtin.apiKeyBadge").to_string());
     }
@@ -231,10 +228,7 @@ pub fn paint_model_picker(
 ) {
     let tokens = PickerTokens::for_theme(theme);
     let search = input.text();
-    let scroll = state
-        .scroll
-        .offset
-        .clamp(0.0, super::max_picker_scroll_in_rect(models, search, rect));
+    let scroll = state.scroll.offset;
     // Card shadow + surface — painted unscrolled so the frame stays
     // put while the rows scroll inside it. The shadow rect is offset
     // +12 and inset so the no-blur fallback stays mostly hidden
@@ -252,10 +246,6 @@ pub fn paint_model_picker(
         .fill_round_rect(rect, POPOVER_RADIUS, tokens.card);
     cx.backend
         .stroke_round_rect(rect, POPOVER_RADIUS, tokens.border, 1.0);
-    // Extreme keyboard occlusion can leave less than the fixed chrome's
-    // natural height. Keep every painted control inside the resolved card.
-    cx.backend.save();
-    cx.backend.clip_rect(rect);
     paint_search_row(cx, theme, &tokens, rect, input, now_ms, locale);
     let list_rect = model_list_rect(rect);
     if visible_model_indices(models, search).is_empty() {
@@ -330,7 +320,6 @@ pub fn paint_model_picker(
         }
     }
     paint_footer_row(cx, &tokens, rect, locale);
-    cx.backend.restore();
 }
 
 /// Group header: hairline above every group but the first, then the
@@ -410,9 +399,9 @@ fn paint_model_row(
     // provider's mark.
     let logo_y = y + (MODEL_ROW_H - ROW_LOGO) / 2.0;
     if let Some(entry) = entry {
-        paint_model_logo(
+        paint_provider_logo(
             cx,
-            entry,
+            entry.provider,
             Point2D::new(rect.origin.x + ROW_INSET_X, logo_y),
             ROW_LOGO,
             tokens.muted,
@@ -545,11 +534,7 @@ fn paint_search_row(
 /// glyph and the blue label so the row reads as an action rather
 /// than another model.
 fn paint_footer_row(cx: &mut PaintCx<'_>, tokens: &PickerTokens, rect: Rect, locale: Locale) {
-    let row = super::footer_rect(rect);
-    if row.size.y <= 0.0 {
-        return;
-    }
-    let top = row.origin.y;
+    let top = rect.origin.y + rect.size.y - MODEL_FOOTER_H;
     cx.backend.fill_rect(
         Rect {
             origin: Point2D::new(rect.origin.x, top),
@@ -569,6 +554,10 @@ fn paint_footer_row(cx: &mut PaintCx<'_>, tokens: &PickerTokens, rect: Rect, loc
         1.6,
     );
     let label = op_i18n::translate(locale, "home.connectMoreModels");
+    let row = Rect {
+        origin: Point2D::new(rect.origin.x, top),
+        size: Point2D::new(rect.size.x, MODEL_FOOTER_H),
+    };
     let layout = TextLayout::single_run(
         label,
         "system-ui",

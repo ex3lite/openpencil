@@ -23,7 +23,6 @@ pub mod align;
 pub mod align_guides;
 pub mod auth_routes;
 pub mod blank_starter;
-pub mod brand_kit;
 pub mod bridge_protocol;
 pub mod button_press_state;
 mod catalog_toml;
@@ -35,10 +34,6 @@ mod chat_design_apply;
 mod chat_model_mutators;
 pub mod chat_sessions;
 mod chat_title;
-pub mod table_filter_contract;
-pub mod table_pagination;
-pub mod text_effect_overlay;
-pub use chat_title::{is_default_chat_title, suggest_chat_title};
 pub mod clipboard;
 pub mod codegen;
 pub mod collab_admission_ui;
@@ -70,7 +65,6 @@ mod command_root_replace;
 pub mod command_style_replace;
 mod component_backing;
 pub mod component_browser_state;
-pub mod component_recognition;
 pub mod components;
 pub mod compositing;
 pub mod conversion;
@@ -80,7 +74,6 @@ pub mod document_install;
 pub mod drag_mutators;
 pub mod edit_transaction;
 pub mod editor_toast;
-pub mod quality_report;
 pub mod size_class;
 // Runtime-fetched product assets for the browser bundle (native embeds them).
 pub mod editor_ui_state;
@@ -92,8 +85,6 @@ pub mod figma_import_state;
 pub mod fill_order;
 pub mod fills;
 pub mod font_catalog;
-pub mod generator;
-mod generator_error;
 pub mod geometry;
 pub mod git_button_state;
 pub mod grouping;
@@ -115,7 +106,6 @@ mod host_support_tests;
 pub mod host_ui_transitions;
 pub mod host_variables_commit;
 pub mod host_variables_transitions;
-pub mod hosted_model_catalog;
 pub mod html_import_diagnostics;
 pub mod icon_path_normalize;
 pub mod icon_picker_state;
@@ -154,7 +144,6 @@ pub mod scene_template_keyboard;
 pub mod scene_template_palette;
 pub mod scene_template_prompt;
 pub mod scene_vars;
-pub mod scroll_viewport;
 pub mod selection;
 pub mod selection_resolve;
 pub mod share_routes;
@@ -165,7 +154,6 @@ pub mod svg_path_bounds;
 mod svg_path_data;
 pub mod sync_gate;
 pub mod user_scene_templates;
-pub mod variant_wire;
 pub mod video_node_props;
 pub mod web_assets;
 
@@ -179,7 +167,6 @@ pub fn svg_path_data_bounds(d: &str) -> Option<(f32, f32, f32, f32)> {
         bounds.h as f32,
     ))
 }
-pub mod screen_sets;
 pub mod text_edit;
 pub mod text_input_focus;
 pub mod text_script;
@@ -199,11 +186,6 @@ pub mod variables_resolve;
 pub mod viewport;
 pub mod walkers;
 pub mod web_sync;
-pub mod work_identity;
-pub mod workspace_edit;
-pub mod workspace_history;
-pub mod workspace_page_edit;
-pub mod workspace_run;
 
 #[cfg(test)]
 mod command_allocator_tests;
@@ -308,11 +290,10 @@ pub use agent_settings_builtin_presets::{
 };
 pub use agent_settings_button_state::AgentSettingsButton;
 pub use agent_settings_connection::{
-    local_daemon_origin, local_lean_mcp_url, local_mcp_url, missing_models_connect_error,
-    DEFAULT_LOCAL_DAEMON_ORIGIN, DEFAULT_MCP_PORT,
+    local_daemon_origin, local_mcp_url, missing_models_connect_error, DEFAULT_LOCAL_DAEMON_ORIGIN,
+    DEFAULT_MCP_PORT,
 };
 pub use align::AlignAction;
-pub use brand_kit::{design_md_is_brand_kit, BrandKitPayload, BRAND_KIT_MARKER};
 pub use button_press_state::ButtonPressTarget;
 pub use chat::{
     AgentProvider, ChatAnchor, ChatImage, ChatMessage, ChatRole, ChatState, ChatToolCall,
@@ -365,39 +346,18 @@ pub use document_install::{DocumentInstallError, DocumentInstallReport, Prepared
 pub use edit_transaction::{
     CompletedLocalEdit, EditOrigin, LocalEditCapture, LocalEditError, LocalEditOutcome,
 };
-pub use editor_ui_state::home::brand::{
-    first_url, BrandSourceRequest, HomeBrandState, HomeBrandStatus, BRAND_HINT_MS,
-};
-pub use editor_ui_state::home::site_import::{
-    host_label, parse_site_import_reply, sanitize_import_origin, site_import_url,
-    HomeSiteImportState, HomeSiteImportStatus, SiteImportResult, SiteImportSummary,
-    IMPORT_ORIGIN_MAX_CHARS, SITE_IMPORT_HINT_MS,
-};
 pub use editor_ui_state::home::{HOME_ART_SWITCH_MS, HOME_ENTER_FRAME_MS, HOME_ENTER_WINDOW_MS};
-pub use editor_ui_state::home_example_draft::{
-    example_draft_template, prepare_home_example_boards, refine_prompt, HomeSendMode,
-};
-pub use editor_ui_state::workspace::drawer::{
-    WORKSPACE_DRAWER_BREAKPOINT, WORKSPACE_DRAWER_MIN_GUTTER, WORKSPACE_DRAWER_SLIDE_MS,
-};
 pub use editor_ui_state::workspace::{
-    clamp_variant_count, infer_reading_family, pick_workspace_variant, pin_home_brief_route,
-    pin_workspace_retry_route, reader_is_paged, reads_as_long_page, use_workspace_variant,
-    variant_letter, variant_pick_commands, PageEditRetry, PageEditTarget, ReaderHit, WorkspaceHit,
-    WorkspacePhase, WorkspaceState, WorkspaceVariant, WorkspaceView, DEFAULT_VARIANT_COUNT,
-    MAX_VARIANT_COUNT, WORKSPACE_DECK_STRIP_H, WORKSPACE_ENTER_MS, WORKSPACE_HEADER_H,
-    WORKSPACE_TOOLBAR_H,
+    WorkspaceHit, WorkspacePhase, WorkspaceState, WorkspaceView, WORKSPACE_DECK_STRIP_H,
+    WORKSPACE_ENTER_MS, WORKSPACE_HEADER_H, WORKSPACE_TOOLBAR_H,
 };
 pub use editor_ui_state::{
-    sanitize_share_text, MakeSameStage, ShareRecipe, SHARE_BRIEF_MAX_CHARS, SHARE_REDACTED,
-};
-pub use editor_ui_state::{
-    AppPages, AssetCenterTab, BooleanOp, CloneField, CloneFormState, CommitDiffPatch,
-    CommitDiffSummary, CommitDiffView, CompositingPickerTarget, CustomPrompt, DesignMdPanelState,
-    DesignMdRequest, EditorUiState, EmbedHost, EntrySurface, ExportFormat, FileAction, FillType,
-    FlexLayout, FontPickerPurpose, GitBranchPickerMode, GitCandidateFile, GitCommitSummary,
-    GitDiffTarget, GitDiffView, GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState,
-    HomeDevice, HomeFamily, HomeHit, HomeState, ImageAdjustmentField, ImageFillMode, InfoKind,
+    AssetCenterTab, BooleanOp, CloneField, CloneFormState, CommitDiffPatch, CommitDiffSummary,
+    CommitDiffView, CompositingPickerTarget, CustomPrompt, DesignMdPanelState, DesignMdRequest,
+    EditorUiState, EmbedHost, EntrySurface, ExportFormat, FileAction, FillType, FlexLayout,
+    FontPickerPurpose, GitBranchPickerMode, GitCandidateFile, GitCommitSummary, GitDiffTarget,
+    GitDiffView, GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState, HomeDevice,
+    HomeFamily, HomeHit, HomeState, ImageAdjustmentField, ImageFillMode, InfoKind,
     LayerContextMenuState, LeftPanelTab, Locale, MergeConflictRow, MergeResolveFile,
     MergeResolveState, MissingFontSurface, PaddingEditMode, PageRenameState, PencilCursorStyle,
     PreviewDeviceKind, PromptCenterFocus, PromptCenterState, PromptFilter, PropertyTab, RecentFile,
@@ -419,11 +379,6 @@ pub use git_button_state::GitButton;
 pub use history::{EditorSnapshot, History, HISTORY_CAP};
 pub use history_snapshot::{SharedComponents, SharedDoc};
 pub use hoist_app_state::{hoist_app_state, UNPLANNED_APP_STATE_IDX};
-pub use hosted_model_catalog::{
-    HostedCatalogError, HostedCatalogField, HostedModelCapabilities, HostedModelCatalog,
-    HostedModelRoute, HostedProtocol, MAX_HOSTED_MODEL_DISPLAY_BYTES, MAX_HOSTED_MODEL_ID_BYTES,
-    MAX_HOSTED_MODEL_ROUTES, MAX_HOSTED_ROUTE_ID_BYTES,
-};
 pub use icon_picker_state::{IconPickerRemoteIcon, IconPickerRemoteState, IconifyLoadMoreRequest};
 pub use id_allocator::{
     collect_document_ids, next_namespaced_counter, next_sequential_counter, DocumentIdAllocator,
@@ -451,10 +406,6 @@ pub use node_defaults::{
 };
 pub use node_id::NodeId;
 pub use pen_node_ext::PenNodeExt;
-pub use quality_report::{
-    QualityBoardSummary, QualityItem, QualityRepairRecord, QualityReport, QualityTopic,
-    QualityTopicReport,
-};
 pub use render_backend::*;
 pub use selection::SelectionState;
 pub use state::EditorState;

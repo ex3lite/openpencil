@@ -12,10 +12,7 @@ fn extracts_camel_and_legacy_snake_case_fields() {
             active_page_index: 3,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
     assert_eq!(
@@ -26,10 +23,7 @@ fn extracts_camel_and_legacy_snake_case_fields() {
             active_page_index: 2,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
 }
@@ -42,10 +36,7 @@ fn absent_preserve_field_keeps_legacy_false_semantics() {
             active_page_index: 7,
             preserve_authored_geometry: false,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
 }
@@ -60,10 +51,7 @@ fn missing_preserve_field_recovers_figma_geometry_from_canonical_page_id() {
             active_page_index: 0,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
     assert_eq!(
@@ -74,10 +62,7 @@ fn missing_preserve_field_recovers_figma_geometry_from_canonical_page_id() {
             active_page_index: 0,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
 }
@@ -97,10 +82,7 @@ fn explicit_false_overrides_figma_page_migration_for_both_spellings() {
                 active_page_index: 0,
                 preserve_authored_geometry: false,
                 scenario: None,
-                work_family: None,
                 pinned_style_guide: None,
-                share_recipe: None,
-                imported_from: None,
             })
         );
     }
@@ -130,10 +112,7 @@ fn figma_like_but_noncanonical_page_id_does_not_trigger_migration() {
             active_page_index: 0,
             preserve_authored_geometry: false,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
 }
@@ -153,10 +132,7 @@ fn applying_metadata_clamps_page_and_restores_geometry_mode() {
             active_page_index: 99,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         },
     );
 
@@ -200,10 +176,7 @@ fn escaped_strings_nested_values_and_duplicate_keys_are_bounded_correctly() {
             active_page_index: 4,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
 }
@@ -240,10 +213,7 @@ fn streaming_rewrite_preserves_legacy_document_bytes_outside_editor_meta() {
             active_page_index: 7,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         },
     )
     .expect("streaming metadata rewrite");
@@ -260,10 +230,7 @@ fn streaming_rewrite_preserves_legacy_document_bytes_outside_editor_meta() {
             active_page_index: 7,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         })
     );
 }
@@ -288,10 +255,7 @@ fn streaming_rewrite_appends_metadata_to_empty_and_nonempty_roots() {
                 active_page_index: 2,
                 preserve_authored_geometry: false,
                 scenario: None,
-                work_family: None,
                 pinned_style_guide: None,
-                share_recipe: None,
-                imported_from: None,
             },
         )
         .expect("append metadata");
@@ -319,10 +283,7 @@ fn current_schema_rewrite_preserves_nested_unknown_fields() {
             active_page_index: 2,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         },
     )
     .expect("current-schema rewrite");

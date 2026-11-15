@@ -7,7 +7,7 @@ use super::copy;
 use super::model::MODEL_CHIP_H;
 use super::HOME_TOPBAR_H;
 use crate::Rect;
-use op_editor_core::{HomeFamily, Locale};
+use op_editor_core::HomeFamily;
 
 /// Page shell: max width incl. the 8 px side padding, so the content
 /// column is 1280 at 1440 (prototype `.page-shell`).
@@ -45,9 +45,8 @@ const PANEL_GAP: f32 = 18.0;
 const COMPOSER_FRAC: f32 = 1.05;
 /// Viewports narrower than this stack the two panels.
 const STACK_BREAK_W: f32 = 850.0;
-/// Reserve room for the icon, two lines of copy and side padding before
-/// showing all seven tasks. Narrower columns use four tasks + More.
-const TABS_COMPACT_W: f32 = 7.0 * 148.0 + 6.0 * TAB_GAP_NARROW;
+/// Content columns narrower than this compact the tab row to 4 + 更多.
+const TABS_COMPACT_W: f32 = 700.0;
 const EXPLORE_TOP_GAP: f32 = 26.0;
 const EXPLORE_TOP_GAP_SHORT: f32 = 22.0;
 const EXPLORE_HEADING_H: f32 = 22.0;
@@ -86,28 +85,18 @@ pub const MORE_POPOVER_W: f32 = 248.0;
 pub const MORE_ROW_H: f32 = 46.0;
 const MORE_CAPTION_H: f32 = 26.0;
 /// Fixed recent-project chip width (names ellipsize in paint).
-pub const RECENT_CHIP_W: f32 = 260.0;
+pub const RECENT_CHIP_W: f32 = 132.0;
 
 /// Every rect the surface paints, in viewport coordinates (already
 /// scroll-translated). Zero-sized rects mark absent targets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HomeLayout {
-    /// Unscrolled bounds for modal overlays.
-    pub viewport: Rect,
     // Top bar (pinned; never scroll-translated)
     pub open_file: Rect,
     /// The top bar's account avatar. Zero-sized when the host has not
     /// enabled the account gate, so it cannot be hit or painted.
     pub account: Rect,
     pub professional: Rect,
-    /// The 普通 / 专业 segmented control of the compact (phone) top bar:
-    /// the whole control plus its 普通 segment. The 专业 segment reuses
-    /// `professional`. Zero on the desktop composition.
-    pub mode_switch: Rect,
-    pub mode_normal: Rect,
-    /// The compact top bar's settings gear (shares the bottom nav's
-    /// NavSettings hit). Zero on the desktop composition.
-    pub settings: Rect,
     // Page column
     pub welcome: Rect,
     pub welcome_sub: Rect,
@@ -125,14 +114,11 @@ pub struct HomeLayout {
     /// (zero-padded to 3).
     pub segment: Rect,
     pub segment_options: [Rect; 3],
-    pub app_page_options: [Rect; 2],
     pub input_box: Rect,
     pub tools_row: Rect,
     pub screenshot: Rect,
     pub reference_link: Rect,
     pub figma: Rect,
-    /// The 3-directions toggle (zero on the compact composition).
-    pub variants: Rect,
     pub submit_row: Rect,
     pub model_chip: Rect,
     pub send: Rect,
@@ -153,10 +139,6 @@ pub struct HomeLayout {
     /// The 接入卡 modal centred over the composer.
     pub connect_card: Rect,
     pub connect_rows: [Rect; 3],
-    /// The compact (phone) bottom nav (创作 / 作品 / 设置): the bar plus
-    /// its three equal items. Zero on the desktop composition.
-    pub bottom_nav: Rect,
-    pub nav_items: [Rect; 3],
 }
 
 impl HomeLayout {
@@ -212,63 +194,6 @@ pub fn layout_for_scrolled(
     scroll_y: f32,
     model_chip_label_w: f32,
 ) -> HomeLayout {
-    layout_for_scrolled_mode(
-        viewport_width,
-        viewport_height,
-        task,
-        scroll_y,
-        model_chip_label_w,
-        false,
-        LAYOUT_DEFAULT_LOCALE,
-    )
-}
-
-/// The mode-aware core behind [`layout_for_scrolled`]. `compact` is the
-/// host's `EditorUiState::compact_layout()` — the phone (touch +
-/// compact size class) composition; every other caller keeps the
-/// desktop branch and its exact rects.
-pub(crate) fn layout_for_scrolled_mode(
-    viewport_width: f32,
-    viewport_height: f32,
-    task: HomeFamily,
-    scroll_y: f32,
-    model_chip_label_w: f32,
-    compact: bool,
-    locale: Locale,
-) -> HomeLayout {
-    if compact {
-        return compact::compact_layout_for_scrolled(
-            viewport_width,
-            viewport_height,
-            task,
-            scroll_y,
-            model_chip_label_w,
-            locale,
-        );
-    }
-    wide_layout_for_scrolled(
-        viewport_width,
-        viewport_height,
-        task,
-        scroll_y,
-        model_chip_label_w,
-        locale,
-        SHELL_PAD_X,
-    )
-}
-
-/// The wide page with `pad_x` side padding inside its shell (the desktop
-/// keeps `SHELL_PAD_X`; a touch tablet passes its wider margin).
-#[allow(clippy::too_many_lines)]
-pub(crate) fn wide_layout_for_scrolled(
-    viewport_width: f32,
-    viewport_height: f32,
-    task: HomeFamily,
-    scroll_y: f32,
-    model_chip_label_w: f32,
-    locale: Locale,
-    pad_x: f32,
-) -> HomeLayout {
     let width = viewport_width.max(1.0);
     let viewport_height = viewport_height.max(1.0);
     let scroll = -scroll_y.max(0.0);
@@ -278,23 +203,25 @@ pub(crate) fn wide_layout_for_scrolled(
     // 22 px explore gap, 167 px cards, 18 px recent gap.
     let short_window = !stacked && viewport_height <= SHORT_WINDOW_MAX_H;
     let shell_w = width.min(SHELL_MAX_W);
-    let content_x = (width - shell_w) / 2.0 + pad_x;
-    let content_w = (shell_w - pad_x * 2.0).max(240.0);
+    let content_x = (width - shell_w) / 2.0 + SHELL_PAD_X;
+    let content_w = (shell_w - SHELL_PAD_X * 2.0).max(240.0);
     let translate = |mut y: f32, h: f32| {
         y += scroll;
         Rect::xywh(content_x, y, content_w, h)
     };
 
     // ── top bar (pinned) ───────────────────────────────────────────
-    let professional_w =
-        copy::estimate_text_w(copy::home_str(locale, "home.topbar.professional"), 15.0)
+    let professional_w = copy::estimate_text_w(
+        copy::home_str(self_locale(), "home.topbar.professional"),
+        15.0,
+    ) + 30.0
+        + 17.0
+        + 9.0;
+    let open_file_w =
+        copy::estimate_text_w(copy::home_str(self_locale(), "home.topbar.openFile"), 15.0)
             + 30.0
             + 17.0
             + 9.0;
-    let open_file_w = copy::estimate_text_w(copy::home_str(locale, "home.topbar.openFile"), 15.0)
-        + 30.0
-        + 17.0
-        + 9.0;
     let professional = Rect::xywh(
         width - 30.0 - professional_w,
         (HOME_TOPBAR_H - 38.0) / 2.0,
@@ -372,10 +299,8 @@ pub(crate) fn wide_layout_for_scrolled(
     let popover_h = MORE_CAPTION_H + hidden.len() as f32 * MORE_ROW_H + 10.0;
     let more_popover = if compact {
         Rect::xywh(
-            (more_button.origin.x + more_button.size.x - MORE_POPOVER_W).max(content_x),
-            (tabs_y + scroll + TAB_H + 8.0)
-                .min(viewport_height - popover_h - 8.0)
-                .max(HOME_TOPBAR_H),
+            more_button.origin.x,
+            tabs_y + scroll + TAB_H + 8.0,
             MORE_POPOVER_W,
             popover_h,
         )
@@ -394,17 +319,16 @@ pub(crate) fn wide_layout_for_scrolled(
 
     // ── the two panels ─────────────────────────────────────────────
     let panels_y = tabs_y + TAB_H + TABS_ROW_PAD_BOTTOM + TABS_PANELS_GAP;
-    let pages_h = super::app_pages::height(task);
     let (composer, preview) = if stacked {
         let composer = Rect::xywh(
             content_x,
             panels_y + scroll,
             content_w,
-            PANEL_H_STACKED_COMPOSER + pages_h,
+            PANEL_H_STACKED_COMPOSER,
         );
         let preview = Rect::xywh(
             content_x,
-            panels_y + PANEL_H_STACKED_COMPOSER + pages_h + PANEL_GAP + scroll,
+            panels_y + PANEL_H_STACKED_COMPOSER + PANEL_GAP + scroll,
             content_w,
             PANEL_H_STACKED_PREVIEW,
         );
@@ -433,7 +357,7 @@ pub(crate) fn wide_layout_for_scrolled(
         inner_w,
         LABEL_ROW_H,
     );
-    let labels = copy::segment_labels(locale, task);
+    let labels = copy::segment_labels(self_locale(), task);
     let mut option_widths = [0.0f32; 3];
     for (index, label) in labels.iter().take(3).enumerate() {
         option_widths[index] = copy::estimate_text_w(label, 12.0) + SEGMENT_OPTION_PAD_X * 2.0;
@@ -466,40 +390,30 @@ pub(crate) fn wide_layout_for_scrolled(
         inner_w,
         TOOLS_BAND_H,
     );
-    let app_page_options = super::app_pages::options(
-        task,
-        Rect::xywh(inner_x, label_row.origin.y + LABEL_ROW_H, inner_w, pages_h),
-        locale,
-    );
     let input_box = Rect::xywh(
         inner_x,
-        label_row.origin.y + LABEL_ROW_H + pages_h,
+        label_row.origin.y + LABEL_ROW_H,
         inner_w,
-        (tools_row.origin.y - (label_row.origin.y + LABEL_ROW_H + pages_h)).max(INPUT_MIN_H),
+        (tools_row.origin.y - (label_row.origin.y + LABEL_ROW_H)).max(INPUT_MIN_H),
     );
     let screenshot = Rect::xywh(
         tools_row.origin.x + 1.0,
         tools_row.origin.y + 13.0,
-        copy::estimate_text_w(copy::home_str(locale, "home.tools.screenshot"), 14.0) + 18.0 + 8.0,
+        copy::estimate_text_w(copy::home_str(self_locale(), "home.tools.screenshot"), 14.0)
+            + 18.0
+            + 8.0,
         28.0,
     );
     let reference_link = Rect::xywh(
         screenshot.origin.x + screenshot.size.x + 21.0,
         screenshot.origin.y,
-        copy::estimate_text_w(copy::home_str(locale, "home.tools.link"), 14.0) + 18.0 + 8.0,
+        copy::estimate_text_w(copy::home_str(self_locale(), "home.tools.link"), 14.0) + 18.0 + 8.0,
         28.0,
     );
     let figma = Rect::xywh(
         reference_link.origin.x + reference_link.size.x + 21.0,
         screenshot.origin.y,
         copy::estimate_text_w("Figma", 14.0) + 16.0 + 8.0 + 2.0,
-        28.0,
-    );
-    let variants = Rect::xywh(
-        figma.origin.x + figma.size.x + 21.0,
-        screenshot.origin.y,
-        copy::estimate_text_w(copy::home_str(locale, "home.tools.variants"), 13.0)
-            + super::variants_toggle::VARIANTS_CHIP_PAD,
         28.0,
     );
     let submit_row = Rect::xywh(
@@ -567,7 +481,7 @@ pub(crate) fn wide_layout_for_scrolled(
         (preview_footer.origin.y - (preview_heading.origin.y + preview_heading.size.y)).max(60.0),
     );
     let use_example_w =
-        copy::estimate_text_w(copy::home_str(locale, "home.preview.use"), 12.0) + 22.0;
+        copy::estimate_text_w(copy::home_str(self_locale(), "home.preview.use"), 12.0) + 22.0;
     let use_example = Rect::xywh(
         preview_footer.origin.x + preview_footer.size.x - use_example_w,
         preview_footer.origin.y,
@@ -577,7 +491,7 @@ pub(crate) fn wide_layout_for_scrolled(
 
     // ── explore + recent ───────────────────────────────────────────
     // Everything below derives from the already scroll-translated
-    // panel rects; applying `scroll` again would collapse the section gaps.
+    // panel rects, so these ys stay absolute.
     let panels_bottom =
         (preview.origin.y + preview.size.y).max(composer.origin.y + composer.size.y);
     let explore_card_h = if stacked {
@@ -595,20 +509,20 @@ pub(crate) fn wide_layout_for_scrolled(
         } else {
             EXPLORE_TOP_GAP
         };
-    let explore_heading = Rect::xywh(content_x, explore_y, content_w, EXPLORE_HEADING_H);
+    let explore_heading = Rect::xywh(content_x, explore_y + scroll, content_w, EXPLORE_HEADING_H);
     let cards_y = explore_y + EXPLORE_HEADING_H + EXPLORE_HEADING_GAP;
     let card_w = ((content_w - EXPLORE_CARD_GAP * 2.0) / 3.0).max(120.0);
     let explore_cards = [
-        Rect::xywh(content_x, cards_y, card_w, explore_card_h),
+        Rect::xywh(content_x, cards_y + scroll, card_w, explore_card_h),
         Rect::xywh(
             content_x + card_w + EXPLORE_CARD_GAP,
-            cards_y,
+            cards_y + scroll,
             card_w,
             explore_card_h,
         ),
         Rect::xywh(
             content_x + (card_w + EXPLORE_CARD_GAP) * 2.0,
-            cards_y,
+            cards_y + scroll,
             card_w,
             explore_card_h,
         ),
@@ -622,24 +536,31 @@ pub(crate) fn wide_layout_for_scrolled(
             } else {
                 RECENT_TOP_GAP
             }
-            + RECENT_PAD_TOP,
+            + RECENT_PAD_TOP
+            + scroll,
         content_w,
         RECENT_H,
     );
     let new_canvas_w =
-        copy::estimate_text_w(copy::home_str(locale, "home.recent.newCanvas"), 12.0) + 16.0 + 12.0;
+        copy::estimate_text_w(copy::home_str(self_locale(), "home.recent.newCanvas"), 12.0)
+            + 16.0
+            + 12.0;
     let new_canvas = Rect::xywh(
         recent.origin.x + recent.size.x - new_canvas_w,
         recent.origin.y + (RECENT_H - 32.0) / 2.0,
         new_canvas_w,
         32.0,
     );
-    let recent_chips = [Rect::ZERO; 5];
+    let mut recent_chips = [Rect::ZERO; 5];
+    let mut chip_x = recent.origin.x + 96.0;
+    for chip in recent_chips.iter_mut() {
+        *chip = Rect::xywh(chip_x, recent.origin.y + 9.0, RECENT_CHIP_W, 32.0);
+        chip_x += RECENT_CHIP_W + 10.0;
+    }
 
     let (connect_card, connect_rows) = connect_card_rects(composer);
 
-    let mut layout = HomeLayout {
-        viewport: Rect::xywh(0.0, 0.0, width, viewport_height),
+    HomeLayout {
         open_file,
         account,
         professional,
@@ -655,13 +576,11 @@ pub(crate) fn wide_layout_for_scrolled(
         label_row,
         segment,
         segment_options,
-        app_page_options,
         input_box,
         tools_row,
         screenshot,
         reference_link,
         figma,
-        variants,
         submit_row,
         model_chip,
         send,
@@ -679,14 +598,7 @@ pub(crate) fn wide_layout_for_scrolled(
         new_canvas,
         connect_card,
         connect_rows,
-        mode_switch: Rect::ZERO,
-        mode_normal: Rect::ZERO,
-        settings: Rect::ZERO,
-        bottom_nav: Rect::ZERO,
-        nav_items: [Rect::ZERO; 3],
-    };
-    super::recent_names::adapt_layout(&mut layout, 5, locale);
-    layout
+    }
 }
 
 /// The furthest `scroll_y` may go before the page's last row leaves the
@@ -697,58 +609,9 @@ pub fn max_scroll_for(
     task: HomeFamily,
     model_chip_label_w: f32,
 ) -> f32 {
-    max_scroll_for_mode(
-        viewport_width,
-        viewport_height,
-        task,
-        model_chip_label_w,
-        false,
-        LAYOUT_DEFAULT_LOCALE,
-    )
-}
-
-/// The mode-aware core behind [`max_scroll_for`]: the compact page's
-/// last row is the featured example card, and its scrollable height is
-/// bounded by the bottom nav, not the viewport edge.
-pub fn max_scroll_for_mode(
-    viewport_width: f32,
-    viewport_height: f32,
-    task: HomeFamily,
-    model_chip_label_w: f32,
-    compact: bool,
-    locale: Locale,
-) -> f32 {
-    if compact {
-        let layout = compact::compact_layout_for_scrolled(
-            viewport_width,
-            viewport_height,
-            task,
-            0.0,
-            model_chip_label_w,
-            locale,
-        );
-        let visible_bottom = viewport_height - compact::BOTTOM_NAV_H;
-        return (layout.preview.origin.y + layout.preview.size.y + compact::PAGE_PAD_BOTTOM
-            - visible_bottom)
-            .max(0.0);
-    }
-    let layout = wide_layout_for_scrolled(
-        viewport_width,
-        viewport_height,
-        task,
-        0.0,
-        model_chip_label_w,
-        locale,
-        SHELL_PAD_X,
-    );
+    let layout = layout_for(viewport_width, viewport_height, task, model_chip_label_w);
     (layout.recent.origin.y + layout.recent.size.y + 20.0 - viewport_height).max(0.0)
 }
-
-/// The phone (compact) branch of the Home geometry — the 2×4 task
-/// grid, the compact composer, the single featured example, the bottom
-/// nav, and the 普通 / 专业 top bar switch.
-#[path = "home_surface_layout_compact.rs"]
-pub(crate) mod compact;
 
 /// The 看看还能做什么 cards (knowledge / tutorial / poster).
 pub const EXPLORE_FAMILIES: [HomeFamily; 3] = [
@@ -757,11 +620,12 @@ pub const EXPLORE_FAMILIES: [HomeFamily; 3] = [
     HomeFamily::EventPoster,
 ];
 
-/// The locale the static entry points ([`layout_for`], [`max_scroll_for`])
-/// estimate label widths in. The live surface passes the UI locale: label
-/// widths also PLACE the next control, so an English estimate let long
-/// Russian / German labels run into their neighbours.
-const LAYOUT_DEFAULT_LOCALE: Locale = Locale::EnUs;
+/// Layout-time locale for the label estimates. English keeps the rect
+/// estimates stable across locales; paint re-measures every label for
+/// real, so only hit-rect sizes depend on this approximation.
+fn self_locale() -> op_editor_core::Locale {
+    op_editor_core::Locale::EnUs
+}
 
 /// The icon→copy gap inside a wide tab (13 px; viewports ≤1180 use the
 /// prototype's compact 10 px, where the tab padding also drops to 10).

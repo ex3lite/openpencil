@@ -14,27 +14,6 @@ use jian_ops_schema::node::PenNode;
 #[cfg(test)]
 mod sibling_inconsistency_tests {
     use super::*;
-
-    #[test]
-    fn a_primary_circular_play_button_is_not_a_sibling_radius_mismatch() {
-        let root: PenNode = serde_json::from_value(serde_json::json!({
-        "type":"frame","id":"controls","layout":"horizontal","children":[
-            {"type":"frame","id":"shuffle","role":"button","width":48,"height":48},
-            {"type":"frame","id":"previous","role":"button","width":48,"height":48},
-            {"type":"frame","id":"play","role":"button","width":76,"height":76,"cornerRadius":38},
-            {"type":"frame","id":"next","role":"button","width":48,"height":48},
-            {"type":"frame","id":"repeat","role":"button","width":48,"height":48}
-        ]
-    })).unwrap();
-        for issues in [
-            detect_sibling_inconsistencies(&root),
-            detect_mixed_sibling_corner_radius(&root),
-        ] {
-            assert!(!issues.iter().any(
-                |issue| issue.node_id == "play" && issue.property == FixProperty::CornerRadius
-            ));
-        }
-    }
     use serde_json::json;
 
     fn node(value: serde_json::Value) -> PenNode {
@@ -60,42 +39,6 @@ mod sibling_inconsistency_tests {
         assert_eq!(issues[0].property, FixProperty::Height);
         assert_eq!(issues[0].suggested_value, json!(100));
         assert_eq!(issues[0].current_value, json!(140));
-    }
-
-    /// arena-w02 (Opus 5.5, 2026-10-01): the reading pane's scrolling body
-    /// fills the pane above the pinned reply box; the hugging header,
-    /// attachment and reply siblings are not a majority it should copy.
-    #[test]
-    fn a_fill_container_grower_among_hugging_siblings_is_not_an_outlier() {
-        let root = node(json!({
-            "type": "frame", "id": "pane", "layout": "vertical",
-            "children": [
-                {"type": "frame", "id": "header", "height": "fit_content"},
-                {"type": "frame", "id": "body", "height": "fill_container"},
-                {"type": "frame", "id": "attachment", "height": "fit_content"},
-                {"type": "frame", "id": "reply", "height": "fit_content"}
-            ]
-        }));
-        assert!(detect_sibling_inconsistencies(&root)
-            .iter()
-            .all(|issue| issue.node_id != "body"));
-    }
-
-    #[test]
-    fn absolute_photo_viewport_keeps_its_height_among_hugging_sections() {
-        let root = node(
-            json!({"type":"frame","id":"phone","layout":"vertical","children":[
-                {"type":"frame","id":"header","height":"fit_content","layout":"horizontal"},
-                {"type":"frame","id":"hero","height":300,"layout":"none","children":[
-                {"type":"image","id":"photo","src":"","width":375,"height":201}
-                ]},
-                {"type":"frame","id":"list","height":"fit_content","layout":"vertical"},
-                {"type":"frame","id":"pickup","height":"fit_content","layout":"vertical"}
-            ]}),
-        );
-        assert!(detect_sibling_inconsistencies(&root)
-            .iter()
-            .all(|issue| issue.node_id != "hero" || issue.property != FixProperty::Height));
     }
 
     #[test]
@@ -212,41 +155,6 @@ mod sibling_inconsistency_tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].node_id, "c");
         assert_eq!(issues[0].property, FixProperty::FontSize);
-    }
-
-    #[test]
-    fn fixed_avatar_keeps_its_diameter_beside_hugging_information_and_actions() {
-        let root = node(json!({
-            "type":"frame","id":"rider","layout":"horizontal","children":[
-                {"type":"frame","id":"avatar","width":44,"height":44,"cornerRadius":22,
-                 "layout":"horizontal","children":[{"type":"icon_font","id":"icon","iconFontName":"user","width":20,"height":20}]},
-                {"type":"frame","id":"info","height":"fit_content","layout":"vertical"},
-                {"type":"frame","id":"actions","height":"fit_content","layout":"horizontal"}
-            ]
-        }));
-        assert!(detect_sibling_inconsistencies(&root)
-            .iter()
-            .all(|issue| issue.property != FixProperty::Height));
-    }
-
-    #[test]
-    fn inline_display_value_keeps_its_typographic_hierarchy() {
-        for (family, weight) in [
-            ("JetBrains Mono", 700),
-            ("Inter", 700),
-            ("JetBrains Mono", 400),
-        ] {
-            let root = node(json!({
-                "type":"frame","id":"eta","layout":"horizontal","children":[
-                    {"type":"text","id":"prefix","content":"预计","fontSize":15,"fontFamily":"Inter","fontWeight":400},
-                    {"type":"text","id":"value","content":"12","fontSize":34,"fontFamily":family,"fontWeight":weight},
-                    {"type":"text","id":"suffix","content":"分钟送达","fontSize":15,"fontFamily":"Inter","fontWeight":400}
-                ]
-            }));
-            assert!(detect_sibling_inconsistencies(&root)
-                .iter()
-                .all(|issue| issue.property != FixProperty::FontSize));
-        }
     }
 }
 

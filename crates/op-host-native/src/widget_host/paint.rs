@@ -63,8 +63,6 @@ impl WidgetHostNative {
                     Rect::xywh(0.0, 0.0, viewport_width, viewport_height),
                 );
             }
-            self.home_input_geometry =
-                Some(home.measure_input_geometry(frame, viewport_width, viewport_height));
             // The overlays Home opens (settings modal, sign-in modal,
             // model picker) paint above the takeover — mirroring the
             // z-order `paint_topmost_overlays` gives them elsewhere.
@@ -188,10 +186,7 @@ impl WidgetHostNative {
         // 3. The left rail — painted BEFORE the canvas on the desktop
         //    (it pushes the canvas) and AFTER it in mobile layout (it
         //    overlays the canvas).
-        // The works reader is a takeover: a tablet's persistent layer
-        // rail belongs to the professional view only.
         let persistent_layers = !workspace_visible
-            && !self.works_reader_visible()
             && (!self.editor_state.editor_ui.touch_chrome()
                 || (self.editor_state.editor_ui.expanded_touch_layout()
                     && self.editor_state.editor_ui.sidebar_open));
@@ -318,9 +313,6 @@ impl WidgetHostNative {
             }
         }
 
-        // The phone reader's chrome frames the canvas it just painted
-        // into the stage; the chat sheet and its scrim paint above it.
-        self.paint_works_reader(frame, viewport_width, viewport_height);
         if !presenting {
             self.paint_mobile_sheet_scrim(frame, viewport_width, viewport_height);
         }
@@ -425,9 +417,7 @@ impl WidgetHostNative {
                 == Some(op_editor_core::size_class::MobileSheetKind::Ai);
         if let Some(chat_rect) = self
             .ai_chat_rect(viewport_width, viewport_height)
-            .filter(|_| {
-                !presenting && chat_open && !self.editor_state.editor_ui.workspace_drawer_active()
-            })
+            .filter(|_| !presenting && chat_open)
         {
             // Owner-stamp so paint stores the canonical build under THIS host's
             // owner — the display-frame cursor hint reads it back by that owner.
@@ -461,11 +451,6 @@ impl WidgetHostNative {
         //      the canvas but below the floating pickers / modals.
         if workspace_visible {
             self.paint_workspace_strip(frame, viewport_width, viewport_height);
-            self.paint_workspace_banners(frame, viewport_width, viewport_height);
-            self.paint_workspace_drawer(frame, viewport_width, viewport_height);
-            // The report panel floats above everything the workspace paints.
-            self.paint_workspace_quality_overlay(frame, viewport_width, viewport_height);
-            self.paint_workspace_focus_ring(frame, viewport_width, viewport_height);
         }
 
         // 8.4. Floating align/distribute toolbar — visible whenever

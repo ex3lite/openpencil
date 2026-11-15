@@ -177,38 +177,6 @@ CARDS = [
      [f"quicksort-lecture-deck-{i:02d}.png" for i in range(1, 8)]),
     ("compound-effect-card", "compound-effect-card.png"),
     ("analytics-metric-card", "analytics-metric-card.png"),
-    # App 界面：手机三屏并排（375×812 × 3 正好铺满 16:10 的卡），桌面单屏。
-    ("coffee-order-app",
-     [f"coffee-order-app-{i:02d}.png" for i in range(1, 4)]),
-    ("budget-ledger-app",
-     [f"budget-ledger-app-{i:02d}.png" for i in range(1, 4)]),
-    ("habit-fitness-app",
-     [f"habit-fitness-app-{i:02d}.png" for i in range(1, 4)]),
-    ("coffee-counter-desktop", "coffee-counter-desktop.png"),
-    ("sales-dashboard-web", "sales-dashboard-web.png"),
-    # 4:3 deck：六页 3×2 铺。
-    ("onboarding-training-deck",
-     [f"onboarding-training-deck-{i:02d}.png" for i in range(1, 7)]),
-    ("research-findings-deck",
-     [f"research-findings-deck-{i:02d}.png" for i in range(1, 7)]),
-    # The Studio Home example templates (scene_templates_examples.toml).
-    ("daybreak-coffee-site", Top("daybreak-coffee-site.png")),
-    # Five slides tile 3+2 with a hole the cover's blue fills; four tile a
-    # clean 2x2 (the Home card crops a 16:9 deck to 16:9), and blue cover /
-    # blue close on the diagonal read as one deck.
-    ("openpencil-intro-deck",
-     [f"openpencil-intro-deck-{i:02d}.png" for i in (1, 3, 4, 5)]),
-    ("openpencil-intro-deck-43",
-     [f"openpencil-intro-deck-43-{i:02d}.png" for i in (1, 3, 4, 5)]),
-    ("coffee-world-carousel",
-     [f"coffee-world-carousel-{i:02d}.png" for i in range(1, 6)]),
-    ("focus-mode-tutorial",
-     [f"focus-mode-tutorial-{i:02d}.png" for i in range(1, 4)]),
-    ("weekly-review-infographic", Top("weekly-review-infographic.png")),
-    ("idea-to-publish-flow", Top("idea-to-publish-flow.png")),
-    ("blank-vs-example-contrast", Top("blank-vs-example-contrast.png")),
-    ("city-music-fest-poster",
-     [f"city-music-fest-poster-{i:02d}.png" for i in range(1, 3)]),
 ]
 
 # Gap between tiles, in source pixels — scaled down with everything else.
@@ -301,28 +269,18 @@ def bake(source: pathlib.Path | list[pathlib.Path] | Top) -> Image.Image:
     return canvas
 
 
-# Home paints these three portraits separately, rather than stretching the
-# gallery's tightly tiled 16:10 contact sheet inside one large paper frame.
-HOME_PHONE_SCREENS = [
-    ("coffee-order-app-home-preview", "coffee-order-app-01.png"),
-    ("coffee-order-app-menu-preview", "coffee-order-app-02.png"),
-    ("coffee-order-app-order-preview", "coffee-order-app-03.png"),
-]
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     parser.add_argument("card_ids", nargs="*")
     args = parser.parse_args()
 
-    all_cards = CARDS + HOME_PHONE_SCREENS
-    known_ids = {card_id for card_id, _ in all_cards}
+    known_ids = {card_id for card_id, _ in CARDS}
     unknown_ids = sorted(set(args.card_ids) - known_ids)
     if unknown_ids:
         parser.error(f"unknown card id(s): {', '.join(unknown_ids)}")
     requested = set(args.card_ids)
-    cards = [card for card in all_cards if not requested or card[0] in requested]
+    cards = [card for card in CARDS if not requested or card[0] in requested]
 
     if not args.check:
         DST.mkdir(parents=True, exist_ok=True)
@@ -354,9 +312,7 @@ def main() -> int:
             print(f"{status}: {target.relative_to(REPO)}")
             failed = failed or status == "MISSING"
             continue
-        image = (Image.open(source).convert("RGB")
-                 if (card_id, source_name) in HOME_PHONE_SCREENS else bake(source))
-        image.save(target, "JPEG", quality=JPEG_QUALITY, optimize=True)
+        bake(source).save(target, "JPEG", quality=JPEG_QUALITY, optimize=True)
         print(f"{target.relative_to(REPO)}  {target.stat().st_size // 1024} KB")
     return 1 if failed else 0
 

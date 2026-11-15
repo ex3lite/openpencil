@@ -2,14 +2,12 @@
 //! Wikimedia list) plus thumbnail materialization. Carved out of the
 //! `providers.rs` spine to keep it under the 800-line cap; pure code motion.
 
-use crate::net::search_trace::trace_hits;
-
 use super::{
     pacing::{
         cache_token, cached_token, drop_cached_token, record_response, retry_after_seconds,
         retry_delay, token_lock, wait_for_request,
     },
-    read_capped, retain_relevant_hits_for_intent, two_keyword_retry, WebImageSearchHit,
+    read_capped, retain_relevant_hits, two_keyword_retry, WebImageSearchHit,
     WebOpenverseCredentials, MAX_EMBEDDED_IMAGE_BYTES, SEARCH_CANDIDATE_COUNT, SEARCH_RESULT_COUNT,
 };
 
@@ -42,31 +40,6 @@ pub struct RawHit {
     pub(crate) attribution: String,
     pub(crate) title: String,
     pub(crate) relevance_metadata: String,
-    pub(crate) original: Option<OriginalImageSource>,
-}
-
-/// The same catalogue artwork's original raster, never an invented URL.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OriginalImageSource {
-    pub url: String,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-}
-
-pub(crate) fn original_source(
-    info: &serde_json::Value,
-    thumbnail: &str,
-) -> Option<OriginalImageSource> {
-    let url = info.get("url")?.as_str()?.trim();
-    if url.is_empty() || url == thumbnail {
-        return None;
-    }
-    let dimension = |key| info.get(key)?.as_u64().and_then(|n| u32::try_from(n).ok());
-    Some(OriginalImageSource {
-        url: url.to_string(),
-        width: dimension("width"),
-        height: dimension("height"),
-    })
 }
 
 /// `None` = request-level failure (429 / network), `Some([])` = the
@@ -226,7 +199,6 @@ pub fn parse_openverse_results(json: &serde_json::Value) -> Vec<RawHit> {
                     .unwrap_or("")
                     .to_string(),
                 relevance_metadata: openverse_relevance_metadata(r),
-                original: original_source(r, thumb),
             })
         })
         .take(SEARCH_CANDIDATE_COUNT)
@@ -291,38 +263,15 @@ pub(super) async fn fetch_relevant_wikimedia_list(
     client: &reqwest::Client,
     query: &str,
 ) -> Vec<RawHit> {
-    fetch_relevant_wikimedia_list_for_intent(client, query, "").await
-}
-
-/// Relevance-fenced Wikimedia list whose photo contract also follows the
-/// slot's authored `intent` (see `retain_relevant_hits_for_intent`).
-pub(crate) async fn fetch_relevant_wikimedia_list_for_intent(
-    client: &reqwest::Client,
-    query: &str,
-    intent: &str,
-) -> Vec<RawHit> {
-    fetch_relevant_wikimedia_list_with_intent(query, intent, |candidate| {
+    fetch_relevant_wikimedia_list_with(query, |candidate| {
         let client = client.clone();
         async move { fetch_wikimedia_list(&client, &candidate).await }
     })
     .await
 }
 
-#[cfg(test)]
 pub(super) async fn fetch_relevant_wikimedia_list_with<F, Fut>(
     query: &str,
-    fetch_list: F,
-) -> Vec<RawHit>
-where
-    F: FnMut(String) -> Fut,
-    Fut: std::future::Future<Output = Vec<RawHit>>,
-{
-    fetch_relevant_wikimedia_list_with_intent(query, "", fetch_list).await
-}
-
-pub(super) async fn fetch_relevant_wikimedia_list_with_intent<F, Fut>(
-    query: &str,
-    intent: &str,
     mut fetch_list: F,
 ) -> Vec<RawHit>
 where
@@ -330,8 +279,7 @@ where
     Fut: std::future::Future<Output = Vec<RawHit>>,
 {
     let hits = fetch_list(query.to_string()).await;
-    trace_hits("wikimedia", query, (query, intent), &hits);
-    let relevant = retain_relevant_hits_for_intent(hits, query, intent);
+    let relevant = retain_relevant_hits(hits, query);
     if !relevant.is_empty() {
         return relevant;
     }
@@ -339,10 +287,9 @@ where
     let Some(retry_query) = two_keyword_retry(query) else {
         return relevant;
     };
-    let retry = fetch_list(retry_query.clone()).await;
-    trace_hits("wikimedia-retry", &retry_query, (query, intent), &retry);
+    let retry = fetch_list(retry_query).await;
     // Keep the original photo/studio/isolated contract for concrete retries.
-    retain_relevant_hits_for_intent(retry, query, intent)
+    retain_relevant_hits(retry, query)
 }
 
 pub fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
@@ -387,7 +334,6 @@ pub fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("")
                     .to_string(),
-                original: original_source(info, thumb),
             })
         })
         .take(SEARCH_CANDIDATE_COUNT)

@@ -138,13 +138,11 @@ fn plan_from_state(sink: &dyn DocSink, specs: &[SpawnAgentSpec]) -> Orchestrator
             screen: None,
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         })
         .collect();
 
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "spawn-root".into(),
             name: "Page".into(),
@@ -157,7 +155,6 @@ fn plan_from_state(sink: &dyn DocSink, specs: &[SpawnAgentSpec]) -> Orchestrator
         },
         subtasks,
         style_guide_name: None,
-        palette: None,
     }
 }
 

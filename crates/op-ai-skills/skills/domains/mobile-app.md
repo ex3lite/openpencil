@@ -12,14 +12,15 @@ category: domain
 
 MOBILE APP — MANDATORY THREE-SECTION ARCHITECTURE:
 
-Account for three logical layers: status chrome, app content, and optional bottom
-navigation; do not wrap all content in one padded frame.
+Every mobile screen accounts for three logical layers: status chrome, app content,
+and optional bottom navigation. These are architectural layers, not a requirement
+to wrap every content section inside one padded App Content frame.
 
-Screen height: seed an empty skeleton at 390-393×844. Before finishing, content-driven pages switch the root to `height="fit_content"` (Hug). Keep a numeric viewport only for an explicit viewport/device request or a deliberately clipped body consuming the remaining height.
+Screen-height contract: use numeric 390-393×844 as a temporary construction seed so an empty skeleton is visible. Before finishing, a normal content-driven mobile page switches its root to `height="fit_content"` (Hug), matching its completed flow. Keep a numeric viewport only when the user explicitly requested that viewport/device frame or the design deliberately contains one clipped viewport body that must consume remaining height.
 
 ## 0) EXPRESSION LAYER — where the look comes from
 
-Use the selected guide for mood, accent, depth, type, radii, and hero; keep support quiet. `ARCHETYPE: …` in subtask `elements` sets composition; the guide's two Signature recipes set treatment. Fit both within the measured section budget. Area percentages use the requested viewport INCLUDING chrome/pinned controls. Explicit budgets override hero percentages. Do not add a second hero.
+Structure is the floor. Use the selected guide for mood, accent, depth, type, radii, and hero; keep support quiet. ARCHETYPE handoff: your subtask `elements` may start with `ARCHETYPE: …`; realise exactly that composition; the area percentages are of the 812px first screen; do not add a second hero. Realise the selected guide's two Signature recipes; the ARCHETYPE line says where, the recipes say how.
 
 Platform roles: use a three-size type scale — screen title 28–34px semibold, section title 20–22px, body 16–17px (labels 12–13px). Allow one display size per screen; hero numbers use 40–57px and fit one line (8+ characters → 40–44px). Keep the accent in one block/treatment; separate sections with tonal surface tiers, not accent fills or hairlines.
 
@@ -28,16 +29,16 @@ Focal idioms include a hero card in the rail, full-bleed media under the status 
 
 ## 1) STATUS BAR (OS-controlled) — PRE-INSERTED
 
-OpenPencil inserts the canonical 62px status bar (time, signal, wifi, battery) as the root's first child on every generation path, replacing hand-drawn bars. Its path glyphs already match the screen background.
+The status bar (time, signal, wifi, battery) is **automatically provided by OpenPencil on every generation path (orchestrator, design agent, and direct MCP)** as the first child of the root frame — a hand-drawn one is replaced by the canonical node. It is a fixed 62px-tall frame with hardcoded path icons.
 
 - **DO NOT generate a status bar** — it already exists
 - **DO NOT delete or modify** the pre-inserted status bar
-- **DO NOT give it a background fill** — it shows the screen behind it
+- **DO NOT give it a background fill** — it carries none, so it shows the screen behind it and its glyphs are already coloured for that background
 - Your first section should start BELOW the status bar (it occupies ~62px)
 
 ## 2) APP CONTENT (your layout)
 
-Chips: width fit_content, single-line text, height 36-44, cornerRadius=full. Only explicitly scrollable filter/category lanes clip. Metadata/difficulty badges wrap as whole Hug chips into measured lines; keep the section Hug and budget every line. Never shrink or crop labels. Every badge/button/pill contains text or an icon, never an empty decorated frame. Tappable frames require cornerRadius: buttons 8-12, pills/chips full.
+Chip rows (filter/date/guests pills): each chip HUGS (width fit_content, single-line text, height 36-44, cornerRadius=full); the ROW clips overflow (clipContent) instead of squeezing chips — never let a pill's text wrap. A badge/pill/button frame ALWAYS carries its content (text or icon) — an empty decorated frame renders as a mystery blob. Every tappable CTA/button/pill frame also carries cornerRadius (buttons 8-12, pills/chips full) — omitting it reads as an unstyled placeholder.
 
 Keep the mobile root at 0 horizontal padding so status chrome, integrated bottom
 navigation, and intentional full-bleed media can remain full width. Emit ordinary
@@ -49,8 +50,9 @@ under an explicit fixed-height root may use `height="fill_container"`; in that
 case it is the ONE named remainder consumer, not a sizing mode copied onto its
 sections.
 
-Use gap and vertical padding, not margins or spacers, for section rhythm. Give
-the last content section bottom padding to clear the following navigation.
+Use gap and vertical padding, not margins or empty spacers, for rhythm between
+sections. Give the last ordinary content section enough bottom padding to clear
+the following bottom navigation.
 
 A clipped horizontal scroller is the rail exception: its section stays full
 width, its section header gets 24px left/right padding, and its clipped
@@ -69,7 +71,7 @@ Rules:
 - First 1-2 elements must answer "where am I" + "what can I do here"
 - Mobile top rhythm: keep header/title close to the first useful control or content; use 20-32px, not an empty hero-sized band.
 - Section header actions: prefer a 20px `chevron-right` / `arrow-right` icon, not visible "See all", "View all", "查看全部", or "查看更多" text.
-- Category sections: section root and chip row both use height="fit_content". Chip rows use gap 12 and justifyContent start. Preserve the requested count and arrangement: 九宫格 means exactly nine items in a 3×3 grid, never ten items in 5×2. Without an explicit grid, choose columns for the actual item count and label width. Each item uses one consistent 40–44px icon/illustration treatment + a 12px label, gap 8–12, no card box. Let the page scroll instead of squeezing every category and list row above the fold.
+- Category sections: section root and chip row both use height="fit_content". Use a header row, then chip row/grid. Chip row uses gap 12 and justifyContent start even when there are only two categories; never space_between/space_around. A category grid (九宫格) on a 375 root is 5 per row (4 only when a label exceeds 4 CJK / 8 Latin characters), at most two rows above the fold, ≤150px tall in total: each item = 40–44px tonal icon container + one 11–12px label, gap 8–12, no stroke, no card box. Show full items or wrap; no half-clipped item.
 - Product card rows: two equal `fill_container` cards, gap 12, inside the content rail; no fixed-width clipped second card.
 - List rows of [thumbnail, text stack]: alignItems="center" on the row — a missing alignItems top-pins the text against a taller thumbnail and leaves a dead band under it.
 - Corner badge on an image ("-35%", "NEW"): a CHILD of the image's wrapper frame with explicit x/y (e.g. x=8, y=8) — never a card-level sibling between the image and the content column (it renders straddling the seam).
@@ -78,7 +80,7 @@ Rules:
 - Exact user mobile tokens win: "圆角 8px / 间距 12px" means ordinary radius=8 and repeated gaps=12.
 - Title font size must be uniform across ALL screens in the app
 - Design for one-handed use: primary actions in lower half
-- For an explicitly fixed phone viewport, reserve status chrome and the bottom tab/action bar first; ordinary sections go in ONE `role="scroll-area"`, `height="fill_container"`, `clipContent:true` body with non-empty `events.onScroll`. Keep the bottom bar as a root sibling outside that body. Preserve readable spacing; never shrink the entire list to fit the first screenshot. Content-driven pages otherwise keep Hug Height.
+- When the screen is explicitly a fixed viewport, use at most one clipped content viewport; otherwise keep the content wrapper Hug Height. Avoid nested scrolls.
 - Touch targets: minimum 44x44px
 - Do not repeat the same predictable mobile stack of search + categories + orange promo + two cards. Choose a distinct concept for the domain and let the handed-off archetype carry the personality.
 

@@ -16,9 +16,8 @@ use op_ai::chat_provider::{
 };
 use op_ai::chat_sse::{parse_anthropic_sse_data, parse_openai_sse_data, provider_endpoint};
 use op_chat_agent::backoff::{
-    apply_openrouter_reasoning, apply_reasoning_wire_control,
-    apply_reasoning_wire_control_anthropic, builtin_http_client, builtin_http_min_gap,
-    send_with_backoff, BUILTIN_HTTP_MAX_RETRIES,
+    apply_reasoning_wire_control, apply_reasoning_wire_control_anthropic, builtin_http_client,
+    builtin_http_min_gap, send_with_backoff, BUILTIN_HTTP_MAX_RETRIES,
 };
 use op_chat_agent::chat_builtin_http::BuiltinHttpError;
 use op_editor_core::{BuiltinAgentKind, EditorState};
@@ -273,7 +272,7 @@ async fn run_openai_request(
     tx: &Sender<ChatDelta>,
 ) -> Result<bool, BuiltinHttpError> {
     let url = provider_endpoint(&turn.base_url, "/chat/completions");
-    let body = openai_request_body(&turn.request, &turn.model, &url);
+    let body = openai_request_body(&turn.request, &turn.model);
     let response = send_with_backoff(
         "openai-compatible",
         &url,
@@ -324,12 +323,7 @@ fn history_messages(request: &ChatRequest) -> Vec<Value> {
     messages
 }
 
-/// `url` is the resolved `/chat/completions` endpoint: the model-family
-/// control keys off `model`, the OpenRouter unified control off the host —
-/// a reasoning model reached through OpenRouter under an unrecognised id
-/// otherwise spends its whole output budget reasoning (the same policy
-/// `chat_builtin_http` applies on desktop).
-fn openai_request_body(request: &ChatRequest, model: &str, url: &str) -> Value {
+fn openai_request_body(request: &ChatRequest, model: &str) -> Value {
     let mut messages = history_messages(request);
     if !request.system_prompt.trim().is_empty() {
         messages.insert(
@@ -344,9 +338,7 @@ fn openai_request_body(request: &ChatRequest, model: &str, url: &str) -> Value {
         "max_tokens": request.max_output_tokens.max(1),
         "messages": messages,
     });
-    let reduce = reduce_reasoning(request);
-    apply_reasoning_wire_control(&mut body, model, reduce);
-    apply_openrouter_reasoning(&mut body, url, reduce);
+    apply_reasoning_wire_control(&mut body, model, reduce_reasoning(request));
     body
 }
 

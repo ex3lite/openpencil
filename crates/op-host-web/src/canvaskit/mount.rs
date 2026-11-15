@@ -63,10 +63,6 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     host.editor_state_mut().editor_ui.host_owns_chat =
         crate::web_settings::host_owns_chat_from_query(&search);
     let credential_load = crate::web_settings::load_into(host.editor_state_mut());
-    // Whether the daemon holds an opened file decides Home vs canvas below;
-    // ask now so the answer overlaps the CanvasKit download.
-    crate::studio_web::probe_bound_file(host.editor_state().editor_ui.embed);
-    crate::web_generator_runner::probe_capability();
     // Theme is device-level, so it is resolved from its own unpartitioned key
     // rather than from the partition blob just loaded. On a browser that has
     // never run the split build this adopts the blob's theme and writes the
@@ -94,11 +90,6 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     let initial_locale = host.editor_state().editor_ui.effective_locale();
     let initial_catalog = crate::web_asset_fetch::prefetch_initial_catalog(initial_locale);
     let backend = init_backend(&canvas_id, dpr, logical_w, logical_h).await?;
-    // Open on Studio Home like the desktop app does when started without a
-    // file, per the persisted entry-surface preference. An embedding host
-    // (the VS Code plugin) and a daemon serving an opened file (`--file`)
-    // open on the canvas. Still ahead of the first paint.
-    crate::studio_web::apply_entry_surface(host.editor_state_mut());
     if let Some(catalog) = initial_catalog {
         // The XHR itself owns the three-second timeout. Success installs the
         // target catalog; failure leaves the stored locale in place so its first
@@ -140,9 +131,6 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     // pure state reset (no daemon request), so it is safe ahead of the bridge
     // init gate; the daemon-facing policy fetch (`start`) still waits for it.
     crate::web_credential_sync::reset();
-    // A `fileBound` answer slower than the CanvasKit download is applied
-    // when it lands.
-    crate::studio_web::adopt_bound_file_answer(&inner);
     {
         let mut b = inner.borrow_mut();
         let _ = b.resize_to_window(&window)?;
@@ -411,9 +399,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 // press queued a remote search. Both drains re-borrow `inner`
                 // (mirrors the skia mount's post-press drain points).
                 drop(b);
-                crate::studio_web::drain_home_replace_confirm(&inner);
                 crate::web_chat::drain_chat_flags(&inner);
-                crate::studio_web::ensure_workspace_pump(&inner);
                 crate::web_image_panel::drain_image_jobs(&inner);
                 crate::web_builtin_model_discovery::drain_pending_builtin_model_discovery(&inner);
                 crate::iconify_web::drain_iconify_request(&inner);
@@ -527,24 +513,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                     scroll_delta_y,
                     canvas_delta_y,
                 } => {
-                    // A Studio LongPage workspace pans the page on a plain
-                    // wheel; a modified wheel still zooms.
-                    let zoom_modifier = evt.ctrl_key() || evt.meta_key() || evt.alt_key();
-                    b.host.apply_workspace_long_page_wheel(
-                        x,
-                        y,
-                        scroll_delta_y,
-                        zoom_modifier,
-                        w,
-                        h,
-                    ) || b.host.apply_wheel_with_canvas_delta(
-                        x,
-                        y,
-                        scroll_delta_y,
-                        canvas_delta_y,
-                        w,
-                        h,
-                    )
+                    b.host
+                        .apply_wheel_with_canvas_delta(x, y, scroll_delta_y, canvas_delta_y, w, h)
                 }
                 WheelIntent::Pan { dx, dy } => b.host.apply_pan_gesture(x, y, dx, dy, w, h),
             };

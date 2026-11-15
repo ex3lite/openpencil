@@ -14,18 +14,11 @@ use op_editor_ui::Rect;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[path = "binding_overlay_horizontal.rs"]
-mod horizontal;
-#[path = "binding_overlay_table_filter.rs"]
-mod table_filter;
-pub(crate) use horizontal::is_horizontal_viewport;
-
 #[derive(Debug, Clone, PartialEq)]
 struct ScrollValues {
     offset: f32,
     max_offset: f32,
     direction: &'static str,
-    horizontal: bool,
 }
 
 impl Default for ScrollValues {
@@ -34,7 +27,6 @@ impl Default for ScrollValues {
             offset: 0.0,
             max_offset: 0.0,
             direction: "none",
-            horizontal: false,
         }
     }
 }
@@ -54,7 +46,6 @@ impl ScrollValues {
             "maxOffset": self.max_offset,
             "progress": self.progress(),
             "direction": self.direction,
-            "axis": if self.horizontal { "horizontal" } else { "vertical" },
         }))
     }
 }
@@ -116,9 +107,6 @@ impl PointerValues {
 struct OverlayInner {
     scroll_values: BTreeMap<String, ScrollValues>,
     active_scroll: Option<String>,
-    horizontal_scrollers: BTreeSet<String>,
-    horizontal_drags: BTreeMap<u32, horizontal::Drag>,
-    scroll_revision: u64,
     pinned_nodes: BTreeSet<String>,
     sticky_children: BTreeMap<String, BTreeSet<String>>,
     node_scroll_ancestor: BTreeMap<String, String>,
@@ -130,9 +118,6 @@ struct OverlayInner {
     /// children — doing so would double the host's scroll.
     page_scrollers: BTreeSet<String>,
     authored_runtime_document: Option<jian_ops_schema::PenDocument>,
-    filter_row_ids: BTreeSet<String>,
-    paging: Vec<op_editor_core::table_pagination::Spec>,
-    paging_signature: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Default)]
@@ -151,10 +136,6 @@ impl BindingOverlay {
         let mut inner = self.inner.borrow_mut();
         let retained_scroll = std::mem::take(&mut inner.scroll_values);
         *inner = OverlayInner::default();
-        if let Ok(value) = serde_json::to_value(document) {
-            op_editor_core::table_filter_contract::row_ids(&value, &mut inner.filter_row_ids);
-            op_editor_core::table_pagination::specs(&value, &mut inner.paging);
-        }
         collect_scroll_metadata(&document.children, None, true, &mut inner);
         if let Some(pages) = &document.pages {
             for page in pages {
@@ -182,8 +163,6 @@ impl BindingOverlay {
         let authored = self.inner.borrow().authored_runtime_document.clone()?;
         let mut document = serde_json::to_value(authored).ok()?;
         materialize_json_nodes(&mut document, sites, self, state, pointer, extra_values);
-        op_editor_core::table_filter_contract::materialize(&mut document);
-        self.materialize_pagination(&mut document, state);
         serde_json::from_value(document).ok()
     }
 
@@ -268,33 +247,21 @@ impl BindingOverlay {
                 .scroll_values
                 .get(&container_id)
                 .map_or(0.0, |values| values.offset);
-            let horizontal = self.is_horizontal(&container_id);
-            let (target_start, target_size, container_start, container_size) = if horizontal {
-                (
-                    target.bounds.origin.x,
-                    target.bounds.size.x,
-                    container.bounds.origin.x,
-                    container.bounds.size.x,
-                )
-            } else {
-                (
-                    target.bounds.origin.y,
-                    target.bounds.size.y,
-                    container.bounds.origin.y,
-                    container.bounds.size.y,
-                )
-            };
-            let start = target_start - container_start;
-            let end = target_start + target_size - container_start - container_size;
+            let start = target.bounds.origin.y - container.bounds.origin.y;
+            let end = target.bounds.origin.y + target.bounds.size.y
+                - container.bounds.origin.y
+                - container.bounds.size.y;
             let desired = match alignment {
                 ScrollAlignment::Start => start,
-                ScrollAlignment::Center => start - (container_size - target_size) / 2.0,
+                ScrollAlignment::Center => {
+                    start - (container.bounds.size.y - target.bounds.size.y) / 2.0
+                }
                 ScrollAlignment::End => end,
                 ScrollAlignment::Nearest => {
-                    let visible_top = target_start - current;
-                    let visible_bottom = visible_top + target_size;
-                    let viewport_top = container_start;
-                    let viewport_bottom = viewport_top + container_size;
+                    let visible_top = target.bounds.origin.y - current;
+                    let visible_bottom = visible_top + target.bounds.size.y;
+                    let viewport_top = container.bounds.origin.y;
+                    let viewport_bottom = viewport_top + container.bounds.size.y;
                     if visible_top < viewport_top {
                         start
                     } else if visible_bottom > viewport_bottom {
@@ -306,7 +273,6 @@ impl BindingOverlay {
             };
             let mut inner = self.inner.borrow_mut();
             let values = inner.scroll_values.entry(container_id).or_default();
-            values.horizontal = horizontal;
             values.max_offset = max_offset;
             values.offset = desired.clamp(0.0, max_offset);
         }
@@ -374,11 +340,9 @@ impl BindingOverlay {
         let Some(target) = inner.active_scroll.clone() else {
             return false;
         };
-        let horizontal = inner.horizontal_scrollers.contains(&target);
         let changed = {
             let values = inner.scroll_values.entry(target).or_default();
             let before = values.clone();
-            values.horizontal = horizontal;
             if let Some(max_offset) = max_offset {
                 values.max_offset = max_offset.max(0.0);
             }
@@ -393,17 +357,9 @@ impl BindingOverlay {
                 ScrollPhase::Began | ScrollPhase::Changed | ScrollPhase::Momentum => {
                     values.offset = (values.offset - delta_y).clamp(0.0, values.max_offset);
                     values.direction = if delta_y < 0.0 {
-                        if horizontal {
-                            "right"
-                        } else {
-                            "down"
-                        }
+                        "down"
                     } else if delta_y > 0.0 {
-                        if horizontal {
-                            "left"
-                        } else {
-                            "up"
-                        }
+                        "up"
                     } else {
                         values.direction
                     };
@@ -411,9 +367,6 @@ impl BindingOverlay {
             }
             *values != before
         };
-        if changed {
-            inner.scroll_revision = inner.scroll_revision.wrapping_add(1);
-        }
         if matches!(phase, ScrollPhase::Ended | ScrollPhase::Cancelled) {
             inner.active_scroll = None;
         }
@@ -424,9 +377,6 @@ impl BindingOverlay {
         let Some(node) = scene.active_page().and_then(|page| page.find(node_id)) else {
             return 0.0;
         };
-        if self.is_horizontal(node_id) {
-            return horizontal::max_offset(node);
-        }
         let bottom = node
             .children
             .iter()
@@ -494,18 +444,12 @@ impl BindingOverlay {
             let pinned = inner.pinned_nodes.contains(&child.id)
                 || sticky.is_some_and(|ids| ids.contains(&child.id));
             if !pinned {
-                let (dx, dy) = if values.horizontal {
-                    (-values.offset, 0.0)
-                } else {
-                    (0.0, -values.offset)
-                };
-                translate_for_scroll(child, dx, dy, &inner.pinned_nodes);
+                translate_for_scroll(child, -values.offset, &inner.pinned_nodes);
             }
         }
-        // Scene siblings are front-to-back for both painting and hit testing.
         node.children.sort_by_key(|child| {
-            !(inner.pinned_nodes.contains(&child.id)
-                || sticky.is_some_and(|ids| ids.contains(&child.id)))
+            inner.pinned_nodes.contains(&child.id)
+                || sticky.is_some_and(|ids| ids.contains(&child.id))
         });
     }
 }
@@ -527,17 +471,12 @@ fn collect_scroll_metadata(
         if json.get("pin").and_then(serde_json::Value::as_bool) == Some(true) {
             inner.pinned_nodes.insert(node_id.to_owned());
         }
-        let horizontal = is_horizontal_viewport(node);
-        if horizontal {
-            inner.horizontal_scrollers.insert(node_id.to_owned());
-        }
-        let own_scroll = (horizontal
-            || json
-                .get("events")
-                .and_then(|events| events.get("onScroll"))
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|actions| !actions.is_empty()))
-        .then_some(node_id);
+        let own_scroll = json
+            .get("events")
+            .and_then(|events| events.get("onScroll"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|actions| !actions.is_empty())
+            .then_some(node_id);
         let page_scroll = (top_level && own_scroll.is_none()).then_some(node_id);
         let nearest_scroll = own_scroll.or(inherited_scroll).or(page_scroll);
         if let Some(scroll) = nearest_scroll {
@@ -642,34 +581,28 @@ fn subtree_bottom(node: &SceneNode) -> f32 {
         .fold(node.bounds.origin.y + node.bounds.size.y, f32::max)
 }
 
-fn translate_for_scroll(node: &mut SceneNode, dx: f32, dy: f32, pinned_nodes: &BTreeSet<String>) {
+fn translate_for_scroll(node: &mut SceneNode, dy: f32, pinned_nodes: &BTreeSet<String>) {
     if pinned_nodes.contains(&node.id) {
         return;
     }
     node.bounds.origin.y += dy;
-    node.bounds.origin.x += dx;
     if node.aggregate_bounds_cache.size.x > 0.0 || node.aggregate_bounds_cache.size.y > 0.0 {
         node.aggregate_bounds_cache.origin.y += dy;
-        node.aggregate_bounds_cache.origin.x += dx;
     }
     for point in &mut node.points {
         point.y += dy;
-        point.x += dx;
     }
     for anchor in &mut node.path_anchors {
         anchor.pos.y += dy;
-        anchor.pos.x += dx;
         if let Some(handle) = &mut anchor.handle_in {
             handle.y += dy;
-            handle.x += dx;
         }
         if let Some(handle) = &mut anchor.handle_out {
             handle.y += dy;
-            handle.x += dx;
         }
     }
     for child in &mut node.children {
-        translate_for_scroll(child, dx, dy, pinned_nodes);
+        translate_for_scroll(child, dy, pinned_nodes);
     }
 }
 
@@ -691,12 +624,8 @@ impl crate::session::PreviewSession {
         before: &[serde_json::Value],
     ) -> InvalidationKind {
         let after = self.binding_values();
-        let mut invalidation =
-            self.binding_overlay
-                .filter_invalidation(&self.binding_sites, before, &after);
-        if self.binding_overlay.pagination_changed(&self.runtime.state) {
-            invalidation = invalidation.merge(InvalidationKind::Relayout);
-        }
+        let invalidation =
+            BindingOverlay::changed_invalidation(&self.binding_sites, before, &after);
         self.apply_invalidation(invalidation);
         invalidation
     }
@@ -734,14 +663,9 @@ impl crate::session::PreviewSession {
                     &pointer,
                     extra_values,
                 ) {
-                    self.runtime.scheduler.flush();
-                    let focus_id = self.bound_focus_id();
                     if let Err(error) = self.runtime.replace_document(document) {
                         self.warnings
                             .push(format!("preview: binding document swap failed: {error}"));
-                    } else {
-                        self.restore_bound_focus(focus_id);
-                        self.refresh_filtered_scene(&pointer, extra_values);
                     }
                 }
                 match crate::app_mode::solve_roots(&mut self.runtime, &self.measure) {

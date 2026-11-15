@@ -33,13 +33,19 @@ use crate::error::PreviewEnterError;
 use crate::scene_helpers::format_warning;
 use crate::transition::ScreenTransition;
 
-/// Absolute root bounds used to identify and present an active preview root.
+/// One page-root's mapping between the design scene's coordinate space
+/// (root offset baked in) and the jian runtime's root-relative
+/// hit-test space. Used to translate a scene-space tap back into the
+/// space `Runtime::dispatch_pointer` expects.
 ///
 /// Fields are `pub(crate)` so the sibling `app_mode` module's
 /// `solve_roots` (which constructs these) can reach them.
 pub(crate) struct RootFrame {
     /// The root's bounds in SCENE space (authored origin + size).
     pub(crate) scene_rect: Rect,
+    /// The root's authored `(base.x, base.y)` — the delta between scene
+    /// space and the runtime's root-relative space.
+    pub(crate) offset: (f32, f32),
 }
 
 #[derive(Clone)]
@@ -125,10 +131,8 @@ pub struct PreviewSession {
     pub(crate) binding_overlay: BindingOverlay,
     /// R9 bounded trace, provenance, and debugger clock state.
     pub(crate) debug: crate::debug_trace::PreviewDebugState,
-    /// Retained reset source/options; accepted background assets update in place.
+    /// Immutable source/options used to rebuild the entire session on reset.
     pub(crate) reset_seed: ResetSeed,
-    /// Host document lifetime bound at entry; asset updates cannot cross Open/New.
-    pub(crate) asset_source_identity: Option<(u64, u64)>,
     /// R7 one bounded timeline plus its injected AnimationSink queue.
     pub(crate) animation: crate::animation::PreviewAnimationState,
     /// P1 node-level motion declarations and per-screen trigger state.
@@ -498,13 +502,12 @@ impl PreviewSession {
         // by construction. The active page was projected to the top
         // level in `enter`, so it is page index 0. APP MODE: page 0 is
         // the entry screen (the `project_screens` convention) either way.
-        let scene = op_pen_loader::pen_document_to_layout_scene_for_preview_with_measure(
+        let scene = op_pen_loader::pen_document_to_layout_scene_for_preview(
             &promoted_doc,
             &layout_doc,
             preserve_authored_geometry,
             active_theme,
             0,
-            Rc::clone(&measure),
         );
 
         // R3: install the effect queue adapter (mapped through the
@@ -523,7 +526,7 @@ impl PreviewSession {
         runtime.enable_action_reporting();
         let motion = crate::motion::PreviewMotionState::default();
         let has_switch_widgets = crate::motion::runtime_has_switch_widgets(&runtime);
-        let mut session = Self {
+        let session = Self {
             runtime,
             measure,
             available: primary_available,
@@ -540,7 +543,6 @@ impl PreviewSession {
             binding_overlay,
             debug,
             reset_seed,
-            asset_source_identity: None,
             animation,
             motion,
             host_motion_preference,
@@ -556,7 +558,6 @@ impl PreviewSession {
             #[cfg(test)]
             overlay_builds_for_test: std::cell::Cell::new(0),
         };
-        session.materialize_initial_table_filter();
         session.motion.set_initial_lifecycle_values(
             &session.runtime,
             &session.scene,
@@ -778,11 +779,12 @@ impl PreviewSession {
     }
 }
 
-/// Share the canvas backend so parity tests compare the same metrics, including
-/// the Windows CI estimator. Font-specific tests inject SkiaMeasure explicitly.
+/// The measurement backend preview tests solve layout against the same skia
+/// backend the native host injects, so test geometry matches
+/// production. Kept in one place so the 45 call sites don't each spell
 #[cfg(all(test, not(target_os = "windows")))]
 pub(crate) fn test_measure() -> Rc<dyn MeasureBackend> {
-    op_pen_loader::layout_measure_backend()
+    Rc::new(jian_skia::SkiaMeasure::new())
 }
 
 #[cfg(all(test, not(target_os = "windows")))]

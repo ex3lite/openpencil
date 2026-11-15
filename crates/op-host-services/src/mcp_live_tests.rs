@@ -336,10 +336,7 @@ fn pump_flags_document_replaced_only_for_replace_document_requests() {
                 active_page_index: 1,
                 preserve_authored_geometry: true,
                 scenario: None,
-                work_family: None,
                 pinned_style_guide: None,
-                share_recipe: None,
-                imported_from: None,
             },
             ack: ack_tx,
         })
@@ -362,10 +359,7 @@ fn pump_flags_document_replaced_only_for_replace_document_requests() {
                 active_page_index: 0,
                 preserve_authored_geometry: false,
                 scenario: None,
-                work_family: None,
                 pinned_style_guide: None,
-                share_recipe: None,
-                imported_from: None,
             },
             ack: ack_tx,
         })

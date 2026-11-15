@@ -90,12 +90,6 @@ pub(super) fn is_mobile_chrome(node: &PenNode) -> bool {
 }
 
 pub(super) fn is_intentional_full_bleed_role(node: &PenNode) -> bool {
-    if serde_json::to_value(node)
-        .ok()
-        .is_some_and(|v| crate::map_viewport::is_viewport(&v))
-    {
-        return true;
-    }
     matches!(
         node.base()
             .role
@@ -232,7 +226,7 @@ pub(super) fn has_surface_content_descendant(node: &PenNode) -> bool {
 pub(super) fn is_clipped_horizontal_scroller(node: &PenNode) -> bool {
     container_props(node).is_some_and(|props| {
         props.layout == Some(LayoutMode::Horizontal) && props.clip_content == Some(true)
-    }) || op_design_lint::horizontal_scroll::is_clipped_horizontal_lane_node(node)
+    })
 }
 
 pub(super) fn contains_clipped_horizontal_scroller(node: &PenNode) -> bool {

@@ -7,22 +7,23 @@
 //! Host CLI and ACP providers are intentionally unavailable on the web route.
 
 use std::io::Write;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 #[cfg(test)]
 use op_ai::chat_provider::StopReason;
-use op_ai::chat_provider::{ChatAttachment, ChatHistoryRole};
+use op_ai::chat_provider::{ChatAttachment, ChatDelta, ChatHistoryRole, ChatProvider, ChatRequest};
 use op_editor_core::chat::MAX_ATTACHMENT_BYTES;
-#[cfg(test)]
-use op_editor_core::EditorCommand;
-use op_editor_core::{BuiltinAgentConfig, EditorState, NodeId};
-use op_orchestrator::DesignRequest;
-#[cfg(test)]
-use op_orchestrator::DocSink;
+use op_editor_core::{BuiltinAgentConfig, EditorCommand, EditorState, NodeId};
+use op_orchestrator::{
+    AbortFlag, DesignRequest, DocSink, Orchestrator, Progress, SkippedScreenshotProvider,
+    SkippedVisionLlmClient, ValidationProviders,
+};
 use serde_json::Value;
 
 use crate::ai_proxy::AiStreamRequest;
+use crate::chat_provider_llm::ChatProviderLlmClient;
+use crate::pre_validator::LintPreValidator;
 use crate::web_canvas_server::{SseHub, WebCanvasState};
 
 #[path = "web_chat_standard_error.rs"]
@@ -31,60 +32,35 @@ use error::WebChatStandardError;
 
 #[path = "web_chat_standard_events.rs"]
 mod events;
-use events::write_error_event;
+use events::{
+    progress_label, web_identity_seed, write_agent_identity_event, write_delta_event,
+    write_done_event, write_error_event, write_thinking_event,
+};
 
 #[path = "web_chat_standard_reference.rs"]
 mod reference;
-
-#[path = "web_chat_standard_quality.rs"]
-mod quality;
 
 #[path = "web_chat_standard_model_selection.rs"]
 mod model_selection;
 use model_selection::selected_model_id;
 
-#[path = "web_chat_standard_route.rs"]
-mod route;
-use route::{
-    clear_fresh_starter_frame_for_design, clear_live_starter_frame_for_design, parse_launch_route,
-    pinned_intent, resolve_standard_route, route_for_mode,
-};
-
-#[path = "web_chat_standard_sink.rs"]
-mod sink;
-use sink::WebDesignDocSink;
-
-#[path = "web_chat_standard_stream_routes.rs"]
-mod stream_routes;
-use stream_routes::{stream_chat_route, stream_modify_route, stream_new_design_route};
-
-#[path = "web_chat_standard_variants.rs"]
-mod variants;
+const STANDARD_MODIFY_STEP: &str =
+    r#"<step title="Checking guidelines">Analyzing modification request...</step>"#;
 
 pub struct WebStandardTurnRequest {
     pub ai: AiStreamRequest,
     document_json: Option<String>,
     editor_meta: Option<op_pen_loader::EditorMeta>,
     selected_ids: Vec<String>,
-    workspace_visible: bool,
-    workspace_selected: usize,
     active_page_id: Option<String>,
     agent_team_size: Option<u32>,
     history: Vec<(ChatHistoryRole, String)>,
     attachments: Vec<ChatAttachment>,
     transient_builtin: Option<BuiltinAgentConfig>,
-    /// Browser-pinned route (Studio Home / draft refine); `Auto` classifies as before.
-    launch_route: op_editor_core::LaunchRoute,
-    /// The browser's UI locale (`"locale"`, BCP-47): a variants run stamps
-    /// localized direction names (`方案 A`) on the boards it lands.
-    locale: Option<op_editor_core::Locale>,
 }
 
 pub fn parse_standard_turn_body(body: &str) -> Option<WebStandardTurnRequest> {
     let ai = crate::ai_proxy::parse_ai_stream_body(body)?;
-    if ai.hosted_route_id.is_some() {
-        return None;
-    }
     let value: Value = serde_json::from_str(body).ok()?;
     let obj = value.as_object()?;
     let document_json = obj.get("document").map(Value::to_string);
@@ -118,26 +94,11 @@ pub fn parse_standard_turn_body(body: &str) -> Option<WebStandardTurnRequest> {
         None | Some(Value::Null) => None,
         Some(value) => Some(crate::web_credentials::parse_transient_builtin(value)?),
     };
-    let launch_route = parse_launch_route(obj);
-    let locale = obj
-        .get("locale")
-        .and_then(Value::as_str)
-        .and_then(op_editor_core::Locale::from_tag);
     Some(WebStandardTurnRequest {
         ai,
-        launch_route,
-        locale,
         document_json,
         editor_meta,
         selected_ids,
-        workspace_visible: obj
-            .get("workspaceVisible")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        workspace_selected: obj
-            .get("workspaceSelected")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
         active_page_id,
         agent_team_size,
         history,
@@ -146,7 +107,7 @@ pub fn parse_standard_turn_body(body: &str) -> Option<WebStandardTurnRequest> {
     })
 }
 
-pub(crate) fn parse_chat_history(value: Option<&Value>) -> Vec<(ChatHistoryRole, String)> {
+fn parse_chat_history(value: Option<&Value>) -> Vec<(ChatHistoryRole, String)> {
     value
         .and_then(Value::as_array)
         .into_iter()
@@ -167,7 +128,7 @@ pub(crate) fn parse_chat_history(value: Option<&Value>) -> Vec<(ChatHistoryRole,
         .collect()
 }
 
-pub(crate) fn parse_chat_attachments(value: Option<&Value>) -> Vec<ChatAttachment> {
+fn parse_chat_attachments(value: Option<&Value>) -> Vec<ChatAttachment> {
     value
         .and_then(Value::as_array)
         .into_iter()
@@ -244,10 +205,6 @@ pub fn stream_standard_turn<W: Write>(
     write_barrier: Option<&crate::web_canvas_server::WriteBarrier>,
     cors_origin: Option<&str>,
 ) -> std::io::Result<()> {
-    let mut req = req;
-    // A deployment that does not offer directions runs the brief as one.
-    let mode = state.lock().unwrap_or_else(|p| p.into_inner()).mode;
-    req.launch_route = route_for_mode(req.launch_route, mode);
     crate::ai_proxy::write_sse_headers(out, cors_origin)?;
     let mut snapshot = match apply_request_snapshot(&req, state, hub, write_barrier) {
         Ok(snapshot) => snapshot,
@@ -259,24 +216,10 @@ pub fn stream_standard_turn<W: Write>(
     };
 
     let model = selected_model_id(&req.ai, &snapshot);
-    use op_chat_agent::workspace_edit::{self, WorkspaceEditScope};
-    if req.launch_route == op_editor_core::LaunchRoute::Auto
-        && matches!(
-            workspace_edit::resolve_workspace_edit_scope(&snapshot, &req.ai.user),
-            WorkspaceEditScope::NeedsTarget
-        )
-    {
-        return write_error_event(
-            out,
-            workspace_edit::scope_unavailable_message(snapshot.editor_ui.locale),
-        );
-    }
-    if (req.launch_route.implies_design_intent()
-        || matches!(
-            op_orchestrator::classify_intent(&req.ai.user),
-            op_orchestrator::Intent::Design
-        ))
-        && clear_fresh_starter_frame_for_design(&mut snapshot)
+    if matches!(
+        op_orchestrator::classify_intent(&req.ai.user),
+        op_orchestrator::Intent::Design
+    ) && clear_fresh_starter_frame_for_design(&mut snapshot)
     {
         let tick = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -334,19 +277,14 @@ pub fn stream_standard_turn<W: Write>(
         Ok(providers) => providers,
         Err(error) => return write_error_event(out, &error.to_string()),
     };
-    let modify_plan =
-        crate::chat_intent::build_modify_plan_for_route(&snapshot, &req.ai.user, req.launch_route);
+    let classified = crate::chat_intent::classify_intent_for_standard_route(
+        classify_provider.as_ref(),
+        &snapshot,
+        &req.ai.user,
+        model.clone(),
+    );
+    let modify_plan = crate::chat_intent::build_modify_plan(&snapshot, &req.ai.user);
     let page_children_empty = snapshot.active_children().is_empty();
-    // A pinned route decides the intent itself; only an unpinned turn pays
-    // for the classifier call.
-    let classified = pinned_intent(req.launch_route, modify_plan.is_some()).unwrap_or_else(|| {
-        crate::chat_intent::classify_intent_for_standard_route(
-            classify_provider.as_ref(),
-            &snapshot,
-            &req.ai.user,
-            model.clone(),
-        )
-    });
     let intent = resolve_standard_route(classified, page_children_empty, modify_plan.is_some());
     match intent {
         crate::chat_intent::DesignIntent::Chat => {
@@ -363,50 +301,18 @@ pub fn stream_standard_turn<W: Write>(
                 write_barrier,
             )
         }
-        crate::chat_intent::DesignIntent::New => {
-            let target = CanvasWriteTarget {
+        crate::chat_intent::DesignIntent::New => stream_new_design_route(
+            out,
+            req,
+            snapshot,
+            design_provider,
+            model,
+            CanvasWriteTarget {
                 state,
                 hub,
                 write_barrier,
-            };
-            match req.launch_route.variant_count() {
-                Some(count) => {
-                    let request = design_request_for(&req, &snapshot, model);
-                    let locale = req.locale.unwrap_or(snapshot.editor_ui.locale);
-                    let run = variants::WebVariantsRun {
-                        request,
-                        count,
-                        locale,
-                    };
-                    variants::stream_variants_route(out, run, snapshot, design_provider, target)
-                }
-                None => stream_new_design_route(out, req, snapshot, design_provider, model, target),
-            }
-        }
-    }
-}
-
-/// The whole-design request a new-design turn runs with.
-fn design_request_for(
-    req: &WebStandardTurnRequest,
-    snapshot: &EditorState,
-    model: Option<String>,
-) -> DesignRequest {
-    DesignRequest {
-        prompt: req.ai.user.clone(),
-        model,
-        provider: None,
-        design_md: snapshot.doc.design_md.clone(),
-        continuation_context: None,
-        append_context: crate::chat_intent::detect_append_intent(snapshot, &req.ai.user),
-        concurrency: req
-            .agent_team_size
-            .unwrap_or(snapshot.chat.agent_team_size)
-            .clamp(1, 6),
-        validation_enabled: true,
-        visual_ref_enabled: false,
-        pinned_style_guide: snapshot.editor_ui.pinned_style_guide.clone(),
-        reference_skeleton: None,
+            },
+        ),
     }
 }
 
@@ -496,10 +402,6 @@ fn apply_request_snapshot(
     if let Some(tick) = broadcast_tick {
         hub.broadcast(tick);
     }
-    // Presentation context belongs to this request, not the daemon's persisted
-    // editor state. Professional callers omit it and keep selection-only edits.
-    snapshot.editor_ui.workspace.visible = req.workspace_visible;
-    snapshot.editor_ui.workspace.selected = req.workspace_selected;
     inject_transient_builtin(&mut snapshot, req.transient_builtin.as_ref());
     Ok(snapshot)
 }
@@ -514,6 +416,378 @@ fn inject_transient_builtin(state: &mut EditorState, transient: Option<&BuiltinA
     state.rebuild_chat_models();
 }
 
+fn clear_fresh_starter_frame_for_design(state: &mut EditorState) -> bool {
+    if state.doc != EditorState::starter().doc {
+        return false;
+    }
+    state.active_children_mut().clear();
+    state.clear_selection();
+    // Raw `active_children_mut()` bypasses the command/history path, so it
+    // must advance the content revision explicitly. Save acknowledgements
+    // use that revision to avoid marking newer edits as saved.
+    state.mark_document_changed();
+    true
+}
+
+fn clear_live_starter_frame_for_design(state: &mut WebCanvasState) -> Option<u64> {
+    if !clear_fresh_starter_frame_for_design(&mut state.editor) {
+        return None;
+    }
+    state.version += 1;
+    Some(state.version)
+}
+
+fn resolve_standard_route(
+    classified: crate::chat_intent::DesignIntent,
+    page_children_empty: bool,
+    has_modify_plan: bool,
+) -> crate::chat_intent::DesignIntent {
+    match classified {
+        crate::chat_intent::DesignIntent::Modify if page_children_empty => {
+            crate::chat_intent::DesignIntent::New
+        }
+        crate::chat_intent::DesignIntent::Modify if !has_modify_plan => {
+            crate::chat_intent::DesignIntent::New
+        }
+        other => other,
+    }
+}
+
+fn stream_chat_route<W: Write>(
+    out: &mut W,
+    req: &WebStandardTurnRequest,
+    state: &EditorState,
+    provider: &dyn ChatProvider,
+    model: Option<String>,
+) -> std::io::Result<()> {
+    let chat_req = ChatRequest {
+        system_prompt: crate::chat_system_prompt::build_chat_system_prompt(state, &req.ai.user),
+        user_message: req.ai.user.clone(),
+        history: req.history.clone(),
+        max_output_tokens: req.ai.max_output_tokens,
+        thinking: req.ai.thinking,
+        effort: req.ai.effort,
+        attachments: req.attachments.clone(),
+        model,
+    };
+    for delta in provider.send(chat_req) {
+        out.write_all(crate::ai_proxy::delta_to_sse(&delta).as_bytes())?;
+        out.flush()?;
+        if matches!(delta, ChatDelta::Done { .. } | ChatDelta::Error(_)) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn stream_modify_route<W: Write>(
+    out: &mut W,
+    plan: crate::chat_intent::ModifyPlan,
+    provider: &dyn ChatProvider,
+    state: &Mutex<WebCanvasState>,
+    hub: &SseHub,
+    write_barrier: Option<&crate::web_canvas_server::WriteBarrier>,
+) -> std::io::Result<()> {
+    write_delta_event(out, STANDARD_MODIFY_STEP)?;
+    let target_frame_ids = plan.target_frame_ids;
+    let request = ChatRequest {
+        system_prompt: plan.system_prompt,
+        user_message: plan.user_message,
+        max_output_tokens: 8192,
+        ..Default::default()
+    };
+    let mut full_response = String::new();
+    let mut stream_error: Option<String> = None;
+    for delta in provider.send(request) {
+        match delta {
+            ChatDelta::TextDelta(s) => full_response.push_str(&s),
+            ChatDelta::Thinking(_) | ChatDelta::ToolUse { .. } => {}
+            ChatDelta::Error(msg) => {
+                stream_error = Some(msg);
+                break;
+            }
+            ChatDelta::Done { .. } => break,
+        }
+    }
+
+    let nodes = crate::chat_intent::parse_modify_nodes(&full_response);
+    if !nodes.is_empty() {
+        write_delta_event(out, &format!("\n{full_response}"))?;
+        let (applied, tick) = {
+            let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+            // `apply_design_modification` writes a batch straight into the
+            // editor, so the gate runs before it rather than per command.
+            if guard
+                .gate_daemon_mutation(
+                    op_editor_core::CollabGateAction::Document(
+                        op_editor_core::CollabDocumentMutation::NodePropertyBatch,
+                    ),
+                    op_editor_core::CollabEditSource::Ai,
+                )
+                .is_err()
+            {
+                (0, None)
+            } else {
+                // Shutting down: the reply still streams, the document is left
+                // exactly as the flush will find it.
+                let admitted = admit_document_write(write_barrier).ok();
+                let (count, mutated) = if admitted.is_none() {
+                    (0, false)
+                } else {
+                    crate::chat_canvas_tools::apply_design_modification(
+                        &mut guard.editor,
+                        &nodes,
+                        &target_frame_ids,
+                    )
+                };
+                let tick = if mutated {
+                    guard.version += 1;
+                    Some(guard.sse_tick())
+                } else {
+                    None
+                };
+                (count, tick)
+            }
+        };
+        if let Some(tick) = tick {
+            hub.broadcast(tick);
+        }
+        if applied > 0 {
+            write_delta_event(out, "\n\n<!-- APPLIED -->")?;
+        }
+        return write_done_event(out);
+    }
+
+    let message = if let Some(err) = stream_error {
+        err
+    } else {
+        let trimmed = full_response.trim();
+        let hint = if trimmed.is_empty() {
+            "The model returned an empty response.".to_string()
+        } else {
+            let preview: String = trimmed.chars().take(150).collect();
+            let ellipsis = if full_response.chars().count() > 150 {
+                "…"
+            } else {
+                ""
+            };
+            format!("Model output: \"{preview}{ellipsis}\"")
+        };
+        format!("Could not parse design nodes from model response. {hint}")
+    };
+    write_error_event(out, &message)
+}
+
+fn stream_new_design_route<W: Write>(
+    out: &mut W,
+    req: WebStandardTurnRequest,
+    snapshot: EditorState,
+    provider: Box<dyn ChatProvider>,
+    model: Option<String>,
+    target: CanvasWriteTarget<'_>,
+) -> std::io::Result<()> {
+    let append_context = crate::chat_intent::detect_append_intent(&snapshot, &req.ai.user);
+    let prompt = req.ai.user.clone();
+    let mut request = DesignRequest {
+        prompt: req.ai.user,
+        model: model.clone(),
+        provider: None,
+        design_md: snapshot.doc.design_md.clone(),
+        continuation_context: None,
+        append_context,
+        concurrency: req
+            .agent_team_size
+            .unwrap_or(snapshot.chat.agent_team_size)
+            .clamp(1, 6),
+        validation_enabled: true,
+        visual_ref_enabled: false,
+        pinned_style_guide: snapshot.editor_ui.pinned_style_guide.clone(),
+        reference_skeleton: None,
+    };
+    let provider_arc: Arc<dyn ChatProvider> = Arc::from(provider);
+    let llm = ChatProviderLlmClient::new(provider_arc.clone()).with_model(model.clone());
+    let mut sink = WebDesignDocSink::new(target.state, target.hub, target.write_barrier, snapshot);
+    let abort = AbortFlag::new();
+    let image_model = request.model.clone();
+    let image_provider = request.provider.clone();
+    let reference_result = crate::chat_runtime::block_on_anywhere(
+        crate::reference_context::resolve_reference_context(
+            &llm,
+            &prompt,
+            request.model.clone(),
+            request.provider.clone(),
+            &abort,
+        ),
+    );
+    match reference_result {
+        Ok(Some(context)) => reference::apply_reference_context(&mut request, &mut sink, context),
+        Ok(None) => reference::apply_image_reference(
+            &mut request,
+            &mut sink,
+            &mut *out,
+            reference::resolve_image_reference(
+                &req.attachments,
+                &provider_arc,
+                &prompt,
+                image_model.clone(),
+                image_provider.clone(),
+            ),
+        )?,
+        Err(error) => {
+            let notice = format!("reference page could not be used: {error}");
+            eprintln!("[web-chat] {notice}");
+            write_thinking_event(out, &format!("\n{notice}"))?;
+            reference::apply_image_reference(
+                &mut request,
+                &mut sink,
+                &mut *out,
+                reference::resolve_image_reference(
+                    &req.attachments,
+                    &provider_arc,
+                    &prompt,
+                    image_model,
+                    image_provider,
+                ),
+            )?;
+        }
+    }
+    let pre_validator = LintPreValidator;
+
+    let use_real_vision = crate::validation_providers::vision_validation_enabled();
+    let stub_screenshot = SkippedScreenshotProvider;
+    let stub_vision = SkippedVisionLlmClient;
+    let real_screenshot = crate::validation_providers::RealScreenshotProvider;
+    let real_vision = crate::validation_providers::ChatVisionLlmClient::new(provider_arc.clone())
+        .with_model(model.clone());
+    let (screenshot, vision, system_prompt): (
+        &dyn op_orchestrator::ScreenshotProvider,
+        &dyn op_orchestrator::VisionLlmClient,
+        String,
+    ) = if use_real_vision {
+        (
+            &real_screenshot,
+            &real_vision,
+            crate::validation_providers::validation_system_prompt(),
+        )
+    } else {
+        (&stub_screenshot, &stub_vision, String::new())
+    };
+    let providers = ValidationProviders {
+        pre_validator: &pre_validator,
+        screenshot,
+        vision,
+        system_prompt,
+    };
+    let identity =
+        op_orchestrator::agent_identity::assign_agent_identities_seeded(1, web_identity_seed())
+            .into_iter()
+            .next()
+            .expect("one requested agent identity");
+    write_agent_identity_event(out, &identity)?;
+    let epoch = op_editor_core::agent_indicators::begin();
+    op_editor_core::agent_indicators::confirm_cursor_agent(epoch, &identity.color, &identity.name);
+    let summary = {
+        let out_ref = &mut *out;
+        let mut on_progress = move |p: Progress| {
+            let _ = write_thinking_event(out_ref, &format!("\n{}", progress_label(&p)));
+        };
+        crate::chat_runtime::block_on_anywhere(Orchestrator::new().with_indicator_epoch(epoch).run(
+            request,
+            &mut sink,
+            &llm,
+            &mut on_progress,
+            &abort,
+            &providers,
+        ))
+    };
+    if abort.is_set() {
+        op_editor_core::agent_indicators::end_if_epoch(epoch);
+    } else {
+        op_editor_core::agent_indicators::finish_if_epoch(epoch);
+    }
+    match summary {
+        Ok(summary) => {
+            let ok = summary
+                .subtasks
+                .iter()
+                .filter(|o| o.error.is_none())
+                .count();
+            let failed = summary.subtasks.len() - ok;
+            write_delta_event(
+                out,
+                &format!(
+                    "\n\nDone — {} subtask(s) succeeded, {} failed, {} node(s) total.",
+                    ok, failed, summary.total_nodes
+                ),
+            )?;
+            write_done_event(out)
+        }
+        Err(e) => write_error_event(out, &e.to_string()),
+    }
+}
+
+struct WebDesignDocSink<'a> {
+    state: &'a Mutex<WebCanvasState>,
+    hub: &'a SseHub,
+    write_barrier: Option<&'a crate::web_canvas_server::WriteBarrier>,
+    mirror: EditorState,
+}
+
+impl<'a> WebDesignDocSink<'a> {
+    fn new(
+        state: &'a Mutex<WebCanvasState>,
+        hub: &'a SseHub,
+        write_barrier: Option<&'a crate::web_canvas_server::WriteBarrier>,
+        mirror: EditorState,
+    ) -> Self {
+        Self {
+            state,
+            hub,
+            write_barrier,
+            mirror,
+        }
+    }
+}
+
+impl DocSink for WebDesignDocSink<'_> {
+    fn state(&self) -> &EditorState {
+        &self.mirror
+    }
+
+    fn apply(&mut self, cmd: EditorCommand) -> bool {
+        let Ok(_write_pass) = admit_document_write(self.write_barrier) else {
+            return false;
+        };
+        let (applied, tick, snapshot) = {
+            let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let applied = guard
+                .apply_gated(cmd, op_editor_core::CollabEditSource::Ai)
+                .unwrap_or(false);
+            let tick = if applied {
+                crate::design_session::fit_design_viewport_to_content(
+                    &mut guard.editor,
+                    1440.0,
+                    900.0,
+                );
+                guard.version += 1;
+                Some(guard.sse_tick())
+            } else {
+                None
+            };
+            (applied, tick, guard.editor.clone())
+        };
+        self.mirror = snapshot;
+        if let Some(tick) = tick {
+            self.hub.broadcast(tick);
+        }
+        applied
+    }
+
+    fn begin_undo_batch(&mut self) {}
+
+    fn end_undo_batch(&mut self) {}
+}
+
 #[cfg(test)]
 #[path = "web_chat_standard_model_tests.rs"]
 mod model_tests;
@@ -523,9 +797,3 @@ mod reference_tests;
 #[cfg(test)]
 #[path = "web_chat_standard_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "web_chat_standard_workspace_tests.rs"]
-mod workspace_tests;
-#[cfg(test)]
-#[path = "web_chat_standard_write_barrier_tests.rs"]
-mod write_barrier_tests;

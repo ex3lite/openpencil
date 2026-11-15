@@ -31,7 +31,7 @@ impl WidgetHostNative {
         };
         let dlg = ExportDialog::centered(viewport_w, viewport_h);
         let point = op_editor_ui::Point2D::new(x, y);
-        let hit = dlg.hit_test_for_ui(point, &self.editor_state.editor_ui);
+        let hit = dlg.hit_test(point);
         self.editor_state.editor_ui.pressed_button = hit
             .map(op_editor_ui::widgets::editor_state_ext::export_dialog_button)
             .map(op_editor_core::ButtonPressTarget::ExportDialog);
@@ -39,7 +39,6 @@ impl WidgetHostNative {
             Some(ExportDialogHit::Format(f)) => {
                 self.editor_state.editor_ui.export_format =
                     op_editor_ui::widgets::editor_state_ext::export_format(f);
-                self.editor_state.editor_ui.export_dialog_hover = None;
             }
             Some(ExportDialogHit::Scale(i)) => {
                 self.editor_state.editor_ui.export_scale = scale_from_index(i);
@@ -205,7 +204,6 @@ impl WidgetHostNative {
                     | FileMenuChoice::ExportAllFrames
                     | FileMenuChoice::ExportSlideshowHtml
                     | FileMenuChoice::ExportPptx
-                    | FileMenuChoice::Share
                     | FileMenuChoice::ClearRecent
                     // Opening the centre only shows a panel; the document is
                     // replaced later, and that step re-runs the gate itself.
@@ -245,7 +243,6 @@ impl WidgetHostNative {
                     FileMenuChoice::ExportAllFrames => FileAction::ExportAllFrames,
                     FileMenuChoice::ExportSlideshowHtml => FileAction::ExportSlideshowHtml,
                     FileMenuChoice::ExportPptx => FileAction::ExportPptx,
-                    FileMenuChoice::Share => FileAction::Share,
                     FileMenuChoice::OpenRecent(i) => FileAction::OpenRecent(i),
                     FileMenuChoice::ClearRecent => FileAction::ClearRecent,
                     // Handled above — it opens a panel rather than queuing a

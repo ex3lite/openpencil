@@ -11,9 +11,6 @@ use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorCommand, EditorState, NodeId};
 use serde_json::{json, Value};
 
-#[path = "subtask_completeness_metadata_tests.rs"]
-mod metadata;
-
 fn subtask(label: &str, elements: Option<&str>) -> Subtask {
     Subtask {
         id: "merchants".into(),
@@ -30,7 +27,6 @@ fn subtask(label: &str, elements: Option<&str>) -> Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -163,143 +159,6 @@ fn delivered_item_count_excludes_status_bar_subtrees() {
     assert_eq!(delivered_item_count(&sink, &["section".into()]), 0);
 }
 
-#[test]
-fn delivered_item_count_excludes_a_hidden_parent_and_counts_component_instances() {
-    let mut hidden = card(0);
-    hidden["visible"] = json!(false);
-    hidden["children"] = json!((0..5).map(card).collect::<Vec<_>>());
-    let sink = sink_with_roots(vec![hidden]);
-    assert_eq!(delivered_item_count(&sink, &["card-0".into()]), 0);
-
-    let refs = (0..5)
-        .map(|i| json!({"type":"ref","id":format!("instance-{i}"),"ref":"master"}))
-        .collect();
-    let mut sink = sink_with_section(refs);
-    sink.state.doc.children.push(serde_json::from_value(json!({"type":"frame","id":"master","name":"Reusable item","reusable":true,"children":[{"type":"text","id":"master-copy","content":"Actual item"}]})).unwrap());
-    assert_eq!(delivered_item_count(&sink, &["section".into()]), 5);
-}
-
-#[test]
-fn page_ordinals_and_quoted_copy_are_not_local_item_promises() {
-    assert_eq!(
-        expected_item_count(&subtask("第3页 · 交付确认", None)),
-        None
-    );
-    assert_eq!(
-        expected_item_count(&subtask("第3页，列出5项检查", None)),
-        Some(5)
-    );
-}
-
-#[test]
-fn nested_grid_counts_cells_without_multiplying_ordinary_row_metadata() {
-    for columns in [2, 3] {
-        let rows=(0..2).map(|r|json!({"type":"frame","id":format!("grid-row-{r}"),"layout":"horizontal","children":(0..columns).map(|c|card(r*3+c)).collect::<Vec<_>>()})).collect();
-        let sink = sink_with_section(rows);
-        let outcome = SubtaskOutcome {
-            id: "grid".into(),
-            node_count: 1,
-            error: None,
-            inserted_root_ids: vec!["section".into()],
-            headline: None,
-            subtask: None,
-        };
-        let failure = incomplete_attempt(&sink, &subtask("2x3 product grid", None), &outcome);
-        if columns == 3 {
-            assert!(failure.is_none());
-        } else {
-            assert_eq!(failure.unwrap().delivered, 4);
-        }
-    }
-}
-
-#[test]
-fn chinese_nine_cell_grid_counts_cells_and_detects_one_missing() {
-    for missing in [false, true] {
-        let rows = (0..3)
-            .map(|r| {
-                let count = if missing && r == 2 { 2 } else { 3 };
-                json!({"type":"frame","id":format!("row-{r}"),"layout":"horizontal",
-                "children":(0..count).map(|c| card(r*3+c)).collect::<Vec<_>>()})
-            })
-            .collect();
-        let sink = sink_with_section(rows);
-        let outcome = SubtaskOutcome {
-            id: "grid".into(),
-            node_count: 1,
-            error: None,
-            inserted_root_ids: vec!["section".into()],
-            headline: None,
-            subtask: None,
-        };
-        for label in ["首页 分类九宫格", "3×3 分类网格，共九项"] {
-            let task = subtask(label, None);
-            assert_eq!(expected_item_count(&task), Some(9));
-            let failure = incomplete_attempt(&sink, &task, &outcome);
-            if missing {
-                assert_eq!(failure.unwrap().delivered, 8);
-            } else {
-                assert!(failure.is_none(), "a complete grid must not be retried");
-            }
-        }
-    }
-    assert_eq!(
-        expected_item_count(&subtask("375×812 手机页面", None)),
-        None
-    );
-    assert_eq!(expected_item_count(&subtask("标题“九宫格”", None)), None);
-}
-
-#[test]
-fn column_major_grids_count_cells_without_forcing_a_row_rewrite() {
-    for (rows, columns, label) in [(3, 3, "分类九宫格"), (2, 3, "2×3 分类网格")] {
-        for missing in [false, true] {
-            let cols = (0..columns)
-                .map(|c| {
-                    let count = rows - usize::from(missing && c == columns - 1);
-                    json!({"type":"frame","id":format!("col-{c}"),"layout":"vertical",
-                    "children":(0..count).map(|r|card(c*rows+r)).collect::<Vec<_>>()})
-                })
-                .collect::<Vec<_>>();
-            let sink = sink_with_section(vec![json!({"type":"frame","id":"grid",
-                "layout":"horizontal","children":cols})]);
-            let outcome = SubtaskOutcome {
-                id: "grid".into(),
-                node_count: 1,
-                error: None,
-                inserted_root_ids: vec!["section".into()],
-                headline: None,
-                subtask: None,
-            };
-            let failure = incomplete_attempt(&sink, &subtask(label, None), &outcome);
-            if missing {
-                assert_eq!(failure.unwrap().delivered, rows * columns - 1);
-            } else {
-                assert!(failure.is_none());
-            }
-        }
-    }
-}
-
-#[test]
-fn mixed_inline_and_component_items_share_the_resolved_delivery_family() {
-    let mut rows = (0..3)
-        .map(|i| json!({"type":"ref","id":format!("instance-{i}"),"ref":"master"}))
-        .collect::<Vec<_>>();
-    rows.extend((3..5).map(card));
-    let mut sink = sink_with_section(rows);
-    sink.state
-        .doc
-        .children
-        .push(serde_json::from_value(card(99)).unwrap());
-    let jian_ops_schema::node::PenNode::Frame(master) = &mut sink.state.doc.children[1] else {
-        panic!("master frame")
-    };
-    master.base.id = "master".into();
-    master.reusable = Some(true);
-    assert_eq!(delivered_item_count(&sink, &["section".into()]), 5);
-}
-
 fn request() -> DesignRequest {
     DesignRequest {
         prompt: "商家列表五个（图+名称+评分+配送费+时长）".into(),
@@ -318,7 +177,6 @@ fn request() -> DesignRequest {
 
 fn plan(task: &Subtask) -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Page".into(),
@@ -331,18 +189,13 @@ fn plan(task: &Subtask) -> OrchestratorPlan {
         },
         subtasks: vec![task.clone()],
         style_guide_name: None,
-        palette: None,
     }
 }
 
 const HEADER_ONLY: &str = r#"I(null,{"type":"frame","name":"商家列表","children":[{"type":"text","content":"附近商家"}]});"#;
 
 fn cards_script() -> String {
-    cards_script_count(5)
-}
-
-fn cards_script_count(count: usize) -> String {
-    let cards = (0..count)
+    let cards = (0..5)
         .map(|index| {
             format!(
                 r#"I(sec,{{"type":"frame","name":"商家 {index}","children":[{{"type":"text","content":"商家 {index}"}}]}});"#
@@ -350,51 +203,6 @@ fn cards_script_count(count: usize) -> String {
         })
         .collect::<String>();
     format!(r#"const sec=I(null,{{"type":"frame","name":"商家列表"}});{cards}"#)
-}
-
-#[test]
-fn a_non_empty_partial_list_still_retries_until_all_promised_items_are_delivered() {
-    for delivered in [2, 4] {
-        let partial = cards_script_count(delivered);
-        let complete = cards_script();
-        let (outcome, events, prompts, roots) = run_ladder(vec![&partial, &complete]);
-        assert!(outcome.error.is_none());
-        assert_eq!(roots.len(), 1);
-        let feedback = completeness_feedback(5, delivered);
-        assert!(events.iter().any(
-            |event| matches!(event,Progress::SubtaskRetry{attempt:2,reason,..} if reason==&feedback)
-        ));
-        assert!(prompts[1].contains(&feedback));
-        let final_sink = sink_with_roots(
-            roots
-                .iter()
-                .map(|r| serde_json::to_value(r).unwrap())
-                .collect(),
-        );
-        assert_eq!(
-            delivered_item_count(&final_sink, &outcome.inserted_root_ids),
-            5
-        );
-    }
-}
-
-#[test]
-fn the_last_partial_list_is_preserved_but_not_reported_as_complete() {
-    let partial = cards_script_count(2);
-    let (outcome, events, _, roots) = run_ladder(vec![&partial, &partial, &partial]);
-    assert_eq!(roots.len(), 1);
-    assert_eq!(
-        outcome.error.as_deref(),
-        Some(completeness_feedback(5, 2).as_str())
-    );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Progress::SubtaskIncomplete {
-            expected: 5,
-            delivered: 2,
-            ..
-        }
-    )));
 }
 
 fn run_ladder(responses: Vec<&str>) -> (SubtaskOutcome, Vec<Progress>, Vec<String>, Vec<PenNode>) {
@@ -536,7 +344,6 @@ fn completeness_rollback_uses_delete_commands_for_inserted_roots() {
 #[test]
 fn orchestrator_summary_counts_a_final_incomplete_subtask() {
     const PLAN: &str = r##"{
-        "sharedContext": {},
         "rootFrame": {"id":"root","name":"Page","width":375,"height":812,"layout":"vertical"},
         "subtasks": [{"id":"merchants","label":"商家列表五个（图+名称+评分+配送费+时长）","region":{"width":375,"height":400}}]
     }"##;
@@ -580,134 +387,4 @@ fn orchestrator_summary_counts_a_final_incomplete_subtask() {
     assert!(!events
         .iter()
         .any(|event| matches!(event, Progress::SubtaskDone { id, .. } if id == "merchants")));
-}
-
-#[test]
-fn quoted_display_copy_is_not_an_item_promise() {
-    // arena-m05 0927a: a comments header whose title reads "8 条评论" was
-    // retried twice for "8 items" and then failed outright.
-    let header = subtask(
-        "Comments Header",
-        Some("back button, title '8 条评论', hairline divider"),
-    );
-    assert_eq!(expected_item_count(&header), None);
-    for elements in [
-        "title “12 条回复”",
-        "badge 「3 张券」",
-        "caption \"5 items left\"",
-    ] {
-        assert_eq!(
-            expected_item_count(&subtask("Header", Some(elements))),
-            None,
-            "{elements}"
-        );
-    }
-}
-
-#[test]
-fn counts_outside_quotes_still_promise_items() {
-    let list = subtask(
-        "Comment List",
-        Some("8 rows of comments, each with avatar, nickname, reply chip 'Reply'"),
-    );
-    assert_eq!(expected_item_count(&list), Some(8));
-    let apostrophe = subtask("Feed", Some("the user's 6 posts, newest first"));
-    assert_eq!(expected_item_count(&apostrophe), Some(6));
-    let unclosed = subtask("Grid", Some("title '热门 and 6 张卡片"));
-    assert_eq!(expected_item_count(&unclosed), Some(6));
-}
-
-#[test]
-fn design_values_next_to_card_nouns_do_not_promise_repeated_items() {
-    for elements in [
-        "悬浮圆角信息卡（深色 #1A2A44 圆角16 卡片，浮于地图下缘）",
-        "圆角12–16卡片，间距24卡片布局",
-        "字号16 卡片正文",
-        "cornerRadius=16 cards, gap 24 cards",
-        "radius 12–16 cards",
-    ] {
-        assert_eq!(
-            expected_item_count(&subtask("配送状态卡", Some(elements))),
-            None,
-            "{elements}"
-        );
-    }
-    for (elements, expected) in [
-        ("圆角16 卡片，显示6张商家卡", 6),
-        ("圆角 6 张卡片", 6),
-        ("圆角 3–5 张卡片", 3),
-        ("rounded 6 cards with radius 16", 6),
-        ("radius 16; 4 cards", 4),
-    ] {
-        assert_eq!(
-            expected_item_count(&subtask("列表", Some(elements))),
-            Some(expected),
-            "{elements}"
-        );
-    }
-}
-
-#[test]
-fn a_delivery_status_card_with_radius_sixteen_does_not_trigger_count_retry() {
-    let task = subtask(
-        "配送状态卡",
-        Some("悬浮圆角信息卡（深色 #1A2A44 圆角16 卡片）：预计12分钟送达，骑手李师傅及联系按钮"),
-    );
-    let sink = sink_with_section(vec![card(0), card(1)]);
-    let outcome = SubtaskOutcome {
-        id: task.id.clone(),
-        headline: None,
-        node_count: 5,
-        inserted_root_ids: vec!["section".into()],
-        error: None,
-        subtask: Some(task.clone()),
-    };
-    assert!(incomplete_attempt(&sink, &task, &outcome).is_none());
-}
-
-#[test]
-fn owned_map_landmarks_are_completed_by_the_template_not_a_repeated_card_family() {
-    let task = subtask(
-        "配送地图",
-        Some("标注三个节点：餐厅、骑手当前位置、送达地点"),
-    );
-    assert_eq!(expected_item_count(&task), Some(3));
-    let slot = json!({"type":"image","id":"map","name":"Map","src":"",
-        "width":375,"height":310,"imageSearchQuery":"map-template:delivery"});
-    let sink = sink_with_section(vec![slot.clone()]);
-    let outcome = SubtaskOutcome {
-        id: task.id.clone(),
-        headline: None,
-        node_count: 1,
-        inserted_root_ids: vec!["section".into()],
-        error: None,
-        subtask: Some(task.clone()),
-    };
-    assert!(incomplete_attempt(&sink, &task, &outcome).is_none());
-    for elements in [
-        "三个节点和3张骑手卡片",
-        "3个节点信息卡",
-        "标注5个节点",
-        "3–5个节点卡片",
-    ] {
-        let task = subtask("配送地图", Some(elements));
-        assert!(
-            incomplete_attempt(&sink, &task, &outcome).is_some(),
-            "{elements}"
-        );
-    }
-    for patch in [
-        json!({"imageSearchQuery":"map-template:location"}),
-        json!({"imageSearchQuery":"city map"}),
-        json!({"enabled":false}),
-    ] {
-        let mut unsupported = slot.clone();
-        unsupported
-            .as_object_mut()
-            .unwrap()
-            .extend(patch.as_object().unwrap().clone());
-        assert!(
-            incomplete_attempt(&sink_with_section(vec![unsupported]), &task, &outcome).is_some()
-        );
-    }
 }

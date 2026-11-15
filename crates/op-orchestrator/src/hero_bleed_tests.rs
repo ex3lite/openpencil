@@ -3,45 +3,6 @@ use crate::plan::{OrchestratorPlan, Region, RootFrameSpec, Subtask};
 use crate::test_support::VecDocSink;
 use serde_json::{json, Value};
 
-#[path = "hero_bleed_map_tests.rs"]
-mod map_tests;
-
-#[test]
-fn map_template_uses_full_bleed_viewport_through_complete_cleanup() {
-    let mut root = evidence_root();
-    root["children"][1]["children"][0]["name"] = json!("Running map");
-    root["children"][1]["children"][0]["src"] = json!("");
-    root["children"][1]["children"][0]["imageSearchQuery"] = json!("map-template:running");
-    let mut sink = sink_with(root);
-    crate::cleanup::run_cleanup_passes(&mut sink, &plan(), &["root"]);
-    let node = op_editor_core::walkers::find_node(
-        sink.state.active_children(),
-        &NodeId::new("hero-image"),
-    )
-    .expect("map survives cleanup");
-    let map = serde_json::to_value(node).unwrap();
-    let children = map["children"].as_array().unwrap();
-    let ground = children.iter().find(|n| n["name"] == "map-ground").unwrap();
-    assert_eq!(ground["width"], 375.0);
-    let layers = children
-        .iter()
-        .find(|n| n["name"] == "Map layer control")
-        .unwrap();
-    assert_eq!(layers["width"], 40.0);
-    assert_eq!(layers["height"], 40.0);
-    assert_eq!(layers["x"], 323.0);
-    let path = children.iter().find(|n| n["name"] == "map-route").unwrap();
-    assert!((path["width"].as_f64().unwrap() - 165.0).abs() < 0.01);
-    if let Ok(dir) = std::env::var("OPENPENCIL_MAP_PREVIEW_DIR") {
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            std::path::Path::new(&dir).join("full-cleanup.op"),
-            serde_json::to_string_pretty(&sink.state.doc).unwrap(),
-        )
-        .unwrap();
-    }
-}
-
 fn evidence_root() -> Value {
     json!({
         "type": "frame",
@@ -82,7 +43,6 @@ fn evidence_root() -> Value {
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Page".into(),
@@ -108,11 +68,9 @@ fn plan() -> OrchestratorPlan {
             screen: None,
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         }],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -200,74 +158,6 @@ fn hero_bleed_is_idempotent() {
     assert_eq!(enforce(&mut sink, &plan, "root"), 1);
     let after_first = root_value(&sink);
     assert_eq!(enforce(&mut sink, &plan, "root"), 0);
-    assert_eq!(root_value(&sink), after_first);
-}
-
-#[test]
-fn direct_overlay_hero_keeps_copy_and_scrim_in_the_same_viewport() {
-    let mut root = evidence_root();
-    root["children"][1] = json!({
-        "type": "frame", "id": "hero-section", "name": "Hero",
-        "width": "fill_container", "height": "fit_content",
-        "layout": "none", "padding": [0, 24], "clipContent": true,
-        "children": [
-            {"type": "image", "id": "hero-image", "width": 327, "height": 330,
-             "x": 24, "y": 0, "src": "coffee.png"},
-            {"type": "rectangle", "id": "hero-scrim", "width": 327, "height": 330,
-             "x": 24, "y": 0, "fill": [{"type": "linear_gradient", "angle": 90,
-                "stops": [{"offset": 0, "color": "#FFFFFF00"},
-                          {"offset": 1, "color": "#FFFFFFFF"}]}]},
-            {"type": "frame", "id": "hero-copy", "x": 24, "y": 220,
-             "width": 327, "height": 76, "layout": "vertical", "children": [
-                {"type": "text", "id": "hero-title", "content": "晴日咖啡 · 静安店",
-                 "fontSize": 24, "fill": [{"type": "solid", "color": "#0F172A"}]}
-             ]}
-        ]
-    });
-    root["children"].as_array_mut().unwrap().push(json!({
-        "type": "frame", "id": "prices", "name": "Prices", "width": "fill_container",
-        "height": 100, "children": []
-    }));
-    let mut sink = sink_with(root);
-
-    assert_eq!(enforce(&mut sink, &plan(), "root"), 1);
-
-    let hero = hero_value(&sink);
-    assert_eq!(hero["layout"], "none");
-    let children = hero["children"].as_array().unwrap();
-    assert_eq!(
-        children.len(),
-        3,
-        "overlay must not gain a vertical wrapper or second scrim"
-    );
-    assert_eq!(children[1]["width"], "fill_container");
-    assert_eq!(children[1]["x"], 0.0);
-    assert_eq!(children[2]["id"], "hero-copy");
-    assert_eq!(children[2]["x"], 24.0);
-    assert_eq!(children[2]["y"], 220.0);
-    assert_eq!(children[2]["width"], 327.0);
-    assert_eq!(children[2]["children"][0]["fill"][0]["color"], "#0F172A");
-
-    let scene = op_pen_loader::editor_state_to_layout_scene(sink.state());
-    let root = &scene.active_page().unwrap().children[0];
-    let hero = root
-        .children
-        .iter()
-        .find(|n| n.id == "hero-section")
-        .unwrap();
-    let prices = root.children.iter().find(|n| n.id == "prices").unwrap();
-    assert!(
-        (hero.bounds.size.y - 330.0).abs() < 0.5,
-        "overlay heights must not be added together: {:?}",
-        hero.bounds
-    );
-    assert!(
-        prices.bounds.origin.y < 450.0,
-        "prices must follow the 330px hero without a blank band: {:?}",
-        prices.bounds
-    );
-    let after_first = root_value(&sink);
-    assert_eq!(enforce(&mut sink, &plan(), "root"), 0);
     assert_eq!(root_value(&sink), after_first);
 }
 
@@ -409,22 +299,22 @@ fn app18_shaped_image_stack_gets_scrim_and_light_overlay_copy() {
         .iter()
         .position(|child| child["type"] == "image")
         .unwrap();
-    assert_eq!(children[image_index - 1]["name"], "Hero Image Header scrim");
+    assert_eq!(children[image_index + 1]["name"], "Hero Image Header scrim");
     assert_eq!(
-        children[image_index - 1]["fill"][0]["type"],
+        children[image_index + 1]["fill"][0]["type"],
         "linear_gradient"
     );
-    assert_eq!(children[image_index - 1]["fill"][0]["angle"], 90.0);
+    assert_eq!(children[image_index + 1]["fill"][0]["angle"], 90.0);
     assert_eq!(
-        children[image_index - 1]["fill"][0]["stops"][0]["color"],
+        children[image_index + 1]["fill"][0]["stops"][0]["color"],
         "#00000000"
     );
     assert_eq!(
-        children[image_index - 1]["fill"][0]["stops"][1]["color"],
+        children[image_index + 1]["fill"][0]["stops"][1]["color"],
         "#000000A6"
     );
     assert_eq!(
-        children[image_index - 1]["fill"][0]["explain"],
+        children[image_index + 1]["fill"][0]["explain"],
         "hero scrim"
     );
     assert_eq!(children[1]["children"][0]["fill"][0]["color"], "#FFFFFFCC");
@@ -549,92 +439,4 @@ fn whole_cleanup_driver_keeps_the_bleed_section_flush() {
         .records()
         .iter()
         .any(|record| record.pass == "hero-bleed"));
-}
-
-/// arena m04 (Opus 5.5, 2026-10-01, both runs): the model lifted DARK copy off
-/// an illustration with its own transparent → `$--background` wash, listed
-/// over the copy. The pass looked for a scrim only below the photo, found
-/// none, slid a dark scrim under the picture and turned the headline white —
-/// white on the model's white wash, unreadable.
-#[test]
-fn a_light_model_wash_keeps_its_dark_copy_and_gets_no_dark_scrim() {
-    let mut root = evidence_root();
-    root["children"][1] = json!({
-        "type": "frame", "id": "hero-section", "name": "Hero",
-        "width": "fill_container", "height": "fit_content", "layout": "vertical",
-        "children": [{
-            "type": "frame", "id": "hero-stack", "name": "Hero Illustration Stage",
-            "width": 375, "height": 470, "layout": "none", "children": [
-                {"type": "rectangle", "id": "wash", "name": "Illustration Scrim",
-                 "width": "fill_container", "height": 320,
-                 "fill": [{"type": "linear_gradient", "angle": 180, "stops": [
-                    {"offset": 0.0, "color": "#FFFFFF00"},
-                    {"offset": 0.45, "color": "#FFFFFFE6"},
-                    {"offset": 1.0, "color": "#FFFFFF"}
-                 ]}]},
-                {"type": "frame", "id": "copy", "name": "Welcome Copy", "children": [
-                    {"type": "text", "id": "headline", "content": "Read smarter", "fontSize": 48,
-                     "fill": [{"type": "solid", "color": "#0F172A"}]}
-                ]},
-                {"type": "image", "id": "illustration", "width": 375, "height": 470,
-                 "src": "welcome.png"}
-            ]
-        }]
-    });
-    let mut sink = sink_with(root);
-    assert_eq!(enforce(&mut sink, &plan(), "root"), 1);
-
-    let stack = &hero_value(&sink)["children"][0];
-    let children = stack["children"].as_array().expect("stack children");
-    assert!(
-        children
-            .iter()
-            .all(|child| child["fill"][0]["explain"] != "hero scrim"),
-        "the model's wash is the scrim: {children:#?}"
-    );
-    let copy = children.iter().find(|child| child["id"] == "copy").unwrap();
-    assert_eq!(copy["children"][0]["fill"][0]["color"], "#0F172A");
-}
-
-#[test]
-fn an_inserted_scrim_sits_directly_above_the_photo() {
-    let mut root = evidence_root();
-    root["children"][1] = json!({
-        "type": "frame", "id": "hero-section", "name": "Hero", "children": [{
-            "type": "frame", "id": "stack", "layout": "none", "width": 375, "height": 300,
-            "children": [
-                {"type": "text", "id": "title", "content": "Power Flow", "fontSize": 48,
-                 "fill": [{"type": "solid", "color": "#0F172A"}]},
-                {"type": "image", "id": "photo", "width": 375, "height": 300, "src": "hero.png"}
-            ]
-        }]
-    });
-    let mut sink = sink_with(root);
-    enforce(&mut sink, &plan(), "root");
-
-    let stack = &hero_value(&sink)["children"][0];
-    let ids: Vec<&str> = stack["children"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|child| child["id"].as_str().unwrap_or(""))
-        .collect();
-    assert_eq!(ids.len(), 3);
-    assert_eq!(ids[0], "title");
-    assert!(
-        ids[1].ends_with("-scrim"),
-        "scrim between copy and photo: {ids:?}"
-    );
-    assert_eq!(ids[2], "photo");
-    assert_eq!(stack["children"][0]["fill"][0]["color"], "#FFFFFF");
-}
-
-#[test]
-fn map_layer_icon_button_is_not_promoted_to_full_width_media() {
-    let layers = json!({"type":"frame","id":"layers","x":280,"y":16,"width":40,"height":40,
-        "fill":[{"type":"solid","color":"#FFFFFF"}],"children":[
-            {"type":"icon_font","id":"layers-icon","iconFontName":"layers","width":20,"height":20}]});
-    let children = vec![json!({"type":"frame","layout":"none","children":[layers,
-        {"type":"frame","id":"map","width":327,"height":260,"fill":[{"type":"solid","color":"#EEEEEE"}],"children":[]} ]})];
-    assert_eq!(first_media_path(&children, 0), Some(vec![0, 1]));
 }

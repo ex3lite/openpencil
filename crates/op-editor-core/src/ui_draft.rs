@@ -120,10 +120,6 @@ pub enum PropertyFocus {
     WidgetStep,
     /// Image-node video source URL.
     VideoSrc,
-    /// Generator-section parameter field, indexed into the selected
-    /// generator's declared `params` list. Free text for every kind; the
-    /// commit parses it against the parameter's kind.
-    GeneratorParam(usize),
 }
 
 impl PropertyFocus {
@@ -160,7 +156,6 @@ impl PropertyFocus {
                 | PropertyFocus::WidgetTrailingIcon
                 | PropertyFocus::WidgetBindKey
                 | PropertyFocus::VideoSrc
-                | PropertyFocus::GeneratorParam(_)
         )
     }
 
@@ -407,11 +402,6 @@ pub struct UiDraftState {
     pub text_edit_last_ms: u64,
     /// Transient variable/theme state (active theme + ref caches).
     pub variables: VariableUiState,
-    /// Last generator failure, painted inline by the Generator section.
-    pub generator_error: Option<crate::generator::GeneratorPanelError>,
-    /// A generator run waiting on a remote runtime (browser only; native
-    /// runtimes answer synchronously and leave this `None`).
-    pub generator_pending: Option<crate::generator::GeneratorPending>,
 }
 
 impl UiDraftState {

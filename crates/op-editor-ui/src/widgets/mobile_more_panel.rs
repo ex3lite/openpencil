@@ -55,8 +55,6 @@ pub enum MobileMoreEntry {
     SaveFile,
     /// Save a copy under a new name and switch the document to it.
     SaveAsFile,
-    Undo,
-    Redo,
     Templates,
     Assets,
     Ai,
@@ -74,13 +72,11 @@ pub enum MobileMoreEntry {
 impl MobileMoreEntry {
     /// Exhaustive semantic entries. Paint and hit-test use [`Self::visible`]
     /// because Sign in and Account are mutually exclusive states of one tile.
-    pub const ALL: [MobileMoreEntry; 17] = [
+    pub const ALL: [MobileMoreEntry; 15] = [
         MobileMoreEntry::NewFile,
         MobileMoreEntry::OpenFile,
         MobileMoreEntry::SaveFile,
         MobileMoreEntry::SaveAsFile,
-        MobileMoreEntry::Undo,
-        MobileMoreEntry::Redo,
         MobileMoreEntry::Templates,
         MobileMoreEntry::Assets,
         MobileMoreEntry::Ai,
@@ -102,17 +98,6 @@ impl MobileMoreEntry {
     /// preview mode — see `press_mobile_more_sheet_tier`, which no longer
     /// carries a Preview arm either.
     pub fn visible(state: &EditorState) -> Vec<MobileMoreEntry> {
-        if state.editor_ui.works_reader_visible() {
-            // The normal reader offers the work's delivery actions without
-            // exposing professional canvas tools or replacing its document.
-            return vec![
-                Self::SaveFile,
-                Self::SaveAsFile,
-                Self::Export,
-                Self::Undo,
-                Self::Redo,
-            ];
-        }
         let mut entries = vec![
             MobileMoreEntry::NewFile,
             MobileMoreEntry::OpenFile,
@@ -149,8 +134,6 @@ impl MobileMoreEntry {
             MobileMoreEntry::OpenFile => "fileMenu.openFile",
             MobileMoreEntry::SaveFile => "fileMenu.save",
             MobileMoreEntry::SaveAsFile => "fileMenu.saveAs",
-            MobileMoreEntry::Undo => "toolbar.undo",
-            MobileMoreEntry::Redo => "toolbar.redo",
             MobileMoreEntry::Templates => "sceneTemplate.title",
             MobileMoreEntry::Assets => "assetCenter.title",
             MobileMoreEntry::Ai => "a11y.aiChat",
@@ -180,8 +163,6 @@ impl MobileMoreEntry {
             MobileMoreEntry::OpenFile => Icon::from_name("folder-open").unwrap_or(Icon::FolderOpen),
             MobileMoreEntry::SaveFile => Icon::from_name("save").unwrap_or(Icon::Save),
             MobileMoreEntry::SaveAsFile => Icon::from_name("copy").unwrap_or(Icon::Copy),
-            MobileMoreEntry::Undo => Icon::Undo,
-            MobileMoreEntry::Redo => Icon::Redo,
             MobileMoreEntry::Templates => Icon::LayoutDashboard,
             MobileMoreEntry::Assets => Icon::Palette,
             MobileMoreEntry::Ai => Icon::from_name("sparkles").unwrap_or(Icon::Sparkles),
@@ -192,15 +173,6 @@ impl MobileMoreEntry {
             MobileMoreEntry::Settings => Icon::from_name("settings").unwrap_or(Icon::Settings),
             MobileMoreEntry::Variables => Icon::from_name("braces").unwrap_or(Icon::Braces),
             MobileMoreEntry::Export => Icon::from_name("download").unwrap_or(Icon::Download),
-        }
-    }
-
-    pub fn enabled(self, state: &EditorState) -> bool {
-        let history = op_editor_core::workspace_history::WorkspaceHistory::for_editor(state);
-        match self {
-            Self::Undo => history.undo,
-            Self::Redo => history.redo,
-            _ => true,
         }
     }
 }
@@ -230,13 +202,12 @@ fn compact_column_count(item_count: usize, viewport_w: f32, viewport_h: f32) -> 
 
 fn uses_phone_portrait_layout(state: &EditorState, viewport_w: f32, viewport_h: f32) -> bool {
     state.editor_ui.compact_layout()
-        && !state.editor_ui.works_reader_visible()
         && viewport_w < viewport_h
         && PHONE_PORTRAIT_PANEL_HEIGHT <= (viewport_h - 8.0).max(0.0)
 }
 
 fn column_count(state: &EditorState, panel: Rect) -> usize {
-    if !state.editor_ui.compact_layout() || state.editor_ui.works_reader_visible() {
+    if !state.editor_ui.compact_layout() {
         return PORTRAIT_COLUMN_COUNT;
     }
     let viewport_h = panel.origin.y + panel.size.y;
@@ -268,11 +239,7 @@ pub fn more_panel_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) ->
             };
         }
         let item_count = MobileMoreEntry::visible(state).len();
-        let columns = if state.editor_ui.works_reader_visible() {
-            PORTRAIT_COLUMN_COUNT
-        } else {
-            compact_column_count(item_count, viewport_w, viewport_h)
-        };
+        let columns = compact_column_count(item_count, viewport_w, viewport_h);
         let height = panel_height(item_count, columns, PHONE_BOTTOM_PADDING)
             .min((viewport_h - 8.0).max(0.0));
         return Rect {
@@ -339,9 +306,6 @@ fn phone_portrait_entry_rect(state: &EditorState, panel: Rect, index: usize) -> 
         ),
         MobileMoreEntry::Code => {
             unreachable!("Code is not visible in the Compact portrait More sheet")
-        }
-        MobileMoreEntry::Undo | MobileMoreEntry::Redo => {
-            unreachable!("History actions use the normal reader's compact menu")
         }
         MobileMoreEntry::Templates => {
             phone_pair_rect(panel, PHONE_CREATIVE_TOP, PHONE_CREATIVE_HEIGHT, 0)
@@ -678,11 +642,6 @@ pub fn paint_more_panel(cx: &mut PaintCx<'_>, state: &EditorState, theme: &Theme
     } else {
         for (index, entry) in MobileMoreEntry::visible(state).into_iter().enumerate() {
             let tile = more_entry_rect(state, panel, index);
-            let color = if entry.enabled(state) {
-                theme.foreground
-            } else {
-                theme.muted_foreground.with_alpha(0.4)
-            };
             cx.backend
                 .fill_round_rect(tile, 14.0, if compact { theme.muted } else { theme.card });
             cx.backend.stroke_round_rect(tile, 14.0, theme.border, 1.0);
@@ -691,7 +650,7 @@ pub fn paint_more_panel(cx: &mut PaintCx<'_>, state: &EditorState, theme: &Theme
                 origin: Point2D::new(tile.origin.x, tile.origin.y + 8.0),
                 size: Point2D::new(tile.size.x, 32.0),
             };
-            paint_touch_icon(cx, icon_target, entry.icon(), 20.0, color);
+            paint_touch_icon(cx, icon_target, entry.icon(), 20.0, theme.foreground);
 
             let label = entry.label(&state.editor_ui);
             let label = text_metrics::fit_chrome(
@@ -704,7 +663,7 @@ pub fn paint_more_panel(cx: &mut PaintCx<'_>, state: &EditorState, theme: &Theme
                 &label,
                 "system-ui",
                 LABEL_FONT_SIZE,
-                color.to_jian(),
+                theme.foreground.to_jian(),
                 Point2D::ZERO,
             );
             let label_rect = Rect {
@@ -739,7 +698,6 @@ pub fn more_hit_test(state: &EditorState, panel: Rect, point: Point2D) -> Option
             more_entry_rect(state, panel, index)
                 .contains(point)
                 .then_some(entry)
-                .filter(|entry| entry.enabled(state))
         })
 }
 

@@ -60,18 +60,7 @@ pub(super) async fn run_openai_agent_loop_inner(
     for (role, text) in &cfg.history {
         messages.push(json!({ "role": role.as_str(), "content": text }));
     }
-    crate::chat_attachments::validate_model(&cfg.model, &cfg.attachments)
-        .map_err(BuiltinHttpError::Attachments)?;
-    let content = crate::chat_attachments::user_content(
-        op_editor_core::BuiltinAgentKind::OpenAiCompat,
-        &cfg.user_prompt,
-        &cfg.attachments,
-    )
-    .map_err(BuiltinHttpError::Attachments)?;
-    messages.push(json!({ "role": "user", "content": content }));
-    // User reference images remain authoritative throughout retries/tool turns.
-    // Only generated observations after this prefix may be superseded.
-    let reference_prefix_len = messages.len();
+    messages.push(json!({ "role": "user", "content": cfg.user_prompt }));
 
     // Tier 2 — under-budget per-screen fill-round budget, and Tier 2b —
     // post-exhaustion salvage budget — see the Anthropic loop above
@@ -155,7 +144,6 @@ pub(super) async fn run_openai_agent_loop_inner(
             &cfg.model,
             cfg.disable_thinking,
         );
-        crate::backoff::apply_openrouter_reasoning(&mut body, &cfg.url, cfg.disable_thinking);
         // Through the shared throttle/backoff: this tool-loop path used
         // to post raw, so a provider rate limit killed the design run with
         // no retries and a raw JSON error (measured: glm-5.2, 429
@@ -321,7 +309,7 @@ pub(super) async fn run_openai_agent_loop_inner(
             ) {
                 Some(PreparedScreenshot::Inline(b64)) => {
                     // Elide older images; keep intent, tool ids, and text.
-                    for message in &mut messages[reference_prefix_len..] {
+                    for message in &mut messages {
                         elide_inline_screenshots(message);
                     }
                     messages.push(json!({

@@ -37,23 +37,8 @@ elif str(mode) == "mutable-package-assets":
     old = "tools/package-manager-handoff.sh download"
     new = 'gh release download "$GITHUB_REF_NAME"'
 elif str(mode) == "mutable-apt-source":
-    old = "https://snapshot.ubuntu.com/ubuntu/20261027T000000Z/"
+    old = "https://snapshot.ubuntu.com/ubuntu/20260801T000000Z/"
     new = "http://ports.ubuntu.com/ubuntu-ports/"
-elif str(mode) == "stale-apt-snapshot":
-    old = "https://snapshot.ubuntu.com/ubuntu/20261027T000000Z/"
-    new = "https://snapshot.ubuntu.com/ubuntu/20260801T000000Z/"
-elif str(mode) == "apt-removal-allowed":
-    old = 'install --yes --no-remove "${packages[@]}"'
-    new = 'install --yes "${packages[@]}"'
-elif str(mode) == "apt-downgrade-allowed":
-    old = 'install --yes --no-remove "${packages[@]}"'
-    new = 'install --yes --allow-downgrades --no-remove "${packages[@]}"'
-elif str(mode) == "apt-partial-update-allowed":
-    old = '"${apt_options[@]}" --error-on=any update'
-    new = '"${apt_options[@]}" update'
-elif str(mode) == "apt-pipelining-enabled":
-    old = 'Acquire::https::Pipeline-Depth=0'
-    new = 'Acquire::https::Pipeline-Depth=10'
 elif str(mode) == "direct-cargo-cli":
     old = '''tools/pinned-release-tools.sh cargo-cli wasm-bindgen-cli \\
             "$RUNNER_TEMP/wasm-bindgen-cli-0.2.117"'''
@@ -85,35 +70,9 @@ elif str(mode) == "ios-encryption-code":
 elif str(mode) == "ios-encryption-env-override":
     old = "          IOS_MARKETING_VERSION: ${{ needs.verify.outputs.version }}"
     new = old + "\n          IOS_USES_NON_EXEMPT_ENCRYPTION: ${{ vars.IOS_USES_NON_EXEMPT_ENCRYPTION }}"
-elif str(mode) == "ios-matrix-unsupported-abi":
-    old = '''[[ "$abi_line" == 'abi=3' || "$abi_line" == 'abi=4' ]]'''
-    new = old.replace("abi=4", "abi=5")
-elif str(mode) == "ios-matrix-policy-abi":
-    old = '"$abi_line" != "$policy_abi"'
-    new = '"$abi_line" != "$abi_line"'
-elif str(mode) == "ios-matrix-policy-digest":
-    old = '[[ "$(sha256_file "$manifest")" == "$policy_manifest_sha" ]]'
-    new = '[[ "$(sha256_file "$manifest")" == "$(sha256_file "$manifest")" ]]'
-elif str(mode) == "ios-matrix-provenance-abi":
-    old = 'require_exact_line "abi=$matrix_abi" "$provenance"'
-    new = 'require_exact_line "abi=3" "$provenance"'
-elif str(mode) == "ios-matrix-build-abi":
-    old = 'require_exact_line "build_id=$build_id.a$matrix_abi.$hardening_sha" "$provenance"'
-    new = 'require_exact_line "build_id=$build_id.a3.$hardening_sha" "$provenance"'
-elif str(mode) == "ios-matrix-untrusted-key":
-    old = 'public_key=$repo_root/crates/op-auth-bridge/prebuilt/PROVENANCE_PUBKEY'
-    new = 'public_key=$prebuilt_root/PROVENANCE_PUBKEY'
 elif str(mode) == "rust-skia-force":
     old = "[[ -z ${FORCE_SKIA_BINARIES_DOWNLOAD:-} && ${SKIA_BINARIES_URL:-} == file://* ]]"
     new = "[[ ${FORCE_SKIA_BINARIES_DOWNLOAD:-} == 1 && ${SKIA_BINARIES_URL:-} == file://* ]]"
-elif str(mode) in ("angle-bash-continuation", "angle-architecture-binding", "angle-target-binding"):
-    old = "& tools/stage-pinned-angle.ps1 -Architecture '${{ matrix.arch }}' -Target '${{ matrix.target }}'"
-    if str(mode) == "angle-bash-continuation":
-        new = old.replace(" -Architecture", " " + "\\" + "\n            -Architecture")
-    elif str(mode) == "angle-architecture-binding":
-        new = old.replace("${{ matrix.arch }}", "x64")
-    else:
-        new = old.replace("${{ matrix.target }}", "x86_64-pc-windows-msvc")
 elif str(mode) == "ios-only-input-default":
     old = """      ios_app_store_only:
         description: Run only the iOS App Store / TestFlight lane
@@ -121,31 +80,6 @@ elif str(mode) == "ios-only-input-default":
         default: false
         type: boolean"""
     new = old.replace("default: false", "default: true")
-elif str(mode) == "auth-only-input-default":
-    old = """      auth_validation_only:
-        description: Only verify locally built Windows Auth candidates
-        required: false
-        default: false
-        type: boolean"""
-    new = old.replace("default: false", "default: true")
-elif str(mode) == "auth-only-version-bypass":
-    old = "if: github.event_name != 'workflow_dispatch' || inputs.auth_validation_only != true"
-    new = "if: always()"
-elif str(mode) == "auth-only-broad-gate":
-    old = "if: github.event_name == 'workflow_dispatch' && inputs.auth_validation_only == true"
-    new = "if: always()"
-elif str(mode) == "auth-only-secrets":
-    old = "    uses: ./.github/workflows/auth-native-validation.yml"
-    new = old + "\n    secrets: inherit"
-elif str(mode) == "auth-only-normal-bypass":
-    start = text.index("  build:\n")
-    end = text.index("\n  web-docker:\n", start)
-    section = text[start:end]
-    if "    needs: version" not in section:
-        raise SystemExit("mutation marker missing: normal build needs")
-    text = text[:start] + section.replace("    needs: version", "    needs: auth-native-validation", 1) + text[end:]
-    destination.write_text(text)
-    raise SystemExit(0)
 elif str(mode) == "ios-only-ios-gate":
     old = "if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.ios_app_store_only == true)"
     new = "if: startsWith(github.ref, 'refs/tags/v')"
@@ -214,21 +148,11 @@ expect_rejected() {
 
 case ${1-} in
     rust)
-        "$repo_root/tools/check-rust-release-auth-workflow.sh" >"$temporary/rust-baseline.log" 2>&1 || {
-            cat "$temporary/rust-baseline.log" >&2
-            exit 1
-        }
-        ruby "$repo_root/tools/check-auth-native-validation-workflow.test.rb"
         for mutation in \
             mutable-action broad-permission job-secret mutable-package-assets \
-            mutable-apt-source stale-apt-snapshot apt-removal-allowed apt-downgrade-allowed \
-            apt-partial-update-allowed apt-pipelining-enabled \
-            direct-cargo-cli ios-only-input-default \
-            auth-only-input-default auth-only-version-bypass auth-only-broad-gate \
-            auth-only-secrets auth-only-normal-bypass \
+            mutable-apt-source direct-cargo-cli ios-only-input-default \
             ios-only-ios-gate ios-only-build-bypass ios-only-release-bypass \
             vcredist-workflow-define vcredist-toolset-gate \
-            angle-bash-continuation angle-architecture-binding angle-target-binding \
             vcredist-scoop-cli-bypass vcredist-scoop-skip-postcheck; do
             fixture=$temporary/rust-$mutation.yml
             mutate "$repo_root/.github/workflows/rust-release.yml" "$fixture" "$mutation"
@@ -273,11 +197,6 @@ case ${1-} in
             "$repo_root/tools/check-rust-release-auth-workflow.sh" "$fixture"
         ;;
     ios)
-        if ! "$repo_root/tools/check-ios-app-store-workflow.sh" \
-            >"$temporary/ios-baseline.log" 2>&1; then
-            cat "$temporary/ios-baseline.log" >&2
-            exit 1
-        fi
         fixture=$temporary/ios-skia-profile.yml
         mutate "$repo_root/.github/workflows/ios-app-store.yml" "$fixture" ios-skia-profile
         expect_rejected ios-skia-profile OPENPENCIL_IOS_APP_STORE_WORKFLOW \
@@ -297,14 +216,6 @@ case ${1-} in
             ios-encryption-env-override
         expect_rejected ios-encryption-env-override OPENPENCIL_IOS_APP_STORE_WORKFLOW \
             "$repo_root/tools/check-ios-app-store-workflow.sh" "$fixture"
-        for mutation in \
-            ios-matrix-unsupported-abi ios-matrix-policy-abi ios-matrix-policy-digest \
-            ios-matrix-provenance-abi ios-matrix-build-abi ios-matrix-untrusted-key; do
-            fixture=$temporary/$mutation.sh
-            mutate "$repo_root/tools/check-op-auth-release-matrix.sh" "$fixture" "$mutation"
-            expect_rejected "$mutation" OPENPENCIL_IOS_AUTH_MATRIX_VERIFIER \
-                "$repo_root/tools/check-ios-app-store-workflow.sh" "$fixture"
-        done
         ;;
     *)
         printf 'usage: %s {rust|ios}\n' "$0" >&2

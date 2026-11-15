@@ -247,7 +247,6 @@ fn profile_json(profile: &ImageGenProfile) -> serde_json::Value {
         ImageGenProvider::Replicate => "replicate",
         ImageGenProvider::Atlas => "atlas",
         ImageGenProvider::Custom => "custom",
-        ImageGenProvider::Workbench => "workbench",
     };
     let mut json = serde_json::json!({
         "provider": provider,
@@ -368,7 +367,7 @@ fn settle_generate<C: RepaintContext + 'static>(
 /// `live_sync::post_json_with_status` with a caller-chosen timeout — the
 /// shared helper's 15 s cap is tuned for doc-sync writes and would abort a
 /// legitimate search ladder / Replicate poll.
-pub(crate) fn post_json_with_timeout(
+fn post_json_with_timeout(
     url: &str,
     body: &str,
     timeout_ms: u32,

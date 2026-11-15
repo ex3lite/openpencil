@@ -17,21 +17,14 @@ pub mod deck_echo;
 pub mod design_md_policy;
 // (run_dashboard / scaffold_dashboard removed: dashboards flow through the
 //  generic sequential path; dashboard_columns keeps only normalizer predicates.)
-mod chrome_copy_context;
 pub mod design_system;
 pub mod design_type;
 pub mod image_fallback_policy;
-mod initial_binding_check;
 pub mod intent;
 pub mod map_placeholder;
-pub mod map_templates;
-mod mobile_action_bar;
-mod mobile_action_bar_plan;
 pub(crate) mod mobile_content_rail;
 mod mobile_reflow;
 pub mod model_profile;
-pub mod plan_palette;
-mod plan_shared_context;
 // Public (was pub(crate)) so `op-host-services` can reuse the drift detector
 // for `finalize_design`'s advisories — services → orchestrator is the
 // existing dependency direction (DS P2-a item ③).
@@ -40,17 +33,7 @@ pub mod palette_harmonize;
 pub mod parse;
 pub mod plan;
 pub mod plan_coverage;
-mod plan_coverage_append;
-mod plan_coverage_core;
-mod plan_coverage_extract;
-mod plan_coverage_quoted;
-mod plan_coverage_text;
-mod plan_fallback_brief;
 mod plan_fallback_card;
-mod plan_fallback_mobile;
-mod plan_fallback_screens;
-mod plan_fresh;
-mod plan_fresh_recovery;
 pub mod plan_normalize;
 pub mod plan_repair;
 pub mod program_gen;
@@ -64,7 +47,6 @@ mod scroll_intent;
 pub mod semantic_palette;
 pub mod stub_providers;
 pub mod style_guide_context;
-mod table_filter_contract;
 pub mod timeouts;
 pub mod types;
 pub mod validation;
@@ -73,7 +55,6 @@ pub mod validation_dump;
 pub mod validation_fixes;
 pub(crate) mod validation_fixes_b3;
 mod variable_binding;
-pub use variable_binding::bind_exact_color_variables;
 pub mod variables;
 
 pub(crate) mod abandoned_duplicate_roots;
@@ -85,16 +66,10 @@ mod avatar_repair_tests;
 /// Public (like `orchestration_self_check`) so `op-host-services` can reuse
 /// the trailing-void scan for `finalize_design`'s advisories (DS P2-b item C).
 pub mod board_trailing_void;
-#[cfg(test)]
-mod brand_kit_binding_tests;
-pub(crate) mod chip_label_adopt;
 pub(crate) mod chip_repair;
 pub mod cleanup;
-#[cfg(test)]
-mod cleanup_fixed_mobile_viewport_tests;
 #[path = "cleanup_image_fallback.rs"]
 mod cleanup_image_fallback;
-mod clipped_media_strip;
 /// Cheap image-slot materialization for hosts that apply one MCP write at a
 /// time. The whole-document cleanup driver uses the same underlying pass.
 pub mod cleanup_image_slots {
@@ -140,19 +115,13 @@ pub mod cleanup_image_slots {
 pub(crate) mod cleanup_layout;
 pub(crate) mod cleanup_typography;
 pub mod concurrent;
-mod first_viewport;
 pub mod geometry_validation;
 pub(crate) mod hero_bleed;
 pub mod loop_finalize;
-mod loop_finalize_palette;
-pub(crate) mod map_viewport;
 pub mod nav_issues;
-mod navigation_interaction;
 pub mod output_language;
 pub mod prompt;
-pub mod quality_audit;
 pub mod radial_repair;
-pub(crate) mod radio_segment_repair;
 pub mod repair_record;
 pub mod repair_scope;
 pub mod repair_summary;
@@ -167,37 +136,25 @@ pub(crate) mod root_section_gap;
 pub mod run;
 mod run_salvage_feedback;
 pub mod scaffold;
-pub(crate) mod scaffold_right_rail;
 pub mod screen_groups;
 pub(crate) mod section_headline;
 pub(crate) mod section_shell_fill_repair;
 pub(crate) mod sidebar_archetype;
-mod source_copy;
-mod source_facts;
 pub mod spacing_repair;
 pub mod spawn_concurrent;
 pub(crate) mod spread_screen_roots;
-pub(crate) mod square_ring_repair;
-pub(crate) mod stacked_text_repair;
 pub mod stub_repair;
 pub mod subagent;
-pub(crate) mod subagent_self_check;
 pub mod subtask_completeness;
 pub mod table_repair;
 pub mod template_provenance;
 pub(crate) mod text_contrast_repair;
-pub(crate) mod text_effect_overlay;
-pub use text_contrast_repair::repair_photo_caption_for_image;
 pub mod tree_heuristics;
 pub mod unfilled_screens;
 pub(crate) mod unify_shared_nav;
 pub(crate) mod unify_shared_status_bar;
-pub mod variants;
-pub mod variants_run;
 pub mod wire_screen_navigation;
 
-#[cfg(test)]
-mod cleanup_media_strip_tests;
 #[cfg(test)]
 mod cleanup_mobile_chrome_nav_wrapper_tests;
 #[cfg(test)]
@@ -261,7 +218,6 @@ pub use prompt::build_orchestrator_prompt;
 pub use reference_intent::{detect_reference_intent, has_reference_trigger, ReferenceIntent};
 pub use reference_skeleton::ReferenceSkeleton;
 pub use repair_record::RepairRecord;
-pub use repair_scope::finalize_authored_import;
 pub use repair_summary::{CheckCategory, RepairSummary};
 pub use repair_tier::{RepairTier, RepairTierPolicy, TieredPass};
 pub use run::Orchestrator;
@@ -288,10 +244,3 @@ pub(crate) mod agent_indicator_test_support {
 #[cfg(test)]
 #[path = "card_routing_tests.rs"]
 mod card_routing_tests;
-
-mod generated_stepper_check;
-mod interaction_handoff;
-#[cfg(test)]
-mod interaction_recipe_tests;
-#[cfg(test)]
-mod interactivity_corpus_runtime_tests;

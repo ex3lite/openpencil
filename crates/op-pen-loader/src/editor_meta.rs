@@ -7,7 +7,6 @@
 
 use crate::editor_meta_error::EditorMetaWriteError;
 use op_editor_core::scene_template_catalog::TemplateScene;
-use op_editor_core::ShareRecipe;
 
 /// Editor state that affects how a canonical document is reopened.
 ///
@@ -33,13 +32,6 @@ pub struct EditorMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub scenario: Option<TemplateScene>,
-    /// Exact Home task purpose, distinct from a share recipe and its brief.
-    #[serde(
-        default,
-        with = "crate::editor_meta_family",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub work_family: Option<op_editor_core::HomeFamily>,
     /// Style guide pinned in the Asset Center — see
     /// `EditorUiState::pinned_style_guide`. Written as the guide's `name`;
     /// anything that is not a non-empty string reads back as `None` for the
@@ -50,25 +42,6 @@ pub struct EditorMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub pinned_style_guide: Option<String>,
-    /// How the document was made (brief, task + options, style guide) —
-    /// see `EditorUiState::share_recipe`. Written by the share export and
-    /// kept on resave of a received file; sanitized on read, and anything
-    /// malformed reads back as `None`.
-    #[serde(
-        default,
-        with = "crate::editor_meta_share",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub share_recipe: Option<ShareRecipe>,
-    /// The website the document was imported from — see
-    /// `HomeState::imported_from`. Scheme + host + path only, sanitized on
-    /// write and again on read; anything else reads back as `None`.
-    #[serde(
-        default,
-        with = "crate::editor_meta_import",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub imported_from: Option<String>,
 }
 
 impl EditorMeta {
@@ -82,21 +55,7 @@ impl EditorMeta {
             active_page_index: state.ui.active_page_index,
             preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
             scenario: state.editor_ui.scenario,
-            work_family: state.editor_ui.home.work_family.or_else(|| {
-                let work = &state.editor_ui.workspace;
-                (work.active && work.family_known).then_some(work.family)
-            }),
             pinned_style_guide: state.editor_ui.pinned_style_guide.clone(),
-            // Only a recipe the file ARRIVED with is carried through a
-            // save. A live run's brief is written solely by the share
-            // export (which sanitizes it): an ordinary save must neither
-            // publish the brief nor reopen the author's own work as a
-            // shared one.
-            share_recipe: state.editor_ui.home.recipe.clone(),
-            // Provenance, not a preference: an imported site stays an
-            // imported site through every save, so a later AI edit keeps
-            // deferring to its authored design.
-            imported_from: state.editor_ui.home.imported_from.clone(),
         }
     }
 }
@@ -174,14 +133,8 @@ struct WireEditorMeta {
     preserve_authored_geometry: Option<bool>,
     #[serde(default, with = "scenario_serde")]
     scenario: Option<TemplateScene>,
-    #[serde(default, with = "crate::editor_meta_family")]
-    work_family: Option<op_editor_core::HomeFamily>,
     #[serde(default, with = "pinned_style_guide_serde")]
     pinned_style_guide: Option<String>,
-    #[serde(default, with = "crate::editor_meta_share")]
-    share_recipe: Option<ShareRecipe>,
-    #[serde(default, with = "crate::editor_meta_import")]
-    imported_from: Option<String>,
 }
 
 /// Parsed metadata plus compatibility inference used for migration decisions.
@@ -220,10 +173,7 @@ pub fn extract_editor_meta_with_report(src: &str) -> Option<EditorMetaExtraction
                 .preserve_authored_geometry
                 .unwrap_or(scan.first_page_has_figma_id),
             scenario: wire.scenario,
-            work_family: wire.work_family,
             pinned_style_guide: wire.pinned_style_guide,
-            share_recipe: wire.share_recipe,
-            imported_from: wire.imported_from,
         },
         inferred_preserve_authored_geometry,
     })
@@ -364,10 +314,7 @@ pub fn apply_editor_meta(state: &mut op_editor_core::EditorState, meta: EditorMe
     state.ui.active_page_index = meta.active_page_index.min(page_count - 1);
     state.editor_ui.preserve_authored_geometry = meta.preserve_authored_geometry;
     state.editor_ui.scenario = meta.scenario;
-    state.editor_ui.home.work_family = meta.work_family;
     state.editor_ui.pinned_style_guide = meta.pinned_style_guide;
-    state.editor_ui.home.recipe = meta.share_recipe;
-    state.editor_ui.home.imported_from = meta.imported_from;
 }
 
 /// Apply saved metadata, or use the legacy reopen policy when it is absent.
@@ -388,10 +335,7 @@ pub fn apply_editor_meta_or_legacy_fallback(
     // an unknown scenario must read as `None` rather than inherit whatever
     // the caller's state happened to carry in.
     state.editor_ui.scenario = None;
-    state.editor_ui.home.work_family = None;
     state.editor_ui.pinned_style_guide = None;
-    state.editor_ui.home.recipe = None;
-    state.editor_ui.home.imported_from = None;
     state.ui.active_page_index = state
         .doc
         .pages

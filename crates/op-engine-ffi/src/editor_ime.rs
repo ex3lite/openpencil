@@ -132,7 +132,7 @@ pub unsafe extern "C" fn op_editor_take_copy_text(
             let chat = &mut host.editor_state_mut().chat;
             let Some(text) = chat.pending_copy_text.as_deref() else {
                 required.write(0);
-                return Err(FfiError::nothing_pending("no copy text is pending"));
+                return Err(FfiError::new(OpStatus::NotReady, "no copy text is pending"));
             };
             let len = text.len();
             required.write(len);
@@ -187,32 +187,3 @@ pub unsafe extern "C" fn op_editor_ime_focused(
         })
     }
 }
-
-/// Dismiss a native field's software keyboard without navigating its surface.
-///
-/// # Safety
-/// `engine` must be live and `dismissed` must be writable.
-#[no_mangle]
-pub unsafe extern "C" fn op_editor_ime_dismiss(
-    engine: *mut crate::OpEngine,
-    dismissed: *mut bool,
-) -> OpStatus {
-    unsafe {
-        call_session(engine, |session| {
-            if dismissed.is_null() {
-                return Err(FfiError::invalid("dismiss output pointer is null"));
-            }
-            let changed =
-                session.with_collab_local_edit(|host| host.dismiss_soft_keyboard_focus())?;
-            dismissed.write(changed);
-            if changed {
-                session.request_redraw();
-            }
-            Ok(())
-        })
-    }
-}
-
-#[cfg(test)]
-#[path = "editor_ime_dismiss_tests.rs"]
-mod dismiss_tests;

@@ -372,10 +372,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
         active_page_index: 5,
         preserve_authored_geometry: true,
         scenario: None,
-        work_family: None,
         pinned_style_guide: None,
-        share_recipe: None,
-        imported_from: None,
     };
 
     let page_override = parse_document_sync_request(
@@ -388,10 +385,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
             active_page_index: 2,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         }
     );
 
@@ -405,10 +399,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
             active_page_index: 5,
             preserve_authored_geometry: false,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         }
     );
 
@@ -431,10 +422,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
             active_page_index: 2,
             preserve_authored_geometry: true,
             scenario: None,
-            work_family: None,
             pinned_style_guide: None,
-            share_recipe: None,
-            imported_from: None,
         }
     );
 }

@@ -280,8 +280,6 @@ pub(crate) fn repair_plan_object(obj: &Value, request: &DesignRequest) -> Option
         root_frame,
         subtasks,
         style_guide_name,
-        palette: crate::plan_palette::PlanPalette::from_plan_value(obj),
-        shared_context: crate::plan_shared_context::from_plan_value(obj).ok()?,
     };
 
     Some(finalize_plan(
@@ -295,8 +293,8 @@ pub(crate) fn repair_plan_object(obj: &Value, request: &DesignRequest) -> Option
 ///
 /// - `design_md` present → force `style_guide_name = "design-md-custom"`,
 ///   overwrite `root_frame.fill` with the design.md background color.
-/// - otherwise normalize declared palette roles and synchronize the root
-///   canvas when the palette explicitly includes a background.
+/// - otherwise → leave the plan unchanged (the Rust struct has no
+///   `style_guide` inline field; catalog-guide recovery is a no-op here).
 ///
 /// Port of `finalizePlan` from
 /// `apps/web/src/services/ai/orchestrator-planning.ts:140-184`.
@@ -307,28 +305,12 @@ pub(crate) fn finalize_plan(
 ) -> OrchestratorPlan {
     if let Some(spec) = design_md {
         plan.style_guide_name = Some(DESIGN_MD_STYLE_GUIDE_NAME.to_owned());
-        plan.palette = None;
         let bg = infer_design_md_background(spec)
             .unwrap_or_else(|| guess_neutral_background_from_theme(spec.visual_theme.as_deref()));
         plan.root_frame.fill = Some(vec![PlanFill {
             kind: "solid".to_owned(),
             color: bg,
         }]);
-    } else {
-        plan.palette = plan
-            .palette
-            .as_ref()
-            .and_then(|palette| palette.normalized());
-        if let Some(background) = plan
-            .palette
-            .as_ref()
-            .and_then(|palette| palette.background.as_ref())
-        {
-            plan.root_frame.fill = Some(vec![PlanFill {
-                kind: "solid".to_owned(),
-                color: background.clone(),
-            }]);
-        }
     }
     plan.clone()
 }
@@ -380,7 +362,6 @@ fn coerce_subtask(
             screen: None,
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         });
     }
@@ -421,12 +402,6 @@ fn coerce_subtask(
     // screen aliasing: screen ?? page
     let screen = as_string(&candidate["screen"]).or_else(|| as_string(&candidate["page"]));
 
-    // covers backfill: an array of non-empty strings survives the repair
-    // path verbatim (same contract as the strict parse — the planner copied
-    // the brief's own wording, and the coverage gate needs exactly that
-    // wording).
-    let covers = coerce_covers(&candidate["covers"]);
-
     Some(Subtask {
         id: as_string(&candidate["id"]).unwrap_or_else(|| make_safe_section_id(&label, index)),
         label,
@@ -442,21 +417,8 @@ fn coerce_subtask(
         screen,
         generated_root_id: None,
         existing_section_labels: None,
-        covers,
         retry_feedback: None,
     })
-}
-
-/// Coerces a `covers` value into `Some(Vec<String>)`: only an array with at
-/// least one non-empty trimmed string qualifies; anything else is `None`, so
-/// `"covers": []` degrades to "no backfill" rather than an empty claim.
-fn coerce_covers(value: &Value) -> Option<Vec<String>> {
-    let entries: Vec<String> = value.as_array()?.iter().filter_map(as_string).collect();
-    if entries.is_empty() {
-        None
-    } else {
-        Some(entries)
-    }
 }
 
 /// Coerces a value into a comma-joined elements string, matching the TS
@@ -546,7 +508,7 @@ pub(crate) fn parse_orchestrator_response(
     let trimmed = raw.trim();
 
     // Strategy 1: direct
-    if let Some(plan) = try_parse_plan_strict(trimmed, request) {
+    if let Some(plan) = try_parse_plan_strict(trimmed) {
         return Some((plan, false));
     }
     if let Some(plan) = try_repair_plan_text(trimmed, request) {
@@ -556,7 +518,7 @@ pub(crate) fn parse_orchestrator_response(
     // Strategy 2: fenced code block
     if let Some(fenced_text) = extract_fence_content(trimmed) {
         let fenced_text = fenced_text.trim();
-        if let Some(plan) = try_parse_plan_strict(fenced_text, request) {
+        if let Some(plan) = try_parse_plan_strict(fenced_text) {
             return Some((plan, false));
         }
         if let Some(plan) = try_repair_plan_text(fenced_text, request) {
@@ -566,7 +528,7 @@ pub(crate) fn parse_orchestrator_response(
 
     // Strategy 3: brace-slice
     if let Some(braced_text) = extract_brace_slice(trimmed) {
-        if let Some(plan) = try_parse_plan_strict(braced_text, request) {
+        if let Some(plan) = try_parse_plan_strict(braced_text) {
             return Some((plan, false));
         }
         if let Some(plan) = try_repair_plan_text(braced_text, request) {
@@ -577,72 +539,10 @@ pub(crate) fn parse_orchestrator_response(
     None
 }
 
-/// Fresh model plans use the same strict/repair probes as stored plans, but
-/// every candidate must satisfy the new response protocol before acceptance.
-/// In particular, repair must not erase a missing or invalid shared contract.
-pub(crate) fn parse_fresh_orchestrator_response(
-    raw: &str,
-    request: &DesignRequest,
-) -> Result<(OrchestratorPlan, bool), crate::plan_fresh::FreshPlanError> {
-    use crate::plan_fresh::{accept, check_envelope, FreshPlanError};
-
-    let trimmed = raw.trim();
-    let candidates = [
-        Some(trimmed),
-        extract_fence_content(trimmed),
-        extract_brace_slice(trimmed),
-    ];
-    let mut failure = None;
-    for text in candidates.into_iter().flatten() {
-        let json = crate::plan::extract_json_object(text).unwrap_or(text);
-        let Ok(value) = serde_json::from_str::<Value>(json) else {
-            continue;
-        };
-        if let Err(error) = check_envelope(&value) {
-            failure.get_or_insert(error);
-            continue;
-        }
-        // Parse exactly the JSON object whose envelope was checked, not a
-        // different fenced object later in the original response.
-        let parsed = parse_orchestrator_response(json, request);
-        if let Some((mut plan, repaired)) = parsed {
-            // Validate original section ids before any normalizer folds tasks.
-            accept(&mut plan, request)?;
-            return Ok((plan, repaired));
-        }
-    }
-    Err(failure.unwrap_or(FreshPlanError::Unparseable))
-}
-
-/// Last resort after protocol rejections: the same candidate search as the
-/// fresh parser, with the advisory `sharedContext` removed and no fresh-plan
-/// acceptance rules. Returns `None` when the plan itself does not parse.
-pub(crate) fn parse_without_shared_context(
-    raw: &str,
-    request: &DesignRequest,
-) -> Option<OrchestratorPlan> {
-    let trimmed = raw.trim();
-    let candidates = [
-        Some(trimmed),
-        extract_fence_content(trimmed),
-        extract_brace_slice(trimmed),
-    ];
-    candidates.into_iter().flatten().find_map(|text| {
-        let json = crate::plan::extract_json_object(text).unwrap_or(text);
-        let mut value = serde_json::from_str::<Value>(json).ok()?;
-        value.as_object_mut()?.remove("sharedContext");
-        let (mut plan, _) = parse_orchestrator_response(&value.to_string(), request)?;
-        plan.shared_context = None;
-        Some(plan)
-    })
-}
-
 /// Strict probe: delegate to `parse_plan` (serde deserialization + non-empty
-/// subtasks check), then apply the same style/palette contract as repaired
-/// plans. Returns `None` on any parse or validation failure.
-fn try_parse_plan_strict(text: &str, request: &DesignRequest) -> Option<OrchestratorPlan> {
-    let mut plan = crate::plan::parse_plan(text).ok()?;
-    Some(finalize_plan(&mut plan, None, request.design_md.as_ref()))
+/// subtasks check).  Returns `None` on any parse or validation failure.
+fn try_parse_plan_strict(text: &str) -> Option<OrchestratorPlan> {
+    crate::plan::parse_plan(text).ok()
 }
 
 /// Repair probe: `serde_json::from_str::<Value>` → `repair_plan_object`.

@@ -9,49 +9,6 @@ fn touch_state(size_class: EditorSizeClass) -> EditorState {
     state
 }
 
-#[test]
-fn normal_reader_offers_a_short_file_action_menu_at_all_touch_sizes() {
-    for (width, height, size_class) in [
-        (320.0, 568.0, EditorSizeClass::Compact),
-        (390.0, 844.0, EditorSizeClass::Compact),
-        (844.0, 390.0, EditorSizeClass::Compact),
-        (834.0, 1194.0, EditorSizeClass::Medium),
-        (1366.0, 1024.0, EditorSizeClass::Expanded),
-    ] {
-        let mut state = touch_state(size_class);
-        state
-            .editor_ui
-            .workspace
-            .open_for_reading(op_editor_core::HomeFamily::Presentation, 1);
-        assert_eq!(
-            MobileMoreEntry::visible(&state),
-            vec![
-                MobileMoreEntry::SaveFile,
-                MobileMoreEntry::SaveAsFile,
-                MobileMoreEntry::Export,
-                MobileMoreEntry::Undo,
-                MobileMoreEntry::Redo,
-            ]
-        );
-        let panel = more_panel_rect(&state, width, height);
-        assert!(panel.size.y < 260.0, "file actions leave the work visible");
-        assert_grid(
-            &state,
-            width,
-            height,
-            3,
-            if size_class == EditorSizeClass::Compact {
-                PHONE_BOTTOM_PADDING
-            } else {
-                TABLET_BOTTOM_PADDING
-            },
-        );
-        // Returning to the professional canvas restores its own menu.
-        state.editor_ui.workspace.enter_professional();
-        assert!(MobileMoreEntry::visible(&state).contains(&MobileMoreEntry::Variables));
-    }
-}
-
 fn assert_approx(actual: f32, expected: f32) {
     assert!(
         (actual - expected).abs() < 0.01,
@@ -88,10 +45,7 @@ fn assert_grid(
             tile.origin.x + tile.size.x / 2.0,
             tile.origin.y + tile.size.y / 2.0,
         );
-        assert_eq!(
-            more_hit_test(state, panel, center),
-            entry.enabled(state).then_some(entry)
-        );
+        assert_eq!(more_hit_test(state, panel, center), Some(entry));
     }
 
     let last_row_start = (rows - 1) * expected_columns;
@@ -248,7 +202,7 @@ fn code_entry_is_visible_only_on_touch_tablets() {
 #[test]
 fn restored_entries_reuse_localized_labels_and_desktop_icons() {
     let mut state = EditorState::starter();
-    assert_eq!(MobileMoreEntry::ALL.len(), 17);
+    assert_eq!(MobileMoreEntry::ALL.len(), 15);
     assert_eq!(MobileMoreEntry::visible(&state).len(), 13);
     assert_eq!(MobileMoreEntry::ALL[0], MobileMoreEntry::NewFile);
     assert_eq!(MobileMoreEntry::ALL[1], MobileMoreEntry::OpenFile);

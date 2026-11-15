@@ -12,14 +12,14 @@
 
 use std::collections::HashSet;
 
-use jian_ops_schema::node::{container::LayoutMode, Padding, PenNode};
+use jian_ops_schema::node::{Padding, PenNode};
 use serde_json::Value;
 
 use super::spacing::{is_full_bleed_section, numeric_width};
 use crate::issue::{FixProperty, Issue, IssueCategory, IssueSeverity};
 use crate::node_util::{
-    children, corner_radius_numeric, fmt_num, has_fully_round_shape, json_number, node_id,
-    node_kind_str, node_property_value, padding, raw_padding_value, role,
+    children, corner_radius_numeric, fmt_num, json_number, node_id, node_kind_str,
+    node_property_value, padding, raw_padding_value, role,
 };
 
 /// Properties whose consistency is role-dependent (a fixed mobile-chrome
@@ -72,7 +72,7 @@ pub fn detect_sibling_inconsistencies(root: &PenNode) -> Vec<Issue> {
 
 fn walk_sibling_inconsistencies(node: &PenNode, raw: &mut Vec<Issue>) {
     let kids = children(node);
-    if kids.len() >= 3 && !is_map_canvas(node) {
+    if kids.len() >= 3 {
         // Insertion-ordered group lists so the strict / loose passes iterate
         // groups in TS `Map` order.
         let mut strict_groups: Vec<(String, Vec<&PenNode>)> = Vec::new();
@@ -90,16 +90,7 @@ fn walk_sibling_inconsistencies(node: &PenNode, raw: &mut Vec<Issue>) {
                 child_role.as_str()
             };
             let kind = node_kind_str(child);
-            // A display value and its surrounding labels are not repeated
-            // typography. Compare font size only within the same face/weight.
-            let strict_key = match child {
-                PenNode::Text(text) => format!(
-                    "{kind}:{role_key}:{:?}:{:?}",
-                    text.font_family, text.font_weight
-                ),
-                _ => format!("{kind}:{role_key}"),
-            };
-            push_group(&mut strict_groups, strict_key, child);
+            push_group(&mut strict_groups, format!("{kind}:{role_key}"), child);
             push_group(&mut type_groups, kind.to_string(), child);
         }
 
@@ -143,13 +134,6 @@ fn walk_sibling_inconsistencies(node: &PenNode, raw: &mut Vec<Issue>) {
     }
 }
 
-fn is_map_canvas(node: &PenNode) -> bool {
-    // Streets, parks and water are different artwork, not repeated UI cards.
-    // Child control containers are still visited and checked independently.
-    role(node) == Some("map")
-        && matches!(node, PenNode::Frame(frame) if frame.container.layout == Some(LayoutMode::None))
-}
-
 /// Append `child` to the insertion-ordered group keyed by `key`.
 fn push_group<'a>(groups: &mut Vec<(String, Vec<&'a PenNode>)>, key: String, child: &'a PenNode) {
     if let Some((_, bucket)) = groups.iter_mut().find(|(k, _)| *k == key) {
@@ -178,23 +162,9 @@ fn check_consistency(
     }
     let mut values: Vec<(String, Group)> = Vec::new();
     for node in siblings {
-        // Absolute artwork has its own viewport, not the flow sections'
-        // majority height. Resetting a photo composition to Hug after layout
-        // cleanup can grow the phone again and push its pinned nav offscreen.
-        if property == "height"
-            && matches!(node, PenNode::Frame(f) if f.container.layout == Some(LayoutMode::None))
-        {
-            continue;
-        }
         let Some(raw) = node_property_value(node, property) else {
             continue;
         };
-        // Fixed dimensions and content-driven sizing serve different jobs.
-        // A 44px avatar between hugging info/actions must keep its diameter;
-        // a majority of Hug siblings is not evidence for changing its mode.
-        if property == "height" && !raw.is_number() {
-            continue;
-        }
         // TS `raw == null` skip — `node_property_value` already returns `None`
         // for an absent field; a present-but-`Null` value is still skipped.
         if raw.is_null() {
@@ -244,13 +214,10 @@ fn check_consistency(
     const PILL_RADIUS: f64 = 40.0;
     let is_corner = property == "cornerRadius";
     let majority_is_pill = is_corner
-        && (siblings.iter().any(|node| {
-            node_property_value(node, property).as_ref() == Some(&majority_value)
-                && has_fully_round_shape(node)
-        }) || majority_value
+        && majority_value
             .as_f64()
             .map(|v| v >= PILL_RADIUS)
-            .unwrap_or(false));
+            .unwrap_or(false);
     for (idx, (_, group)) in values.iter().enumerate() {
         if idx == majority_idx {
             continue;
@@ -264,23 +231,7 @@ fn check_consistency(
         if is_corner && (group_is_pill || majority_is_pill) {
             continue;
         }
-        // One `fill_container` child among `fit_content` siblings is the flex
-        // grower that takes the stack's remaining height — a scrolling body
-        // above a pinned composer, a list above a footer — not a style
-        // mismatch. arena-w02 (Opus 5.5, 2026-10-01): this pass reset the
-        // reading pane's scrolling body to `fit_content` and pushed the reply
-        // box back under the pane's clip edge.
-        if property == "height" && group.value.as_str() == Some("fill_container") {
-            continue;
-        }
         for node_id_str in &group.nodes {
-            if is_corner
-                && siblings
-                    .iter()
-                    .any(|node| node_id(node) == *node_id_str && has_fully_round_shape(node))
-            {
-                continue;
-            }
             issues.push(Issue {
                 node_id: node_id_str.clone(),
                 category: IssueCategory::SiblingInconsistency,
@@ -314,7 +265,7 @@ pub fn detect_mixed_sibling_corner_radius(root: &PenNode) -> Vec<Issue> {
 
 fn walk_mixed_corner_radius(node: &PenNode, issues: &mut Vec<Issue>) {
     let kids = children(node);
-    if kids.len() >= 3 && !is_map_canvas(node) {
+    if kids.len() >= 3 {
         for (_, siblings) in role_kind_groups(kids) {
             if siblings.len() < 3 {
                 continue;
@@ -359,13 +310,7 @@ fn walk_mixed_corner_radius(node: &PenNode, issues: &mut Vec<Issue>) {
                     // round-then-lint-flattens bug) nor forces square siblings
                     // into pills. Card-scale radii (8–16) still normalize.
                     const PILL_RADIUS: f64 = 40.0;
-                    if num >= PILL_RADIUS
-                        || modal >= PILL_RADIUS
-                        || has_fully_round_shape(sibling)
-                        || siblings.iter().any(|node| {
-                            corner_radius_numeric(node) == modal && has_fully_round_shape(node)
-                        })
-                    {
+                    if num >= PILL_RADIUS || modal >= PILL_RADIUS {
                         continue;
                     }
                     issues.push(Issue {

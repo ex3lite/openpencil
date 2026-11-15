@@ -120,58 +120,11 @@ pub(super) fn diag_label(v: &Value) -> String {
 }
 
 pub(super) fn collect_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<String>) {
-    collect_diagnostics_with_context(v, None, rects, out, false);
-}
-
-/// A cover may crop its picture, but an absolute action must remain usable.
-/// Scroll rails are excluded: off-viewport controls there are intentional.
-fn clipped_control_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<String>) {
-    if layout_str(v) != Some("none")
-        || v.get("clipContent").and_then(Value::as_bool) != Some(true)
-        || v.get("role").and_then(Value::as_str) == Some("scroll-area")
-    {
-        return;
-    }
-    let Some(parent) = v
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|id| rects.get(id))
-    else {
-        return;
-    };
-    for child in children(v) {
-        if out.len() >= MAX_DIAGNOSTICS {
-            return;
-        }
-        if child.get("role").and_then(Value::as_str) != Some("button")
-            || child.get("enabled").and_then(Value::as_bool) == Some(false)
-            || child
-                .get("rotation")
-                .and_then(Value::as_f64)
-                .is_some_and(|r| r.abs() > 0.01)
-        {
-            continue;
-        }
-        let Some(control) = child
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| rects.get(id))
-        else {
-            continue;
-        };
-        if control.x < parent.x - 1.0
-            || control.y < parent.y - 1.0
-            || control.x + control.w > parent.x + parent.w + 1.0
-            || control.y + control.h > parent.y + parent.h + 1.0
-        {
-            out.push(format!("clipped-control: {} extends outside {}'s clipping bounds — move the entire button inside the card; image cropping must not crop an action.", diag_label(child), diag_label(v)));
-        }
-    }
+    collect_diagnostics_with_context(v, rects, out, false);
 }
 
 pub(super) fn collect_diagnostics_with_context(
     v: &Value,
-    parent: Option<&Value>,
     rects: &HashMap<String, Rect>,
     out: &mut Vec<String>,
     in_table: bool,
@@ -179,7 +132,6 @@ pub(super) fn collect_diagnostics_with_context(
     if out.len() >= MAX_DIAGNOSTICS {
         return;
     }
-    clipped_control_diagnostics(v, rects, out);
     if is_collapsed_fill_container(v, rects) {
         out.push(format!(
             "{}: declared height fill_container but resolved to ~0px (its ancestor hugs) — give the ancestor chain a definite height or use fit_content here",
@@ -192,17 +144,7 @@ pub(super) fn collect_diagnostics_with_context(
             .and_then(Value::as_str)
             .and_then(|id| rects.get(id))
             .map(|r| (r.w, r.h));
-        if let Some(line) =
-            crate::stub_repair::empty_decorated_stub_diagnostic(v, parent, resolved_size)
-        {
-            out.push(line);
-        }
-        if let Some(line) =
-            crate::square_ring_repair::square_ring_wrapper_diagnostic(v, resolved_size)
-        {
-            out.push(line);
-        }
-        if let Some(line) = crate::stacked_text_repair::stacked_overlapping_text_diagnostic(v) {
+        if let Some(line) = crate::stub_repair::empty_decorated_stub_diagnostic(v, resolved_size) {
             out.push(line);
         }
     }
@@ -302,7 +244,7 @@ pub(super) fn collect_diagnostics_with_context(
     collect_rail_width_collapse_diagnostics_with_context(v, rects, out, in_table);
     let child_in_table = in_table || is_table_shape(v);
     for c in children(v) {
-        collect_diagnostics_with_context(c, Some(v), rects, out, child_in_table);
+        collect_diagnostics_with_context(c, rects, out, child_in_table);
     }
 }
 

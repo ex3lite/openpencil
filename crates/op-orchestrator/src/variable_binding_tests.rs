@@ -8,38 +8,6 @@
 use super::*;
 use serde_json::json;
 
-#[test]
-fn binding_does_not_attach_authored_colors_to_tokens_that_cleanup_will_flip() {
-    for (background, name, literal, alternate, kind) in [
-        (
-            "#FAFAF8",
-            "--color-error-foreground",
-            "#FFFFFF",
-            "#0F172A",
-            "text",
-        ),
-        ("#0A0A0A", "--popover", "#FFFFFF", "#1E293B", "frame"),
-    ] {
-        let doc = serde_json::from_value(json!({
-            "version":"1.0", "themes":{"Mode":["Light","Dark"]},
-            "variables":{name:{"type":"color","value":[
-                {"value":literal,"theme":{"Mode":"Light"}},
-                {"value":alternate,"theme":{"Mode":"Dark"}}]}},
-            "children":[{"type":"frame","id":"root","fill":[{"type":"solid","color":background}]}]
-        }))
-        .unwrap();
-        let state = EditorState::from_document(doc);
-        let mut nodes = vec![serde_json::from_value(json!({
-            "type":kind,"id":"authored","content":"Authored caption","fill":[{"type":"solid","color":literal}]
-        })).unwrap()];
-        bind_generated_color_variables(&mut nodes, &state);
-        assert_eq!(
-            serde_json::to_value(&nodes[0]).unwrap()["fill"][0]["color"],
-            literal
-        );
-    }
-}
-
 fn state_with_dusk_palette() -> EditorState {
     let doc: jian_ops_schema::PenDocument = serde_json::from_value(json!({
         "version": "1.0",
@@ -161,73 +129,4 @@ fn family_of_reads_the_naming_convention() {
     assert_eq!(family_of("--muted"), ColorFamily::Surface);
     assert_eq!(family_of("--primary"), ColorFamily::Semantic);
     assert_eq!(family_of("--chart-1"), ColorFamily::Semantic);
-}
-
-#[test]
-fn a_shared_value_binds_to_the_most_general_token() {
-    // Palettes repeat values: here the card text equals the page text and the
-    // first chart colour equals the brand colour. Name order alone would
-    // pick `--card-foreground` and `--chart-1`, which break as soon as the
-    // card or chart colour is changed on its own.
-    let doc: jian_ops_schema::PenDocument = serde_json::from_value(json!({
-        "version": "1.0",
-        "variables": {
-            "--card-foreground": {"type":"color","value":"#1F2430"},
-            "--foreground": {"type":"color","value":"#1F2430"},
-            "--chart-1": {"type":"color","value":"#C2410C"},
-            "--primary": {"type":"color","value":"#C2410C"}
-        },
-        "children": []
-    }))
-    .expect("valid doc");
-    let state = EditorState::from_document(doc);
-    let mut nodes: Vec<PenNode> = vec![
-        serde_json::from_value(json!({
-            "type":"text","id":"t","content":"Body",
-            "fill":[{"type":"solid","color":"#1F2430"}]
-        }))
-        .unwrap(),
-        serde_json::from_value(json!({
-            "type":"frame","id":"cta","layout":"horizontal",
-            "fill":[{"type":"solid","color":"#C2410C"}],
-            "children":[]
-        }))
-        .unwrap(),
-    ];
-    bind_generated_color_variables(&mut nodes, &state);
-    let text = serde_json::to_value(&nodes[0]).unwrap();
-    let cta = serde_json::to_value(&nodes[1]).unwrap();
-    assert_eq!(text["fill"][0]["color"], "$--foreground");
-    assert_eq!(cta["fill"][0]["color"], "$--primary");
-}
-
-#[test]
-fn token_specificity_counts_name_segments() {
-    assert_eq!(token_specificity("$--foreground"), 1);
-    assert_eq!(token_specificity("$--card-foreground"), 2);
-    assert_eq!(token_specificity("$--color-chart-1"), 2);
-    assert_eq!(token_specificity("$color-primary"), 1);
-}
-
-#[test]
-fn exact_binding_only_rewrites_equal_colours_and_counts_them() {
-    let state = state_with_dusk_palette();
-    let mut nodes: Vec<PenNode> = vec![serde_json::from_value(json!({
-        "type":"frame","id":"f","layout":"vertical",
-        "fill":[{"type":"solid","color":"#6b62f2"}],
-        "children":[
-            // Equal to --primary: bound.
-            {"type":"frame","id":"cta","fill":[{"type":"solid","color":"#6B62F2"}]},
-            // 5 units off --primary: near enough for generated output, but
-            // an authored colour keeps its literal under exact binding.
-            {"type":"frame","id":"near","fill":[{"type":"solid","color":"#6B62F7"}]}
-        ]
-    }))
-    .unwrap()];
-    let bound = bind_exact_color_variables(&mut nodes, &state);
-    assert_eq!(bound, 2);
-    let value = serde_json::to_value(&nodes[0]).unwrap();
-    assert_eq!(value["fill"][0]["color"], "$--primary");
-    assert_eq!(value["children"][0]["fill"][0]["color"], "$--primary");
-    assert_eq!(value["children"][1]["fill"][0]["color"], "#6B62F7");
 }

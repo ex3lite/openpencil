@@ -17,14 +17,12 @@ fn subtask(id: &str, label: &str, elements: &str) -> Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
 
 fn plan(subtasks: Vec<Subtask>) -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Landing Page".into(),
@@ -37,7 +35,6 @@ fn plan(subtasks: Vec<Subtask>) -> OrchestratorPlan {
         },
         subtasks,
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -147,95 +144,4 @@ fn a_rail_in_a_multi_screen_plan_is_left_alone() {
     let before = plan.subtasks.len();
     assert_eq!(fold_side_progress_rail(&mut plan), 0);
     assert_eq!(plan.subtasks.len(), before);
-}
-
-/// arena-m02 (0925): a goal ring ("calories left") and a horizontal course
-/// rail with per-card progress both carry progress + side cues, but neither
-/// is a page-edge scroll rail — folding them deleted two brief sections.
-#[test]
-fn goal_rings_and_horizontal_card_rails_are_never_folded() {
-    let mut plan = plan(vec![
-        subtask("greeting", "顶部问候与头像", "greeting, avatar"),
-        subtask(
-            "today-goal",
-            "今日目标环形进度",
-            "circular goal progress ring, 320 kcal left, vertical stat stack",
-        ),
-        subtask(
-            "course-rail",
-            "横向滚动的课程卡片轨道",
-            "horizontal rail of six course cards, each with a progress bar on the left",
-        ),
-        subtask("bottom-nav", "底部导航四标签", "four tabs"),
-    ]);
-    plan.root_frame.width = 375.0;
-    plan.root_frame.height = 812.0;
-    let before = plan.clone();
-
-    assert_eq!(fold_side_progress_rail(&mut plan), 0);
-    assert_eq!(plan, before);
-}
-
-#[test]
-fn the_nav_inherits_what_the_folded_rail_covered() {
-    let mut rail = subtask("progress", "右侧阅读进度条", "竖向进度指示器");
-    rail.covers = Some(vec!["阅读进度".into()]);
-    let mut plan = plan(vec![
-        subtask("nav", "Navigation Bar", "logo, links"),
-        subtask("hero", "Hero", "headline"),
-        rail,
-    ]);
-
-    assert_eq!(fold_side_progress_rail(&mut plan), 1);
-    assert_eq!(
-        plan.subtasks[0].covers.as_deref(),
-        Some(&["阅读进度".to_string(), "右侧阅读进度条".to_string()][..]),
-        "a section the rail covered stays covered by the nav that now draws it"
-    );
-}
-
-/// arena-w01 (Opus 5.5, 2026-10-01, both runs): `右侧任务详情抽屉` carries a
-/// side cue in its label and a subtask-progress row in its elements, so it
-/// was folded into the nav as a 4px scroll bar — the whole drawer the brief
-/// asked for vanished. A docked detail surface is never a page-edge rail.
-#[test]
-fn a_right_side_detail_drawer_with_a_progress_row_is_not_folded() {
-    let mut plan = plan(vec![
-        subtask("sidebar", "侧栏项目列表", "project list"),
-        subtask(
-            "board",
-            "看板主区",
-            "three kanban columns, four task cards each",
-        ),
-        subtask(
-            "drawer",
-            "右侧任务详情抽屉",
-            "480px right-side drawer, vertical stack: header with close button, \
-             task title, assignee, due date, subtask checklist with progress 2/5",
-        ),
-    ]);
-
-    assert_eq!(fold_side_progress_rail(&mut plan), 0);
-    assert_eq!(plan.subtasks.len(), 3);
-}
-
-#[test]
-fn business_progress_next_to_a_right_aligned_control_is_not_a_scroll_rail() {
-    for (label, elements) in [
-        ("Track Info & Progress", "song title (display 32px), artist name (body 16px), heart/favorite button aligned right, seek progress bar with elapsed and remaining time labels"),
-        ("歌曲与播放进度", "歌名、歌手、右侧收藏按钮，播放进度条与剩余时间"),
-        ("Upload Progress", "file name, upload progress, cancel action on the right"),
-        ("Article Content", "reading content, title and paragraphs; scroll progress indicator on the right"),
-    ] {
-        let mut plan = plan(vec![
-            subtask("header", "Now Playing Header", "back, cover"),
-            subtask("info", label, elements),
-            subtask("controls", "Playback Controls", "play, next"),
-        ]);
-        plan.root_frame.width = 375.0;
-        plan.root_frame.height = 812.0;
-        let before = plan.clone();
-        assert_eq!(fold_side_progress_rail(&mut plan), 0, "{label}");
-        assert_eq!(plan, before, "{label}");
-    }
 }

@@ -244,9 +244,7 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
     if is_mobile_layout {
         let mobile_spacing = explicit_tokens.spacing.map(format_design_number);
         let mobile_radius = explicit_tokens.radius.map(format_design_number);
-        let rhythm = if crate::map_viewport::owns(subtask) {
-            "MOBILE NAVIGATION RHYTHM: Keep the shared map viewport at its specified fixed height with zero padding. Use compact auto-layout rows inside floating cards; do not add flow sections or blank bands below the map.".to_string()
-        } else if let Some(spacing) = mobile_spacing.as_deref() {
+        let rhythm = if let Some(spacing) = mobile_spacing.as_deref() {
             format!(
                 "MOBILE VERTICAL RHYTHM: Keep every section root height=\"fit_content\" and do not insert blank spacer frames or empty bands to fill the planned region. Use {spacing}px as the default gap/spacing for header-to-search, search-to-next-section, module, grid, card, and internal component rhythm. Do not mix 16/20/24/32px gaps when the user explicitly requested {spacing}px spacing."
             )
@@ -277,7 +275,7 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
     //
     // The arm is the Generation phase default rather than a literal, because
     // the deck path IS the worst case that default was last sized for
-    // (`Phase::Generation` is now 20300 so motion-bearing mobile briefs keep `mobile-app`;
+    // (`Phase::Generation` is now 17150 after the motion keyframe example;
     // earlier raises included 12000 → 13200 when `deck-contract` landed).
     // Restating it as a number is what let the old 11500 rot when the corpus
     // grew under it: the deck skills were then silently dropped/tail-cut,
@@ -290,7 +288,7 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
     // 2026-08-04 `slides` failure, in a card jacket.
     //
     // Measured 2026-08-09 on that file's fixtures, every resolved skill
-    // untruncated: the deck arm follows the current generation default (20300).
+    // untruncated: the deck arm follows the current 17150 generation default.
     // Standard lands on Full's exact skill set here — at an unbounded budget
     // it also carries `design-principles`; the deck
     // corpus crowds that Knowledge skill out. That is NOT this arm's doing:
@@ -325,7 +323,6 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
         "可交互",
         "原型",
         "可点击",
-        "可操作",
         "动效",
         "动画",
     ]
@@ -426,28 +423,20 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
         system_prompt.push_str("\n\n");
         system_prompt.push_str(resolved);
     }
-    if !has_design_md {
-        if let Some(palette) = build_plan_palette_instruction(plan, doc_has_variables) {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&palette);
-        }
-    }
     if let Some(instruction) = &explicit_token_instruction {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(instruction);
         system_prompt
             .push_str("\nThis instruction overrides style-guide examples when they conflict.");
     }
-    // Keep the available-components manifest after the visual instructions so
-    // the model consults the concrete id list before producing nodes. The
+    // Available-components manifest LAST — recency wins, and the model should
+    // consult the concrete id list right before producing nodes. The
     // `component-composition` skill (loaded via `hasReusableComponents`) carries
     // the `ref` + `descendants` syntax; this block carries the actual ids.
     if let Some(manifest) = &component_manifest {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(manifest);
     }
-    crate::output_language::append_copy_language_instruction(&mut system_prompt, req);
-    append_source_facts_contract(&mut system_prompt, req);
 
     let section_list = plan
         .subtasks
@@ -470,7 +459,7 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
         .elements
         .as_ref()
         .map(|items| {
-            format!("\nPROPOSED ELEMENTS (planner layout suggestions, not source facts): {items}\nDo NOT generate elements listed in other sections. Archetype typography is styling, not permission to add copy: if a separate section owns the title/meta, keep this photo hero to media and controls without repeated titles or invented stats.")
+            format!("\nYOUR ELEMENTS: {items}\nDo NOT generate elements listed in other sections.")
         })
         .unwrap_or_default();
     let explicit_user_token_block = explicit_token_instruction
@@ -479,10 +468,7 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
         .unwrap_or_default();
     let screen_route_block = screen_route_prompt_block(screen_routes);
     let headline_block = section_headline_prompt_block(prior_outcomes, tier);
-    let composition_block = screen_composition::instruction(plan, subtask);
-    let spacing_rule = if crate::map_viewport::owns(subtask) {
-        "SPACING CONSISTENCY — NAVIGATION VIEWPORT: The map fills the viewport at x:0,y:0 with no outer gutter. Floating controls/cards own their 16px side insets and 24px bottom safety inset."
-    } else if is_mobile_layout {
+    let spacing_rule = if is_mobile_layout {
         "SPACING CONSISTENCY — MOBILE CONTENT RAIL: The root page may keep 0 horizontal padding for full-width status/navigation/full-bleed media. This ordinary transparent root-direct section owns padding:[0,24] exactly once; do not duplicate it on an inner wrapper. If this section is a clipped horizontal scroller, keep its section full width, inset its header 24px on both sides, and give the clipped viewport a 24px leading inset with a flush 0px trailing edge."
     } else {
         "SPACING CONSISTENCY: Use a single outer content gutter and consistent internal gaps. Do not create nested wrappers with conflicting padding or content touching edges."
@@ -491,7 +477,7 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
     // Two constraints differ by output protocol. The public subagent path uses
     // the script-gen branch; the raw-JSONL branch is legacy-only for direct
     // core callers.
-    let (mut root_rule, nesting_rule, output_rule) = if script_on {
+    let (root_rule, nesting_rule, output_rule) = if script_on {
         (
             format!("Create EXACTLY ONE section root frame first: const sec = I(null, {{type:\"frame\", name:\"{}\", width:\"fill_container\", height:\"fit_content\", layout:\"vertical\"}}); build everything else by calling I(parent, {{...}}) with `sec` or a returned id as parent. NEVER set a fixed pixel height on the root.", subtask.label),
             "Nest via the returned id ONLY: const row = I(sec, {...}); const cell = I(row, {...}); I(cell, {type:\"text\",...}). LOOP over a data array to emit repeated rows/cards. A cell inserted into the section/table directly renders as a full-width band, not a table cell.".to_string(),
@@ -504,45 +490,31 @@ pub(super) fn build_subagent_prompt_core_with_outcomes(
             format!("IDs prefix=\"{}-\". Output ONLY the structured nodes in the EXACT format the system prompt specifies above -- no prose, no extra wrapping.", subtask.id_prefix),
         )
     };
-    if crate::map_viewport::owns(subtask) {
-        root_rule = format!("Create EXACTLY ONE section root frame with width:fill_container, height:{:.0}, layout:none, padding:0. This fixed viewport is the explicit exception to content-height sections; every overlay and the map must be its descendants.", subtask.region.height);
-    }
-    let bounded = crate::first_viewport::owns(subtask);
-    let content_amount_rule = if bounded {
-        format!("Maximum section height: {:.0}px including padding, text wrapping and gaps. Keep required content complete; do not add elements or blank space to fill this budget.", subtask.region.height)
-    } else {
-        format!(
-            "Target content amount: ~{:.0}px tall. Generate enough elements to fill this area.",
-            subtask.region.height
-        )
-    };
-    let amount_qualifier = if bounded { "at most " } else { "~" };
     let mut user_prompt = format!(
-        "PLANNER PROPOSAL — Page sections:\n{}\n\n\
+        "Page sections:\n{}\n\n\
 {}\
-Generate ONLY \"{}\" ({amount_qualifier}{:.0}px of content).{}\n\
-ORIGINAL USER BRIEF:\n{}\nEND ORIGINAL USER BRIEF\n\n\
+Generate ONLY \"{}\" (~{:.0}px of content).{}\n\
+Overall design: {}\n\n\
 {}\
 {}\
 CRITICAL LAYOUT CONSTRAINTS:\n\
 - {}\n\
-- {content_amount_rule}\n\
+- Target content amount: ~{:.0}px tall. Generate enough elements to fill this area.\n\
 - DENSITY: Do NOT pack the area edge-to-edge. Prefer fewer, stronger modules with visible negative space; most sections should have 3-5 primary rows/cards at most.\n\
 - VISUAL HIERARCHY: Each section must have one clear focal element, secondary supporting text, and quieter metadata. Avoid equal-weight blocks competing for attention.\n\
 - {spacing_rule}\n\
 - CRAFT POLISH: Add refinement through restrained 1px low-contrast borders, tonal surfaces, small state badges, and subtle shadows. Avoid template-like thick outlines, giant pills, or flat blocks with no micro-detail.\n\
-- MEDIA CONSISTENCY: Preserve this section's requested photos/thumbnails as image nodes with imageSearchQuery and imagePrompt; OP fills assets after generation. imagePrompt must describe actual objects/scenes, not just a project or brand name. Labels, signs, packaging and pages inside a photo either quote the exact short text the design shows (a label reading \"雨庭\") or are described as blank and plain; never ask for unspecified lettering, writing or logos, which image models render as gibberish (glyph textures such as an inscription rubbing are the exception). Icon/illustration tiles are for optional media only. Keep photographic siblings coherent in subject, crop, tone, and radius.\n\
+- MEDIA CONSISTENCY: Use photographic images sparingly and keep them visually consistent in subject, crop, tone, and radius. For food/category UI, prefer cohesive icon or illustration tiles over random unrelated photos.\n\
 - ICON SCALE: Icons support content; keep most icons 16-22px inside 36-48px controls. Avoid oversized circular icon bubbles or repeated identical icon treatments unless the design brief calls for them.\n\
 - ACCENT DISCIPLINE: Reserve saturated accent color for one primary CTA or promo plus small highlights. Do not apply it to every icon, label, border, and large surface at once.\n\
-- {composition_block}\n\
+- SIGNATURE MOMENT: Give the first viewport one memorable focal module that feels custom to the brief: distinctive composition, branded surface, expressive hero image/illustration, or an editorial product moment. Supporting modules must stay quieter.\n\
 - WOW FACTOR: Make the design feel bespoke through domain-specific composition, confident cropping, custom icon rhythm, and one precise visual idea. Do not rely on generic tinted wrappers, heavy shadows, emoji, or repeated rounded boxes to look polished.\n\
 - COMPOSITIONAL CONTRAST: Create interest through scale contrast, asymmetric balance, layered depth, and one clear focal path. Do not make every card, chip, icon, and CTA the same visual weight.\n\
 - PREMIUM DETAIL: Use high-quality details such as precise alignment, consistent radii, quiet dividers, tonal badges, subtle image masks, and purposeful shadows. Prefer one polished detail over many loud decorations.\n\
 - NO DECORATION SPAM: Do not add random blobs, repeated icon circles, excessive gradients, oversized badges, or unrelated photos just to make the design look busy. Every visual flourish must support the product story.\n\
 - {}\n\
-- NEVER set x or y on children inside horizontal/vertical layout frames. Only absolute children of layout:none viewports use x/y.\n\
+- NEVER set x or y on children inside layout frames.\n\
 - Use \"fill_container\" for children that stretch, \"fit_content\" for shrink-wrap sizing.\n\
-- MAPS: Author editable vector maps with roads, route paths, origin/destination pins and vehicle markers when requested. Keep this authored map inside one layout:none viewport. For an empty or image-placeholder map only, OP can supply a fallback: ONE image slot named \"Map\" with imageSearchQuery \"map-template:running\", \"map-template:delivery\", \"map-template:ride\" (ride-hailing), or \"map-template:location\" (location only). Keep statistics, search and navigation outside the map artwork.\n\
 - SECTION BACKGROUND: do NOT set fill on your section root frame. Only set fill on cards, buttons, chips, badges, and other visually distinct components.\n\
 - TYPOGRAPHY HIERARCHY: Do NOT make every text bold. Use 700 only for primary headings, 600 for buttons/key labels, 500 for short chips/nav labels, and 400 for body text, placeholders, subtitles, metadata, and captions.\n\
 - ICONS: use icon_font with lucide iconFontName; never use path nodes for icons.\n\
@@ -556,28 +528,14 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
         screen_route_block,
         explicit_user_token_block,
         root_rule,
+        subtask.region.height,
         nesting_rule,
         output_rule,
     );
 
-    crate::source_copy::SourceCopy::from_brief(&req.prompt)
-        .for_subtask(plan, subtask)
-        .append_section_instruction(&mut user_prompt);
-    crate::source_facts::append_section_instruction(req, subtask, &mut user_prompt);
-    crate::plan_shared_context::append_instruction(plan, req, subtask, &mut user_prompt);
-
     if subtask.bleed_hero {
-        user_prompt.push_str("\nThis section is full-bleed: give the section frame no horizontal padding and let its media span the full root width. For text or controls BELOW the media, use one inner frame with `padding: [0,24]`. For text or controls OVER the media, keep media, scrim and copy in the same `layout: none` viewport, with inset x coordinates for copy; never stack overlay layers vertically.");
+        user_prompt.push_str("\nThis section is full-bleed: give the section frame no horizontal padding, let its first media node (image or colour block) span the full root width, and put every text or control that follows inside one inner frame with `padding: [0,24]`.");
     }
-    if is_mobile_layout {
-        // The prompt builder has no live status-bar snapshot, and append mode
-        // may target a chrome-free viewport. State the coordinate relationship
-        // conditionally instead of moving already-authored overlay geometry.
-        user_prompt.push_str("\nMOBILE OVERLAY COORDINATES: Absolute x/y are local to their layout:none parent. For a section in vertical flow BELOW a separate status bar, local y=0 is already below the bar; never add its height again. Place that hero's page-level back/navigation controls 16-24px from the local top unless the user's composition says otherwise. If the hero really extends BEHIND system chrome, account for its safe area once inside that viewport; with no system chrome, add none. These defaults do not reposition card controls, decorations, or explicitly placed actions.");
-    }
-    user_prompt.push_str(&crate::map_viewport::instruction(subtask));
-    user_prompt.push_str(&crate::navigation_interaction::instruction(req, subtask));
-    user_prompt.push_str(&crate::first_viewport::instruction(subtask));
 
     // (Mobile UI guardrails now load from the `mobile-ui` skill — see the
     // `isMobileScreen` flag + dynamic-content setup above.)
@@ -593,7 +551,7 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
 - Regenerate the section addressing that reason specifically — do not change \
   anything else about the approach.\n\
 - Keep using the full skill set and design detail from your previous attempt; \
-                 fix the specific rejection above without simplifying the design."
+  the rejection was a geometry/structure issue, not a signal to simplify."
             ),
             crate::plan::RetryFeedback::Geometry(reason) => format!(
                 "\n\nGEOMETRY FIX REQUIRED: the REAL resolved layout of your previous \
@@ -611,17 +569,6 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
             crate::plan::RetryFeedback::Language(reason) => format!(
                 "\n\nLANGUAGE FIX REQUIRED: {reason}\n\
 - Keep layout, structure, and brand/acronym tokens unchanged."
-            ),
-            crate::plan::RetryFeedback::InitialBinding(reason) => format!(
-                "\n\nINITIAL BINDING FIX REQUIRED: this section has already been generated, \
-                 but its first-view bindings still read missing local UI state after ALL \
-                 sections were assembled.\n{reason}\n\
-- Return the complete same section with deliberate typed initial state matching \
-  its authored initial selection and values. Do not invent business values.\n\
-- Preserve the original layout, styling, every visible text, binding and event. \
-  Do not remove interactions to silence this check.\n\
-- Keep the full skill set and the plan's shared content. This is an initial-state \
-  correction, not a request to simplify or redesign the section."
             ),
         };
         user_prompt.push_str(&block);
@@ -659,7 +606,7 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
     // Assemble the per-subtask skill-load report from the FINAL skill set
     // (post tier/dedup filtering). `budget_max` reflects the tier budget
     // override. Full-tier falls through to `Phase::Generation::default_budget()`
-    // (20300 today — see that constant's doc comment for the corpus raises).
+    // (17150 today — see that constant's doc comment for the corpus raises).
     // This used to be a bare literal
     // that only affected this diagnostic number — `resolve_skills` (called
     // above via `resolve_generation_skills`) independently fell back to the
@@ -746,14 +693,6 @@ fn screen_route_prompt_block(screen_routes: &[(String, String)]) -> String {
 
     format!(
         "DOCUMENT SCREEN ROUTES (use these exact route values in schema-encoded navigation \
-         actions; never invent another route):\n{rows}\n\n\
-         For requested list-to-detail interactions, preserve entity identity: when distinct \
-         items share one detail route, set shared selected-entity state BEFORE push, and bind \
-         the detail title, image and dependent data to that SAME state. Declare consistent \
-         defaults on both screens. Do not make every merchant/product card open unchanged \
-         first-item details. Do not add interactions to a static-only brief.\n\n"
+         actions; never invent another route):\n{rows}\n\n"
     )
 }
-
-#[path = "prompt_screen_composition.rs"]
-mod screen_composition;

@@ -1,3 +1,5 @@
+> **Русская версия для Codex:** исправлены выбор русского языка при встраивании и 129 строк интерфейса. [Сборка, подключение и проверки](LOCALIZATION.ru.md). Исходный проект: ZSeven-W/openpencil.
+
 <p align="center">
   <img src="./crates/op-host-desktop/assets/icon.png" alt="OpenPencil" width="120" />
 </p>
@@ -34,6 +36,17 @@
 <p align="center"><sub>Нажмите на изображение, чтобы посмотреть демо-видео</sub></p>
 
 ## Почему OpenPencil
+
+<a href="https://fluxionai.world/register?source=github&amp;campaign=github-openpencil&amp;promo=OPENPENCIL" title="Fluxion AI">
+  <img src="./screenshot/fluxion-ai-sponsor-banner.png" alt="Fluxion AI — reliable, cost-efficient access to GPT, Claude, and other leading AI models through one unified API" width="100%" />
+</a>
+
+### [OpenPencil × Fluxion AI | One unified API for GPT, Claude, and more](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL)
+
+Thanks to [Fluxion AI](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL) for sponsoring OpenPencil!
+
+- ⚡ **Reliable, cost-efficient access:** GPT, Claude, and other leading AI models through one unified API — save up to 70% compared with official API pricing.
+- 🎁 **OpenPencil user bonus:** get **$1 in API credits** when you [sign up through this link](https://fluxionai.world/register?source=github&campaign=github-openpencil&promo=OPENPENCIL).
 
 <table>
 <tr>

@@ -180,39 +180,13 @@ pub(super) fn collect_text_overflow_fixes_with_context(
             let Some(cr) = rects.get(cid) else {
                 continue;
             };
-            // A fill+wrap text can still resolve to the entire row width
-            // after a rigid marker. Bound the trailing paragraph to the
-            // measured remaining room, instead of cropping its last glyphs.
+            // Already bounded to its block (fill + wrap) → nothing to correct.
             let fill = c.get("width").and_then(Value::as_str) == Some("fill_container");
             let wrap = c
                 .get("textGrowth")
                 .and_then(Value::as_str)
                 .is_some_and(|g| g.starts_with("fixed-width"));
             if fill && wrap {
-                let is_trailing_text = children(v).last().is_some_and(|last| last == c);
-                let Some([_, right, _, _]) = numeric_padding_sides(v) else {
-                    continue;
-                };
-                let inner_right = parent_x + parent_w - right;
-                let available = inner_right - cr.x;
-                if layout_str(v) == Some("horizontal")
-                    && is_trailing_text
-                    && c.get("textGrowth").and_then(Value::as_str) == Some("fixed-width")
-                    && cr.x + cr.w > inner_right + TEXT_OVERFLOW_EPS
-                    && available >= 64.0
-                    && available < cr.w - TEXT_OVERFLOW_EPS
-                {
-                    cmds.push(EditorCommand::UpdateNode {
-                        node_id: NodeId::new(cid),
-                        x: None,
-                        y: None,
-                        width: Some(available.floor() as i32),
-                        height: None,
-                        name: None,
-                        fill_hex: None,
-                        page_id: None,
-                    });
-                }
                 continue;
             }
             // Wider than the block, OR its right edge past the block's right
@@ -262,27 +236,14 @@ pub(super) fn collect_text_overflow_fixes_with_context(
 /// the design decision, the image serves it.
 pub(super) const IMAGE_INFLATION_SLACK: f64 = 8.0;
 
-pub(super) fn collect_oversized_image_fixes(
-    v: &Value,
-    rects: &HashMap<String, Rect>,
-    cmds: &mut Vec<EditorCommand>,
-) {
-    collect_oversized_image_fixes_in_context(v, rects, cmds, false);
-}
-
-fn collect_oversized_image_fixes_in_context(
-    v: &Value,
-    rects: &HashMap<String, Rect>,
-    cmds: &mut Vec<EditorCommand>,
-    protected_media_lane: bool,
-) {
+pub(super) fn collect_oversized_image_fixes(v: &Value, cmds: &mut Vec<EditorCommand>) {
     let declared_w = fixed_width(v);
     let declared_h = match v.get("height") {
         Some(Value::Number(n)) => n.as_f64(),
         Some(Value::String(s)) => s.parse::<f64>().ok(),
         _ => None,
     };
-    if !protected_media_lane && (declared_w.is_some() || declared_h.is_some()) {
+    if declared_w.is_some() || declared_h.is_some() {
         for c in children(v) {
             if c.get("type").and_then(Value::as_str) != Some("image") {
                 continue;
@@ -309,18 +270,8 @@ fn collect_oversized_image_fixes_in_context(
             }
         }
     }
-    let media_lane = v
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|id| rects.get(id))
-        .and_then(|rect| crate::clipped_media_strip::media_lane(v, rect.w));
     for c in children(v) {
-        collect_oversized_image_fixes_in_context(
-            c,
-            rects,
-            cmds,
-            media_lane.is_some_and(|lane| std::ptr::eq(lane, c)),
-        );
+        collect_oversized_image_fixes(c, cmds);
     }
 }
 

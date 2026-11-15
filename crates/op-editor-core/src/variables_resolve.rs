@@ -39,7 +39,7 @@ use jian_ops_schema::node::base::NumberOrExpression;
 use jian_ops_schema::node::container::Padding;
 use jian_ops_schema::node::text::{FontWeight, TextContent};
 use jian_ops_schema::node::PenNode;
-use jian_ops_schema::style::{PenEffect, PenFill, ShaderUniformValue};
+use jian_ops_schema::style::{PenEffect, PenFill};
 use jian_ops_schema::variable::{VariableDefinition, VariableScalar, VariableValue};
 use jian_ops_schema::PenDocument;
 
@@ -209,22 +209,7 @@ fn resolve_fill(fill: &mut PenFill, vars: Option<&Vars>, theme: &Theme) -> bool 
                 changed |= fix(&mut stop.color);
             }
         }
-        // The orchestrator's variable-binding pass binds mesh vertices and
-        // shader colour uniforms too; left unresolved, the painter cannot
-        // parse them and a variants merge leaks them into the shared palette.
-        PenFill::MeshGradient(body) => {
-            for stop in &mut body.stops {
-                changed |= fix(&mut stop.color);
-            }
-        }
-        PenFill::Shader(body) => {
-            for value in body.uniforms.iter_mut().flat_map(|u| u.values_mut()) {
-                if let ShaderUniformValue::Color(color) = value {
-                    changed |= fix(color);
-                }
-            }
-        }
-        PenFill::Image(_) => {}
+        _ => {}
     }
     changed
 }
@@ -360,13 +345,7 @@ pub fn roots_have_tokens(nodes: &[PenNode]) -> bool {
             PenFill::Solid(body) => is_variable_ref(&body.color),
             PenFill::LinearGradient(body) => body.stops.iter().any(|s| is_variable_ref(&s.color)),
             PenFill::RadialGradient(body) => body.stops.iter().any(|s| is_variable_ref(&s.color)),
-            PenFill::MeshGradient(body) => body.stops.iter().any(|s| is_variable_ref(&s.color)),
-            PenFill::Shader(body) => body
-                .uniforms
-                .iter()
-                .flat_map(|u| u.values())
-                .any(|v| matches!(v, ShaderUniformValue::Color(c) if is_variable_ref(c))),
-            PenFill::Image(_) => false,
+            _ => false,
         }
     }
     fn expr_has_token(value: &NumberOrExpression) -> bool {

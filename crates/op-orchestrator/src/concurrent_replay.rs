@@ -4,7 +4,7 @@
 //! `BufferDocSink`; successful buffers cross `WorkerSignal`, and the executor's
 //! one writer commits each buffer as a single `EditorCommand::Batch`.
 
-use super::{run_subtask_retry_ladder_with_outcomes, BufferDocSink};
+use super::{run_subtask_retry_ladder, BufferDocSink};
 use crate::agent_identity::AgentIdentity;
 use crate::model_profile::ModelTier;
 use crate::plan::OrchestratorPlan;
@@ -13,7 +13,7 @@ use crate::subagent::{apply_command_with_reveal, reveal_now_millis};
 use crate::types::{
     AbortFlag, DesignRequest, DocSink, GeometryEchoBudget, LlmClient, Progress, SubtaskOutcome,
 };
-use op_editor_core::{EditorCommand, EditorState, NodeId};
+use op_editor_core::{EditorCommand, EditorState};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -64,7 +64,6 @@ pub(super) async fn run_screen_group_worker(
     event_tx: mpsc::UnboundedSender<WorkerSignal>,
 ) -> WorkerResult {
     let mut aborted = false;
-    let mut prior_outcomes = Vec::new();
     for &idx in &group.indices {
         if abort.is_set() {
             aborted = true;
@@ -84,7 +83,7 @@ pub(super) async fn run_screen_group_worker(
             });
         };
         let mut buffer = BufferDocSink::new(snapshot.clone());
-        let mut outcome = run_subtask_retry_ladder_with_outcomes(
+        let mut outcome = run_subtask_retry_ladder(
             subtask,
             plan,
             request,
@@ -95,7 +94,6 @@ pub(super) async fn run_screen_group_worker(
             None,
             geometry_echo_budget,
             &mut emit,
-            &prior_outcomes,
         )
         .await;
         // Real-sink apply may synchronously wait for the UI ack. It must not
@@ -104,7 +102,6 @@ pub(super) async fn run_screen_group_worker(
 
         let commands = into_replayable_commands(buffer, &outcome);
         let local_commands = commands.clone();
-        let local_outcome = outcome.clone();
         // The staging snapshot allocates local ids; the real replay may
         // remap them because sibling workers commit in completion order.
         outcome.inserted_root_ids.clear();
@@ -134,13 +131,7 @@ pub(super) async fn run_screen_group_worker(
             if let Some(commands) = local_commands {
                 // Keep only this group's committed history in the worker view;
                 // sibling completion order must not change later prompts.
-                if snapshot.apply(EditorCommand::Batch { commands }) {
-                    // Retain staging ids, not the remapped real-document ids.
-                    // Failed or incomplete content must not establish facts.
-                    if local_outcome.error.is_none() && local_outcome.node_count > 0 {
-                        prior_outcomes.push(local_outcome);
-                    }
-                } else {
+                if !snapshot.apply(EditorCommand::Batch { commands }) {
                     tracing::warn!(
                         subtask = %subtask.id,
                         "committed subtask batch could not update group-local snapshot"
@@ -154,10 +145,6 @@ pub(super) async fn run_screen_group_worker(
 
 /// Apply one worker event. This is called only from the executor's select loop,
 /// keeping the real `DocSink` single-writer even while model calls overlap.
-///
-/// Returns `Some(is_provider_limit)` when a `SubtaskSettled` hand-off was
-/// processed (the bool feeds the executor's consecutive-quota-failure circuit
-/// breaker, motion50 fix 1), `None` for plain progress events.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_worker_event(
     event: WorkerSignal,
@@ -168,7 +155,7 @@ pub(super) fn apply_worker_event(
     agent_indicator_epoch: Option<u64>,
     per_subtask: &mut [Option<(SubtaskOutcome, bool)>],
     on_progress: &mut dyn FnMut(Progress),
-) -> Option<bool> {
+) {
     let emit = |group_idx: usize, event: Progress, on_progress: &mut dyn FnMut(Progress)| {
         let group = groups
             .get(group_idx)
@@ -184,10 +171,7 @@ pub(super) fn apply_worker_event(
         ));
     };
     match event {
-        WorkerSignal::Progress { group_idx, event } => {
-            emit(group_idx, event, on_progress);
-            None
-        }
+        WorkerSignal::Progress { group_idx, event } => emit(group_idx, event, on_progress),
         WorkerSignal::SubtaskSettled(replay) => {
             let SubtaskReplay {
                 group_idx,
@@ -196,21 +180,8 @@ pub(super) fn apply_worker_event(
                 commands,
                 ack,
             } = *replay;
-            // Read before the replay-rejection rewrite below: a local commit
-            // failure must not masquerade as (or erase evidence of) a provider
-            // quota error for the circuit breaker.
-            let is_limit_failure = outcome
-                .error
-                .as_deref()
-                .is_some_and(crate::retry::is_outcome_provider_limit);
             let was_zero = outcome.node_count == 0;
             debug_assert_eq!(commands.is_some(), !was_zero);
-            let parent_id = plan.subtasks[plan_idx]
-                .parent_frame_id
-                .as_ref()
-                .map(NodeId::new)
-                .unwrap_or(NodeId::NONE);
-            let roots_before = crate::types::child_ids_under(sink.state(), &parent_id);
             let committed = commands.is_some_and(|commands| {
                 apply_command_with_reveal(
                     sink,
@@ -219,15 +190,6 @@ pub(super) fn apply_worker_event(
                     reveal_now_millis(),
                 )
             });
-            if committed {
-                // The real sink remaps staging ids as other screens commit.
-                // Salvage runs on this real document, so preserve its actual
-                // new root ids rather than the worker's private allocation.
-                outcome.inserted_root_ids = crate::types::child_ids_under(sink.state(), &parent_id)
-                    .into_iter()
-                    .filter(|id| !roots_before.contains(id))
-                    .collect();
-            }
             if !was_zero && !committed {
                 outcome.node_count = 0;
                 outcome.error = Some("atomic replay rejected".into());
@@ -259,7 +221,6 @@ pub(super) fn apply_worker_event(
                 emit(group_idx, terminal, on_progress);
             }
             let _ = ack.send(committed);
-            Some(is_limit_failure)
         }
     }
 }
@@ -267,7 +228,3 @@ pub(super) fn apply_worker_event(
 #[cfg(test)]
 #[path = "concurrent_replay_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "concurrent_copy_context_tests.rs"]
-mod copy_context_tests;

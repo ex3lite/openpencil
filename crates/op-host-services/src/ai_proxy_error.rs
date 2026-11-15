@@ -23,7 +23,6 @@ use crate::web_credentials_error::WebCredentialError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProxyProviderError {
-    Hosted(crate::hosted_models::HostedRuntimeError),
     /// The request's `model` and its attached transient credential's `model`
     /// disagree. Refused rather than resolved against either one.
     TransientModelMismatch,
@@ -43,7 +42,6 @@ pub enum ProxyProviderError {
 impl fmt::Display for ProxyProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Hosted(error) => error.fmt(f),
             ProxyProviderError::TransientModelMismatch => {
                 f.write_str("transient credential model does not match the request")
             }

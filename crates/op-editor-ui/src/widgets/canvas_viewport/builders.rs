@@ -23,89 +23,25 @@ impl<'a> CanvasViewport<'a> {
     /// refreshing on `editor_state_dirty`.
     pub fn from_editor(state: &EditorState, scene: &'a LayoutScene) -> Self {
         let theme = theme_for(&state.editor_ui);
-        // The normal-mode workspace recedes behind the work on its own
-        // studio backdrop; the professional editor keeps the editor
-        // theme's canvas surface unchanged.
-        let fallback = if state.editor_ui.workspace.active {
-            crate::widgets::home_surface::StudioPalette::for_mode(
-                state.editor_ui.effective_theme_mode(),
-            )
-            .canvas
-        } else {
-            theme.canvas_surface
-        };
         let (canvas_background, show_grid) =
-            crate::widgets::canvas_viewport_background::resolve(state, fallback);
+            crate::widgets::canvas_viewport_background::resolve(state, theme.canvas_surface);
         let viewport = DocViewport {
             pan_x: state.viewport.pan_x,
             pan_y: state.viewport.pan_y,
             zoom: state.viewport.zoom,
         };
-        // The phone reader shows the work, not the editor: the selection
-        // is kept (it is the professional canvas's context and the scope
-        // of 改这一页) but its outline, handles and size label stay off.
-        let reading = state.editor_ui.works_reader_visible();
-        let focused_board = {
-            let workspace = &state.editor_ui.workspace;
-            let index = if reading {
-                Some(workspace.selected)
-            } else if workspace.visible {
-                match workspace.view {
-                    op_editor_core::WorkspaceView::Single { index } => Some(index),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            index.map(|index| {
-                let boards = op_editor_core::preview_slideshow::active_page_boards(state);
-                let index = if reading {
-                    index.min(boards.len().saturating_sub(1))
-                } else {
-                    index
-                };
-                boards
-                    .get(index)
-                    .or_else(|| boards.first())
-                    .cloned()
-                    .unwrap_or_default()
-            })
-        };
-        // Keep root labels in the same order and scope as the rendered roots.
-        // Their painter walks labels and roots together rather than searching by ID.
-        let mut frame_labels = if reading {
-            Vec::new()
-        } else {
-            collect_frame_labels(state)
-        };
-        if let Some(id) = focused_board.as_deref() {
-            frame_labels.retain(|label| label.id == id);
-        }
         Self {
             id: WidgetId::new(4000),
             viewport,
             scene,
-            focused_board,
-            selected: if reading {
-                String::new()
-            } else {
-                state.selection.anchor.as_str().to_string()
-            },
-            selected_set: if reading {
-                Default::default()
-            } else {
-                state
-                    .selection
-                    .set
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect()
-            },
-            selection_label: if reading {
-                None
-            } else {
-                selection_size_label(state, scene)
-            },
+            selected: state.selection.anchor.as_str().to_string(),
+            selected_set: state
+                .selection
+                .set
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect(),
+            selection_label: selection_size_label(state, scene),
             tool: state.tool,
             pen_in_progress: state
                 .ui
@@ -143,14 +79,7 @@ impl<'a> CanvasViewport<'a> {
                 // from a previous tool must not paint.
                 .filter(|_| matches!(state.tool, op_editor_core::Tool::Select))
                 .map(|id| id.as_str().to_string()),
-            // The reader's header owns the page name; a canvas label
-            // above the board would sit half under it.
-            frame_labels,
-            generator_badges: if reading {
-                Vec::new()
-            } else {
-                crate::widgets::canvas_generator_badge::collect_generator_badges(state)
-            },
+            frame_labels: collect_frame_labels(state),
             collab_presence: crate::widgets::canvas_collab_presence::snapshot(
                 &state.editor_ui.collab,
             ),
@@ -183,7 +112,6 @@ impl<'a> CanvasViewport<'a> {
             id: WidgetId::new(4000),
             viewport,
             scene,
-            focused_board: None,
             selected: String::new(),
             selected_set: Vec::new(),
             selection_label: None,
@@ -206,7 +134,6 @@ impl<'a> CanvasViewport<'a> {
             now_ms: 0,
             hovered: None,
             frame_labels: Vec::new(),
-            generator_badges: Vec::new(),
             collab_presence: Vec::new(),
             fast_interaction: false,
             cull_override: None,
@@ -220,7 +147,7 @@ impl<'a> CanvasViewport<'a> {
             rect.origin.y + self.viewport.pan_y,
         );
         crate::widgets::canvas_frame_labels::frame_label_at_point(
-            self.focused_roots(page),
+            &page.children,
             &self.frame_labels,
             viewport_origin,
             &self.viewport,
@@ -235,21 +162,6 @@ impl<'a> CanvasViewport<'a> {
 
     pub fn set_node_drag_overlay(&mut self, overlay: Option<CanvasNodeDragOverlay>) {
         self.node_drag_overlay = overlay;
-    }
-
-    pub(super) fn focused_roots<'s>(
-        &self,
-        page: &'s crate::layout_scene::ScenePage,
-    ) -> &'s [crate::layout_scene::SceneNode] {
-        match self.focused_board.as_deref() {
-            Some(id) => page
-                .children
-                .iter()
-                .find(|node| node.id == id)
-                .map(std::slice::from_ref)
-                .unwrap_or(&[]),
-            None => &page.children,
-        }
     }
 }
 

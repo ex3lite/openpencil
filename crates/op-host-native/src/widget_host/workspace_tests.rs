@@ -175,61 +175,6 @@ fn pressing_professional_hides_the_workspace_and_restores_the_tool() {
 }
 
 #[test]
-fn professional_from_preview_releases_runtime_on_workspace_home_and_touch_reader() {
-    for (touch, via_home) in [(false, false), (false, true), (true, false)] {
-        let (width, height) = if touch { (390.0, 844.0) } else { (W, H) };
-        let mut host = host_with_boards_preserving(HomeFamily::AppUi, 1, |state| {
-            state.editor_ui.touch = touch;
-            if touch {
-                state.editor_ui.size_class = op_editor_core::size_class::EditorSizeClass::Compact;
-            }
-        });
-        host.editor_state_mut().editor_ui.workspace.previous_tool = Some(Tool::Rect);
-        host.editor_state_mut().editor_ui.workspace.phase = WorkspacePhase::Done;
-        assert!(host.enter_preview((width, height)));
-        host.set_now_ms(3_000);
-        host.settle_mode_transition();
-        assert!(host.preview_active());
-        let original = host.editor_state().doc.clone();
-        let history = host.editor_state().history.past.len();
-        let rect = if via_home {
-            host.editor_state_mut().editor_ui.home.visible = true;
-            host.editor_state_mut().editor_ui.entry_surface = EntrySurface::Home;
-            op_editor_ui::widgets::HomeSurface::for_editor(host.editor_state())
-                .unwrap()
-                .layout(width, height)
-                .professional
-        } else if touch {
-            op_editor_ui::widgets::WorksReader::for_editor(host.editor_state())
-                .unwrap()
-                .layout(width, height)
-                .mode_professional
-        } else {
-            op_editor_ui::widgets::WorkspaceSurface::for_editor(host.editor_state())
-                .unwrap()
-                .layout(width, height)
-                .professional
-        };
-        assert!(host.apply_press(rect.origin.x + 4.0, rect.origin.y + 4.0, width, height));
-        host.apply_release_with_viewport(width, height);
-        assert!(host.preview.is_none(), "editing owns input immediately");
-        assert!(!host.editor_state().editor_ui.preview.mode);
-        assert!(host.editor_state().editor_ui.preview.device.is_none());
-        assert!(host.preview_mode_transition.is_none());
-        assert!(!host.editor_state().editor_ui.workspace.visible);
-        assert!(!host.home_visible());
-        assert_eq!(host.editor_state().tool, Tool::Rect);
-        assert_eq!(host.editor_state().doc, original);
-        assert_eq!(host.editor_state().history.past.len(), history);
-        assert!(host.editor_state().editor_ui.workspace.active);
-        assert_eq!(
-            host.editor_state().editor_ui.workspace.phase,
-            WorkspacePhase::Done
-        );
-    }
-}
-
-#[test]
 fn pressing_back_shows_home_and_keeps_the_workspace_active() {
     let mut host = host_with_boards(HomeFamily::AppUi, 3);
     let back = {
@@ -251,67 +196,6 @@ fn pressing_back_shows_home_and_keeps_the_workspace_active() {
     );
     assert!(workspace.visible, "no generation was cancelled");
     assert_eq!(workspace.phase, WorkspacePhase::Generating);
-}
-
-#[test]
-fn home_professional_after_workspace_back_restores_the_canvas_on_desktop_and_touch() {
-    for (touch, width, height) in [(false, W, H), (true, 390.0, 844.0)] {
-        let mut host = host_with_boards_preserving(HomeFamily::AppUi, 3, |state| {
-            state.editor_ui.touch = touch;
-            if touch {
-                state.editor_ui.size_class = op_editor_core::size_class::EditorSizeClass::Compact;
-            }
-        });
-        host.editor_state_mut().editor_ui.workspace.previous_tool = Some(Tool::Rect);
-        let before = host.editor_state().doc.clone();
-        let history_depth = host.editor_state().history.past.len();
-        let back = if touch {
-            op_editor_ui::widgets::WorksReader::for_editor(host.editor_state())
-                .expect("touch reader")
-                .layout(width, height)
-                .back
-        } else {
-            op_editor_ui::widgets::WorkspaceSurface::for_editor_at(host.editor_state(), 0)
-                .expect("desktop workspace")
-                .layout(width, height)
-                .back
-        };
-        assert!(host.apply_press(back.origin.x + 4.0, back.origin.y + 4.0, width, height));
-        host.apply_release_with_viewport(width, height);
-        assert!(host.home_visible());
-        assert!(host.editor_state().editor_ui.workspace.visible);
-        assert_eq!(host.editor_state().tool, Tool::Hand);
-
-        let professional = op_editor_ui::widgets::HomeSurface::for_editor(host.editor_state())
-            .expect("home after Back")
-            .layout(width, height)
-            .professional;
-        assert!(host.apply_press(
-            professional.origin.x + 4.0,
-            professional.origin.y + 4.0,
-            width,
-            height
-        ));
-        host.apply_release_with_viewport(width, height);
-
-        assert!(!host.home_visible());
-        assert!(!host.workspace_visible());
-        assert!(!host.works_reader_visible());
-        assert!(!host.editor_state().editor_ui.workspace.visible);
-        assert_eq!(
-            host.editor_state().editor_ui.entry_surface,
-            EntrySurface::Canvas
-        );
-        assert_eq!(host.editor_state().tool, Tool::Rect);
-        assert_eq!(host.editor_state().doc, before);
-        assert_eq!(host.editor_state().history.past.len(), history_depth);
-        assert!(host.editor_state().editor_ui.workspace.active);
-        assert_eq!(
-            host.editor_state().editor_ui.workspace.phase,
-            WorkspacePhase::Generating,
-            "entering professional mode does not stop the run"
-        );
-    }
 }
 
 #[test]
@@ -372,9 +256,7 @@ fn the_dock_handle_drag_clamps_the_width() {
     host.apply_cursor_move(700.0, 500.0);
     assert_eq!(host.editor_state().editor_ui.layer_panel_width, 440.0);
     host.apply_cursor_move(-2_000.0, 500.0);
-    // Studio spec: the conversation dock stays 280–440 (the professional
-    // layers panel keeps its own 240 floor).
-    assert_eq!(host.editor_state().editor_ui.layer_panel_width, 280.0);
+    assert_eq!(host.editor_state().editor_ui.layer_panel_width, 240.0);
     host.apply_cursor_move(330.0, 500.0);
     // Press landed 2 px inside the 5 px handle: start_x = 317, so the
     // width tracks the press-relative delta (320 + 13).
@@ -451,59 +333,5 @@ fn a_second_home_brief_starts_on_a_fresh_page() {
     assert_eq!(
         host.editor_state().editor_ui.workspace.family,
         HomeFamily::Presentation
-    );
-}
-
-#[test]
-fn touch_chrome_never_shows_the_pointer_workspace() {
-    // Its presses are dropped under touch chrome, so painting it would leave
-    // a phone or tablet looking at a desktop workspace nobody can tap.
-    let mut host = WidgetHostNative::new();
-    host.editor_state_mut().editor_ui.home.visible = true;
-    host.editor_state_mut().editor_ui.home.task = HomeFamily::AppUi;
-    host.editor_state_mut()
-        .editor_ui
-        .home
-        .set_draft("做一个咖啡点单 App");
-    assert!(host.queue_home_send());
-    assert!(host.workspace_visible(), "pointer hosts show the workspace");
-    host.editor_state_mut().editor_ui.touch = true;
-    assert!(
-        !host.workspace_visible(),
-        "touch hosts keep their own chrome until the phone reader exists"
-    );
-}
-
-#[test]
-fn retrying_a_stopped_page_edit_keeps_the_document_and_uses_the_edit_route() {
-    let mut host = host_with_boards(HomeFamily::Presentation, 3);
-    let state = host.editor_state_mut();
-    state.editor_ui.workspace.selected = 2;
-    state.editor_ui.workspace.stage_page_edit("board-2", 2);
-    let instruction =
-        "change the title on this page to checked tutorial keep everything else unchanged";
-    op_editor_core::workspace_edit::begin_workspace_edit(state, instruction);
-    state.editor_ui.workspace.clear_staged_page_edit();
-    state.editor_ui.workspace.mark_stopped(0);
-    state.editor_ui.workspace.selected = 0;
-    let before = state.doc.clone();
-    host.retry_workspace_brief();
-    let state = host.editor_state();
-    assert_eq!(
-        state.doc, before,
-        "no fresh document on a stopped edit retry"
-    );
-    assert_eq!(state.chat.pending_send.as_deref(), Some(instruction));
-    assert_eq!(state.chat.launch_route, op_editor_core::LaunchRoute::Auto);
-    assert_eq!(state.editor_ui.workspace.selected, 2);
-    assert_eq!(
-        state
-            .editor_ui
-            .workspace
-            .page_edit
-            .as_ref()
-            .unwrap()
-            .board_id,
-        "board-2"
     );
 }

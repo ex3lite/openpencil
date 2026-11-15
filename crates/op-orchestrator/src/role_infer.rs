@@ -156,24 +156,12 @@ pub fn infer_role_from_name(node: &PenNode) -> Option<&'static str> {
     if !matches!(node, PenNode::Frame(_)) {
         return None;
     }
-    infer_role_from_frame_name(node.base().name.as_deref()?)
-}
-
-/// [`infer_role_from_name`] over a bare frame NAME — for callers that hold
-/// the node as JSON (the pre-insertion self-check's drift grouping).
-pub(crate) fn infer_role_from_frame_name(name: &str) -> Option<&'static str> {
+    let name = node.base().name.as_deref()?;
     let lowered = name.to_lowercase();
     let lower = lowered.trim();
 
     if let Some(role) = exact_role(lower) {
         return Some(role);
-    }
-
-    // Chinese names do not have the word boundaries used by the English
-    // patterns. A terminal control noun identifies the instance while names
-    // such as 按钮组 / 按钮文字 / 选择按钮容器 remain containers or parts.
-    if lower.ends_with("按钮") {
-        return Some("button");
     }
 
     for (pattern, role, skip_containers) in NAME_PATTERN_MAP.iter() {
@@ -268,11 +256,6 @@ fn resolve_node_role(node: &mut PenNode, parent_role: Option<&str>) {
     let mut role: Option<String> = node.base().role.clone();
     if role.is_none() {
         if let Some(inferred) = infer_role_from_name(node) {
-            let inferred = if inferred == "cta-section" && is_compact_cta(node) {
-                "button"
-            } else {
-                inferred
-            };
             // The page-chrome-in-card guard applies ONLY to INFERRED roles (TS
             // resolveNodeRole runs it inside the `if (!role)` branch): a card's
             // inner "Header" must not be inferred as a navbar.
@@ -368,32 +351,6 @@ pub fn resolve_forest_roles(nodes: &mut [PenNode], canvas_width: f64, theme: The
     for node in nodes.iter_mut() {
         resolve_tree_roles(node, &ctx);
     }
-}
-
-/// A compact label/action row is a control, even when named `hero-cta`.
-fn is_compact_cta(node: &PenNode) -> bool {
-    let value = serde_json::to_value(node).unwrap_or_default();
-    let compact_width = value["width"].is_null()
-        || value["width"].as_str() == Some("fit_content")
-        || value["width"]
-            .as_f64()
-            .is_some_and(|w| w > 0.0 && w <= 320.0);
-    compact_width
-        && value["height"]
-            .as_f64()
-            .is_some_and(|h| h > 0.0 && h <= 64.0)
-        && value["layout"].as_str() == Some("horizontal")
-        && node.children().is_some_and(|children| {
-            children
-                .iter()
-                .any(|child| matches!(child, PenNode::Text(_)))
-                && children.iter().all(|child| {
-                    matches!(
-                        child,
-                        PenNode::Text(_) | PenNode::IconFont(_) | PenNode::Path(_)
-                    )
-                })
-        })
 }
 
 #[cfg(test)]

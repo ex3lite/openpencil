@@ -1,7 +1,11 @@
 //! Re-point text whose colour is invisible against its own background.
 //!
-//! Measured blank-title defect: white on #F1F5F9, 1.10:1. Reading copy must
-//! remain readable; a proven offset decoration behind that copy keeps its ink.
+//! `op_design_lint::detectors::typography` has detected this since 2026-05,
+//! but nothing in the generation path ever called it: the orchestrator uses
+//! exactly one lint detector (`detect_missing_progress_rings`), and the rest
+//! only run through the MCP `lint_document` tool a user invokes by hand. So a
+//! deck cover shipped with its title at **1.10:1** — `#FFFFFF` on `#F1F5F9`,
+//! effectively blank (measured 2026-08-01, deepseek-v4-pro).
 //!
 //! ## Why this repairs rather than echoes
 //!
@@ -32,15 +36,18 @@ use op_editor_core::{EditorCommand, EditorState, NodeId, PenNodeExt};
 
 #[path = "text_contrast_gradient.rs"]
 mod gradient;
-#[path = "text_contrast_overprint.rs"]
-mod overprint;
-#[path = "text_contrast_photo.rs"]
-mod photo;
 use gradient::{GradientSource, ResolvedGradient};
-pub use photo::repair_for_image as repair_photo_caption_for_image;
 
-/// Palette-backed replacements in preferred reading order. Surface tokens
-/// remain candidates so dark boards can be repaired safely.
+/// Palette tokens allowed as a replacement, most-preferred first.
+///
+/// All are emitted by `design_system` / `palette_harmonize`, so they exist in
+/// any generated document. `--card` is included on purpose: on a dark
+/// background it is the readable choice, and excluding it would leave dark
+/// boards unrepairable.
+/// These are the names `design_system` actually emits. An earlier version of
+/// this list was written from memory (made-up text token names) and
+/// matched NOTHING in a real document, so every repair silently no-opped —
+/// the unit tests passed because their fixture used the invented names too.
 const CANDIDATE_TOKENS: &[&str] = &[
     "--foreground",
     "--secondary-foreground",
@@ -195,13 +202,10 @@ enum FillKind {
     Transparent,
     /// A usable colour whose source is not a solid or linear/radial gradient.
     Unprovable,
-    /// A usable solid colour (unresolved — may still be a `$ref`) and the
-    /// fill's own opacity, which scales the colour's alpha.
-    Solid(String, f32),
+    /// A usable solid colour (unresolved — may still be a `$ref`).
+    Solid(String),
     /// Gradient stop colours (unresolved — may still be `$ref`s).
     Gradient(GradientSource),
-    /// Mesh vertex colours (unresolved); provable only when near-uniform.
-    Mesh(Vec<String>),
 }
 
 enum ResolvedFill {
@@ -234,7 +238,7 @@ fn first_usable_fill_kind(fills: Option<&Vec<PenFill>>) -> FillKind {
                 if body.color.is_empty() {
                     continue;
                 }
-                return FillKind::Solid(body.color.clone(), body.opacity.unwrap_or(1.0));
+                return FillKind::Solid(body.color.clone());
             }
             PenFill::Image(body) => {
                 if body.opacity == Some(0.0) {
@@ -271,7 +275,7 @@ fn first_usable_fill_kind(fills: Option<&Vec<PenFill>>) -> FillKind {
                 if body.opacity == Some(0.0) {
                     continue;
                 }
-                return FillKind::Mesh(body.stops.iter().map(|v| v.color.clone()).collect());
+                return FillKind::Unprovable;
             }
             PenFill::Shader(body) => {
                 if body.opacity == Some(0.0) {
@@ -285,8 +289,7 @@ fn first_usable_fill_kind(fills: Option<&Vec<PenFill>>) -> FillKind {
 }
 
 /// Resolve the first visible fill into the evidence the contrast pass can
-/// prove. Images, shaders and meshes whose vertices disagree remain
-/// intentionally unprovable.
+/// prove. Images, meshes and shaders remain intentionally unprovable.
 fn resolve_fill_kind(
     fills: Option<&Vec<PenFill>>,
     variables: &op_design_lint::node_util::Variables,
@@ -295,16 +298,13 @@ fn resolve_fill_kind(
     match first_usable_fill_kind(fills) {
         FillKind::Transparent => ResolvedFill::Transparent,
         FillKind::Unprovable => ResolvedFill::Unprovable,
-        FillKind::Solid(raw, fill_opacity) => {
+        FillKind::Solid(raw) => {
             let Some(resolved) = resolve_color_ref(&raw, variables, theme) else {
                 return ResolvedFill::Transparent;
             };
-            let Some(mut rgba) = parse_color_rgba(&resolved) else {
+            let Some(rgba) = parse_color_rgba(&resolved) else {
                 return ResolvedFill::Transparent;
             };
-            // A tinted card (`$--primary` at 8%) paints mostly the surface
-            // beneath it, so the fill opacity must reach the composite.
-            rgba[3] = (f32::from(rgba[3]) * fill_opacity.clamp(0.0, 1.0)).round() as u8;
             if rgba[3] == 0 {
                 ResolvedFill::Transparent
             } else {
@@ -312,9 +312,6 @@ fn resolve_fill_kind(
             }
         }
         FillKind::Gradient(source) => gradient::resolve_gradient(source, variables, theme)
-            .map(ResolvedFill::Gradient)
-            .unwrap_or(ResolvedFill::Unprovable),
-        FillKind::Mesh(colors) => gradient::uniform_mesh(&colors, variables, theme)
             .map(ResolvedFill::Gradient)
             .unwrap_or(ResolvedFill::Unprovable),
     }
@@ -336,10 +333,7 @@ fn nearest_background(
         match resolve_fill_kind(node_fills(ancestor), variables, theme) {
             ResolvedFill::Transparent => continue,
             ResolvedFill::Unprovable => return None,
-            ResolvedFill::Gradient(mut colors) => {
-                let under = nearest_opaque_solid_color(index, ancestors, variables, theme)
-                    .unwrap_or([u8::MAX; 4]);
-                colors.flatten_over(under);
+            ResolvedFill::Gradient(colors) => {
                 return Some(LocatedBackground {
                     colors: colors.colors(),
                     gradient: Some(colors),
@@ -445,7 +439,7 @@ fn background_colors_at_text(
 /// gradient text fill is unprovable and skipped, mirroring the chip rule.
 fn first_usable_solid_fill(fills: Option<&Vec<PenFill>>) -> Option<String> {
     match first_usable_fill_kind(fills) {
-        FillKind::Solid(color, _) => Some(color),
+        FillKind::Solid(color) => Some(color),
         _ => None,
     }
 }
@@ -625,9 +619,7 @@ fn collect_contrast_offenders(
     }
     if matches!(node, PenNode::Text(_) | PenNode::IconFont(_)) {
         if let Some(text_color) = resolved_text_color(node_fills(node), variables, theme) {
-            if let Some(background) =
-                photo::effective_background(node, ancestors, variables, theme, rects)
-            {
+            if let Some(background) = nearest_background(ancestors, variables, theme) {
                 let is_icon = matches!(node, PenNode::IconFont(_));
                 // Icons need the same palette-backed repair as text, but only
                 // when they are effectively indistinguishable from a solid
@@ -643,11 +635,7 @@ fn collect_contrast_offenders(
                         threshold,
                         rects,
                     ) {
-                        if !overprint::covered_by_readable_front(
-                            node, ancestors, variables, theme, rects,
-                        ) {
-                            out.push(offender);
-                        }
+                        out.push(offender);
                     }
                 }
             }
@@ -663,7 +651,6 @@ fn collect_contrast_offenders(
 /// Repair invisible text under `root_id`. Returns how many fills were
 /// re-pointed.
 pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usize {
-    let photo_repairs = photo::repair(sink, root_id);
     let Some(root) = sink
         .state()
         .active_children()
@@ -698,7 +685,7 @@ pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usi
             page_id: None,
         });
     }
-    applied + photo_repairs
+    applied
 }
 
 /// The FIRST palette token, in preference order, that clears

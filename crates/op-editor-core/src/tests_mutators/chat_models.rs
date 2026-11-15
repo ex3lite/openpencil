@@ -69,7 +69,7 @@ fn rebuild_chat_models_syncs_agent_to_selected_model_provider() {
         "gpt-5.5",
         "GPT-5.5",
     )];
-    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false, false, false];
+    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false, false];
     s.editor_ui.agent_settings.provider_connection[1].phase =
         crate::agent_settings::ProviderConnectPhase::Connected;
     s.editor_ui.chat_selected_agent = 0;
@@ -84,7 +84,7 @@ fn rebuild_chat_models_syncs_agent_to_selected_model_provider() {
 fn rebuild_chat_models_does_not_invent_cli_models_without_discovery() {
     let mut s = sample();
     s.chat.discovered_models.clear();
-    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false, false, false];
+    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false, false];
 
     s.rebuild_chat_models();
 
@@ -136,134 +136,6 @@ fn rebuild_chat_models_retains_builtin_agent_display_name_as_group_label() {
     assert_eq!(
         entry.builtin_provider_display_name.as_deref(),
         Some("MiniMax")
-    );
-}
-
-fn state_with_selected_builtin() -> (crate::EditorState, String, String) {
-    let mut state = sample();
-    let first = state.editor_ui.agent_settings.add_builtin_agent_config(
-        "Anthropic",
-        "sk-first",
-        "default",
-        crate::BuiltinAgentKind::Anthropic,
-        "https://api.anthropic.com",
-    );
-    let selected = state.editor_ui.agent_settings.add_builtin_agent_config(
-        "GLM Coding Plan",
-        "sk-selected",
-        "glm-5.2",
-        crate::BuiltinAgentKind::OpenAiCompat,
-        "https://example.test/v1",
-    );
-    state.rebuild_chat_models();
-    let index = state
-        .chat
-        .available_models
-        .iter()
-        .position(|entry| entry.builtin_provider_id.as_deref() == Some(selected.as_str()))
-        .expect("selected provider model");
-    state.select_chat_model(index);
-    (state, first, selected)
-}
-
-#[test]
-fn committing_active_builtin_model_edit_keeps_provider_selected() {
-    use crate::host_settings_commit::{commit_settings_focus, SettingsCommitScope};
-
-    for scope in [SettingsCommitScope::Operator, SettingsCommitScope::Browser] {
-        for external_cli_available in [true, false] {
-            let (mut state, _, selected) = state_with_selected_builtin();
-            state.editor_ui.external_cli_available = external_cli_available;
-            state.editor_ui.agent_settings.focus =
-                Some(crate::agent_settings::SettingsFocus::BuiltinAgent {
-                    index: 1,
-                    field: crate::agent_settings::BuiltinAgentField::Model,
-                });
-            state.editor_ui.settings_input.set_text("glm-5.3-flash");
-
-            assert!(commit_settings_focus(&mut state, scope, 0));
-            // Saving the form rebuilds once more after the input commit.
-            state.rebuild_chat_models();
-
-            let entry = state.chat.selected_model_entry().expect("selected model");
-            assert_eq!(
-                entry.builtin_provider_id.as_deref(),
-                Some(selected.as_str())
-            );
-            assert_eq!(entry.builtin_model_id(), Some("glm-5.3-flash"));
-            assert!(state.editor_ui.agent_settings.focus.is_none());
-        }
-    }
-}
-
-#[test]
-fn rebuilding_builtin_models_prefers_surviving_selection_over_provider_default() {
-    let (mut state, _, selected) = state_with_selected_builtin();
-    state.editor_ui.agent_settings.builtin_agents[1].set_models(["glm-5.3-flash", "glm-5.2"]);
-
-    state.rebuild_chat_models();
-
-    let entry = state.chat.selected_model_entry().expect("selected model");
-    assert_eq!(
-        entry.builtin_provider_id.as_deref(),
-        Some(selected.as_str())
-    );
-    assert_eq!(entry.builtin_model_id(), Some("glm-5.2"));
-}
-
-#[test]
-fn rebuilding_unavailable_builtin_falls_back_to_a_ready_model() {
-    for remove in [true, false] {
-        let (mut state, first, _) = state_with_selected_builtin();
-        if remove {
-            state.editor_ui.agent_settings.remove_builtin_agent(1);
-        } else {
-            state.editor_ui.agent_settings.builtin_agents[1].enabled = false;
-        }
-
-        state.rebuild_chat_models();
-
-        let entry = state.chat.selected_model_entry().expect("ready fallback");
-        assert_eq!(entry.builtin_provider_id.as_deref(), Some(first.as_str()));
-        assert_eq!(entry.builtin_model_id(), Some("default"));
-    }
-}
-
-#[test]
-fn rebuilding_models_keeps_background_provider_and_active_hosted_selection() {
-    let (mut state, _, selected) = state_with_selected_builtin();
-    state.editor_ui.account = crate::AccountState::signed_in_profile("test".into(), None);
-    let route = crate::HostedModelRoute::new(
-        "hosted-route",
-        "hosted-model",
-        "Hosted model",
-        crate::HostedProtocol::OpenAiCompatible,
-        crate::HostedModelCapabilities::default(),
-    )
-    .unwrap();
-    state.replace_hosted_model_catalog(vec![route]).unwrap();
-    state.chat.new_tab();
-    let index = state
-        .chat
-        .available_models
-        .iter()
-        .position(|entry| entry.hosted_route_id() == Some("hosted-route"))
-        .unwrap();
-    state.select_chat_model(index);
-    state.editor_ui.agent_settings.builtin_agents[1].set_models(["replacement-model"]);
-
-    state.rebuild_chat_models();
-
-    let background = state.chat.tabs()[0].selected_model_entry().unwrap();
-    assert_eq!(
-        background.builtin_provider_id.as_deref(),
-        Some(selected.as_str())
-    );
-    assert_eq!(background.builtin_model_id(), Some("replacement-model"));
-    assert_eq!(state.chat.active_index(), 1);
-    assert_eq!(
-        state.chat.selected_model_entry().unwrap().hosted_route_id(),
-        Some("hosted-route")
     );
 }
 

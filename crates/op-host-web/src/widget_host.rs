@@ -96,8 +96,6 @@ mod design_md_press;
 mod design_md_press_tests;
 pub(crate) mod icon_ingest;
 #[cfg(all(test, feature = "canvaskit"))]
-mod preview_asset_sync_tests;
-#[cfg(all(test, feature = "canvaskit"))]
 mod preview_hover_tests;
 // Browser file-IO ingestion (Open / Figma import / clipboard paste)
 // — needs the codegen-gated document-pipeline deps (jian-ops-schema).
@@ -206,21 +204,6 @@ mod shape_create;
 mod shape_create_tests;
 mod shape_picker_press;
 mod slides_panel;
-mod studio_home;
-pub use studio_home::entry_shows_home;
-mod studio_home_input;
-mod studio_home_send;
-pub use studio_home_send::HomeReplaceIntent;
-mod studio_home_site_import;
-#[cfg(test)]
-mod studio_home_tests;
-#[cfg(test)]
-mod studio_variants_tests;
-mod studio_workspace;
-mod studio_workspace_paint;
-mod studio_workspace_run;
-#[cfg(test)]
-mod studio_workspace_tests;
 mod text_drag;
 mod text_edit_caret;
 #[cfg(test)]
@@ -313,8 +296,6 @@ pub struct WidgetHost {
     chat_input_selection_drag: Option<ChatInputSelectionDragState>,
     /// Active Search / Generate popover input selection drag.
     image_input_selection_drag: Option<image_panel_selection::ImageInputSelectionDragState>,
-    /// Home prompt geometry measured with the real text painter.
-    home_input_geometry: Option<op_editor_ui::widgets::home_surface::HomeInputGeometry>,
     /// Latest Search / Generate input geometry measured by the real painter.
     image_input_geometry:
         Option<op_editor_ui::widgets::property_panel_image_assets::ImagePopoverInputGeometry>,
@@ -478,17 +459,6 @@ pub struct WidgetHost {
     /// -font detection is a one-shot modal, so completing it while these are in
     /// flight would accuse every bundled family of being missing.
     pub(in crate::widget_host) bundled_fonts_pending: bool,
-    /// A Studio Home send parked until the user agrees to discard the
-    /// unsaved document it would replace (`studio_home_send.rs`).
-    pub(in crate::widget_host) home_replace_confirm: Option<HomeReplaceIntent>,
-    /// Studio Home swapped the document for a fresh page, so the daemon's
-    /// bound file must stop receiving Save (`studio_web` drains it).
-    pub(in crate::widget_host) daemon_file_unbind_pending: bool,
-    /// Live drag of the Studio workspace's conversation-dock edge.
-    pub(in crate::widget_host) workspace_dock_drag: Option<studio_workspace::WorkspaceDockDrag>,
-    /// When the workspace run's turn went idle — the start of the settle
-    /// grace window (`studio_workspace_run.rs`).
-    pub(in crate::widget_host) workspace_idle_since_ms: Option<u64>,
 }
 
 impl WidgetHost {

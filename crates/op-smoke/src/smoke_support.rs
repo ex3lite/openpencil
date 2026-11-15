@@ -20,8 +20,6 @@ pub(crate) enum SmokeProviderKind {
     OpenAiCompat,
     Antigravity,
     ClaudeCode,
-    Codex,
-    Kimi,
 }
 
 impl SmokeProviderKind {
@@ -31,8 +29,6 @@ impl SmokeProviderKind {
             "openai" | "openai-compat" => Some(Self::OpenAiCompat),
             "antigravity" | "agy" => Some(Self::Antigravity),
             "claude" | "claude-code" => Some(Self::ClaudeCode),
-            "codex" => Some(Self::Codex),
-            "kimi" | "kimi-code" => Some(Self::Kimi),
             _ => None,
         }
     }
@@ -43,8 +39,6 @@ impl SmokeProviderKind {
             Self::OpenAiCompat => "openai-compat",
             Self::Antigravity => "antigravity",
             Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-            Self::Kimi => "kimi",
         }
     }
 }
@@ -72,23 +66,6 @@ pub(crate) fn claude_code_llm(model: &str) -> Box<dyn LlmClient> {
 pub(crate) fn antigravity_llm(model: &str) -> Box<dyn LlmClient> {
     let provider = SubprocessProvider::for_cli_generation(CliName::Antigravity)
         .expect("Antigravity has a production subprocess transport");
-    let provider: Arc<dyn ChatProvider> = Arc::new(provider);
-    Box::new(ChatProviderLlmClient::new(provider).with_model(Some(model.to_string())))
-}
-
-/// The logged-in Kimi Code CLI through its tool-free generation transport.
-pub(crate) fn kimi_llm(model: &str) -> Box<dyn LlmClient> {
-    let provider = SubprocessProvider::for_cli_generation(CliName::Kimi)
-        .expect("Kimi has a production subprocess transport");
-    let provider: Arc<dyn ChatProvider> = Arc::new(provider);
-    Box::new(ChatProviderLlmClient::new(provider).with_model(Some(model.to_string())))
-}
-
-/// Reuse the product's logged-in Codex generation transport. The CLI returns
-/// text to the orchestrator; OP still owns planning, execution and validation.
-pub(crate) fn codex_llm(model: &str) -> Box<dyn LlmClient> {
-    let provider = SubprocessProvider::for_cli_generation(CliName::Codex)
-        .expect("Codex has a production subprocess transport");
     let provider: Arc<dyn ChatProvider> = Arc::new(provider);
     Box::new(ChatProviderLlmClient::new(provider).with_model(Some(model.to_string())))
 }
@@ -203,59 +180,5 @@ pub(crate) fn loop_thinking_mode() -> op_ai::chat_provider::ThinkingMode {
         ThinkingMode::Enabled
     } else {
         ThinkingMode::Disabled
-    }
-}
-
-/// Subtasks that landed no content. In the editor each keeps its empty board
-/// as the target of a Retry row; headless runs have no such row, so these
-/// drafts must not read as clean successes.
-pub(crate) fn failed_subtask_count(summary: &op_orchestrator::RunSummary) -> usize {
-    summary
-        .subtasks
-        .iter()
-        .filter(|s| s.node_count == 0)
-        .count()
-}
-
-/// Exit 5: the run delivered work but at least one subtask landed nothing
-/// (measured: a flaky proxy left a blank card in a four-card set and a
-/// poster without its hero, both exiting 0).
-pub(crate) fn failed_subtasks_exit_code(failed_count: usize) -> Option<u8> {
-    (failed_count > 0).then_some(5)
-}
-
-#[cfg(test)]
-mod provider_tests {
-    use super::*;
-
-    #[test]
-    fn a_run_with_an_empty_subtask_exits_five_and_a_clean_run_zero() {
-        assert_eq!(failed_subtasks_exit_code(1), Some(5));
-        assert_eq!(failed_subtasks_exit_code(3), Some(5));
-        assert_eq!(failed_subtasks_exit_code(0), None);
-    }
-
-    #[test]
-    fn codex_selection_stays_on_its_existing_generation_transport() {
-        assert_eq!(
-            SmokeProviderKind::parse("codex"),
-            Some(SmokeProviderKind::Codex)
-        );
-        assert_eq!(SmokeProviderKind::Codex.label(), "codex");
-        let _ = codex_llm("gpt-6.1-sol");
-    }
-
-    #[test]
-    fn kimi_selection_uses_the_kimi_generation_transport() {
-        assert_eq!(
-            SmokeProviderKind::parse("kimi"),
-            Some(SmokeProviderKind::Kimi)
-        );
-        assert_eq!(
-            SmokeProviderKind::parse("Kimi-Code"),
-            Some(SmokeProviderKind::Kimi)
-        );
-        assert_eq!(SmokeProviderKind::Kimi.label(), "kimi");
-        let _ = kimi_llm("k3.1-pro");
     }
 }

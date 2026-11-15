@@ -48,11 +48,6 @@ fn light_theme() -> op_design_lint::node_util::Theme {
     op_design_lint::node_util::default_theme(Some(&themes))
 }
 
-#[path = "text_contrast_fill_opacity_tests.rs"]
-mod fill_opacity;
-#[path = "text_contrast_overprint_tests.rs"]
-mod overprint;
-
 #[test]
 fn white_text_on_a_light_board_is_repointed_at_the_ink_token() {
     // The shipped defect: title fill `$--card` (#FFFFFF) on a
@@ -402,7 +397,7 @@ fn readable_icon_on_its_solid_marker_is_left_untouched() {
     assert_eq!(repair_text_contrast(&mut sink, "board"), 0);
 }
 
-pub(super) fn contrast_sink(
+fn contrast_sink(
     root_fill: Option<serde_json::Value>,
     panel_fill: Option<serde_json::Value>,
     text_fill: serde_json::Value,
@@ -442,7 +437,7 @@ pub(super) fn contrast_sink(
     (sink, "board".to_string())
 }
 
-pub(super) fn contrast_label_fill(sink: &VecDocSink) -> String {
+fn contrast_label_fill(sink: &VecDocSink) -> String {
     serde_json::to_value(&sink.state.active_children()[0]).expect("serialize")["children"][0]
         ["children"][0]["fill"][0]["color"]
         .as_str()
@@ -766,7 +761,6 @@ fn the_driver_attributes_chip_repairs_to_the_chip_checkpoint() {
 
     let (mut sink, root_id) = chip_sink();
     let plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: root_id.clone(),
             name: "Deck".into(),
@@ -779,7 +773,6 @@ fn the_driver_attributes_chip_repairs_to_the_chip_checkpoint() {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     };
     let mut summary = RepairSummary::default();
     run_cleanup_passes_with_summary(&mut sink, &plan, &[&root_id], &mut summary);

@@ -4,12 +4,6 @@ use std::fs;
 use std::io;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-
-#[path = "chat_subprocess_auth.rs"]
-mod auth;
-#[path = "chat_subprocess_budget.rs"]
-mod budget;
-pub use budget::antigravity_timeout;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,13 +11,7 @@ use op_ai::chat_provider::CliName;
 
 static TURN_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Wall clock for one Antigravity turn. Gemini 3.8 Flash (high) took 155s to
-/// write one 12-card kanban section (measured 2026-09-29); the old 2-minute
-/// budget ended most generation turns in an empty print timeout.
-pub const ANTIGRAVITY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-/// `--print-timeout` handed to agy: inside [`ANTIGRAVITY_TIMEOUT`] so the CLI
-/// returns what it has before the wall clock kills it.
-pub const ANTIGRAVITY_PRINT_TIMEOUT: &str = "280s";
+pub const ANTIGRAVITY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 pub const GROK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const EXIT_GRACE: Duration = Duration::from_secs(2);
 
@@ -62,11 +50,7 @@ pub fn antigravity_args(purpose: TurnPurpose) -> Vec<String> {
     // child. Keep the remaining containment layers (private cwd, filtered
     // environment, sandbox, and wall-clock timeout) even though argv privacy
     // cannot be provided for this CLI.
-    let mut args = vec![
-        "--sandbox".into(),
-        "--print-timeout".into(),
-        budget::antigravity_print_timeout(),
-    ];
+    let mut args = vec!["--sandbox".into(), "--print-timeout".into(), "90s".into()];
     if purpose == TurnPurpose::Generation {
         args.extend(["--mode".into(), "plan".into()]);
     }
@@ -134,14 +118,6 @@ const AUTOMATION_GUARD: &str = "OPENPENCIL AUTOMATION SAFETY:\n\
 Use the OpenPencil MCP server only (`mcp__openpencil__*` / `openpencil/*`) to inspect or modify the canvas. \
 Do not run terminal commands, write local files, browse the web, spawn subagents, or call any other MCP server. \
 Never request interactive approval. If the OpenPencil MCP tools are unavailable or denied, report that failure and stop.";
-/// Prefix for Antigravity GENERATION turns. The reply is parsed directly as
-/// the design program, and every tool is denied in the isolated turn — yet
-/// Gemini 3.8 Flash sometimes reaches for one ("write the script to a
-/// file"), agy auto-denies it in headless mode and the turn ends with no
-/// output at all (3 of 12 arena tasks, 2026-09-29).
-const ANTIGRAVITY_GENERATION_GUARD: &str =
-    "Reply with text only. Do not call any tool, run commands, or write files: \
-your reply itself is parsed as the answer.";
 const GROK_COMPAT_SETTINGS: &[u8] = br#"{"permissions":{"defaultMode":"dontAsk"}}"#;
 
 pub struct IsolatedTurn {
@@ -214,8 +190,6 @@ impl IsolatedTurn {
         let result = (|| {
             let mut prepared_prompt = if purpose.uses_canvas_mcp() {
                 format!("{AUTOMATION_GUARD}\n\n{prompt}")
-            } else if cli == CliName::Antigravity {
-                format!("{ANTIGRAVITY_GENERATION_GUARD}\n\n{prompt}")
             } else {
                 prompt.to_owned()
             };
@@ -368,10 +342,24 @@ pub fn append_isolated_env(env: &mut Vec<(String, String)>, turn: Option<&Isolat
 
 /// Build the private per-turn Antigravity HOME.
 ///
-/// Keep mutable config and logs private while reusing the existing login.
-/// agy 1.3's OAuth file is copied separately; real HOME remains available
-/// for older keyring-based versions. Neither a background cache auth error
-/// nor an OAuth endpoint URL alone proves that model authentication failed.
+/// SIGNPOST, not a fix — where credentials come from on this path.
+/// Every turn gets a FRESH private `--gemini_dir` (see
+/// `IsolatedTurn::append_cli_args`), so no on-disk login from a
+/// previous turn or from the user's own `agy` session is ever visible
+/// to the child. The real HOME is kept (see `append_isolated_env`)
+/// precisely so the OS keyring stays reachable — which makes the
+/// keyring the ONLY credential source for a generation turn.
+///
+/// The consequence: if the keyring is unreachable (a GUI launch
+/// without a usable session, a denied keychain prompt, a Linux box with
+/// no dbus session), EVERY turn fails the same way — the child prints
+/// its interactive-login block and exits non-zero once its own auth
+/// wait elapses. Measured 2026-08-07: with a private `--gemini_dir` and
+/// piped stdio, that block lands entirely on stderr and stdout comes
+/// back empty, which is why the failure used to surface as a bare
+/// `CLI exited with status 1`. It no longer does — the child's own
+/// words now ride the error — so if this is ever suspected again, read
+/// the quoted tail rather than re-deriving it from here.
 fn prepare_antigravity_home(
     turn_dir: &Path,
     host_home: Option<&Path>,
@@ -437,23 +425,18 @@ fn prepare_antigravity_home(
     } else {
         serde_json::json!([])
     };
-    let mut deny = ANTIGRAVITY_DENY_RULES.to_vec();
-    if !use_canvas_mcp {
-        deny.extend(["read_file(*)", "list_dir(*)", "grep(*)"]);
-    }
     let settings = serde_json::json!({
         "toolPermission": "strict",
         "allowNonWorkspaceAccess": false,
         "enableTerminalSandbox": true,
         "permissions": {
             "allow": allow,
-            "deny": deny,
+            "deny": ANTIGRAVITY_DENY_RULES,
             "ask": []
         }
     });
     write_private_json(&config_dir.join("mcp_config.json"), &mcp_config)?;
     write_private_json(&settings_dir.join("settings.json"), &settings)?;
-    auth::copy_antigravity_oauth(host_home, &settings_dir)?;
     Ok(home)
 }
 
@@ -694,18 +677,7 @@ fn mentions_auth(lower: &str) -> bool {
 
 pub fn friendly_stderr_error(cli: Option<CliName>, stderr: &str) -> Option<String> {
     let lower = stderr.to_ascii_lowercase();
-    // A network error fetching /oauth2/v2/userinfo is not a logged-out user.
-    // Explicit authorization redirects remain recognizable in either stream.
-    let auth_text = lower
-        .split_whitespace()
-        .filter(|word| !word.contains("://"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    if friendly_stdout_error(cli, stderr).is_some()
-        || mentions_auth(&auth_text)
-        || auth_text.contains("login")
-        || auth_text.contains("sign in")
-    {
+    if mentions_auth(&lower) || lower.contains("login") || lower.contains("sign in") {
         return Some(match cli {
             Some(CliName::Antigravity) => {
                 "Antigravity is not authenticated. Run `agy` once in a terminal.".into()

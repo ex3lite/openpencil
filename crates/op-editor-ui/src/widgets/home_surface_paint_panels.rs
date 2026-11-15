@@ -2,17 +2,23 @@
 
 use super::super::copy::{self, SANS};
 use super::super::fade;
+use super::super::paint::art::paint_app_art;
 use super::super::paint::art_phase;
 use super::super::paint::cards::{
-    paint_sticker, paint_template_paper, task_art, text, text_weighted,
+    paint_sticker, paint_template_paper, preview_template_for, text, text_weighted,
 };
 use super::super::{HomeLayout, HomeSurface, StudioPalette};
 use crate::widgets::brand_icons::paint_figma_logo;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, RenderBackend};
+use jian_widgets::components::text_area::TextArea;
 use jian_widgets::Tokens;
-use op_editor_core::HomeHit;
+use op_editor_core::{HomeFamily, HomeHit, InfoKind, SlideRatio};
+
+/// Input text metrics (prototype 14 px / 1.75 line-height; jian's text
+/// area uses 1.35 — the composer honors the component's own advance).
+const INPUT_FONT: f32 = 14.0;
 
 fn studio_tokens(palette: StudioPalette) -> Tokens {
     let mut tokens = Tokens::light();
@@ -97,8 +103,6 @@ pub(super) fn paint_composer(
         }
     }
 
-    super::super::app_pages::paint(surface, cx, layout.app_page_options, rise, palette);
-
     // ── the input box ─────────────────────────────────────────────────
     let input_box = shift(layout.input_box, rise);
     let engaged = !surface.state.draft.is_empty()
@@ -106,8 +110,7 @@ pub(super) fn paint_composer(
             surface.state.hover,
             Some(HomeHit::Sheet) | Some(HomeHit::Send)
         );
-    cx.backend
-        .fill_round_rect(input_box, 10.0, palette.surface_input);
+    cx.backend.fill_round_rect(input_box, 10.0, palette.panel);
     if engaged {
         cx.backend.fill_round_rect(
             Rect::xywh(
@@ -130,8 +133,23 @@ pub(super) fn paint_composer(
         },
         1.0,
     );
-    let text_rect = surface.input_text_rect(input_box);
-    let text_area = surface.input_text_area(task_copy.placeholder, input_box);
+    // jian's TextArea pads y by 4 and x by its pad_x; shift the rect so
+    // the text lands at the prototype's 13/14 padding.
+    let text_rect = Rect::xywh(
+        input_box.origin.x + 1.0,
+        input_box.origin.y + 9.0,
+        input_box.size.x - 2.0,
+        input_box.size.y - 18.0,
+    );
+    let text_area = TextArea {
+        state: &surface.state.input,
+        placeholder: task_copy.placeholder,
+        focused: surface.state.visible,
+        font_size: INPUT_FONT,
+        now_ms: surface.now_ms,
+        pad_x: 13.0,
+        max_visible_lines: 8,
+    };
     // `draw_text` is baseline-relative but jian's TextArea positions glyph
     // runs from the line top, so every draw shifts down by the ascent —
     // the same wrapper the chat composer's input paints through.
@@ -140,16 +158,51 @@ pub(super) fn paint_composer(
         baseline_delta_y: 14.0,
     };
     backend.save();
-    backend.clip_rect(surface.input_clip_rect(input_box));
+    backend.clip_round_rect(input_box, 10.0);
     text_area.paint(&mut backend, text_rect, &studio_tokens(palette));
     backend.restore();
 
-    super::super::references::paint(surface, cx, input_box, palette);
+    // Attachment chips (the chat composer's staged list is the truth).
+    let names = &surface.attachment_names;
+    if !names.is_empty() {
+        let chips_h = names.len().min(2) as f32 * 34.0 + 8.0;
+        let chips_area = Rect::xywh(
+            input_box.origin.x + 10.0,
+            input_box.origin.y + input_box.size.y - chips_h,
+            input_box.size.x - 20.0,
+            chips_h,
+        );
+        let mut chip_x = chips_area.origin.x;
+        for name in names.iter().take(3) {
+            let label: String = name.chars().take(8).collect();
+            let chip_w = cx.backend.measure_text_family(&label, 11.0, SANS) + 26.0 + 34.0;
+            let chip = Rect::xywh(chip_x, chips_area.origin.y + 6.0, chip_w, 26.0);
+            cx.backend.fill_round_rect(chip, 6.0, palette.chip_bg);
+            cx.backend
+                .stroke_round_rect(chip, 6.0, palette.chip_line, 1.0);
+            cx.backend.fill_round_rect(
+                Rect::xywh(chip.origin.x + 4.0, chip.origin.y + 3.0, 20.0, 20.0),
+                3.0,
+                fade(palette.blue, 0.25),
+            );
+            text(
+                cx,
+                &label,
+                Point2D::new(
+                    chip.origin.x + 30.0,
+                    jian_widgets::centered_text_baseline_y(chip, 11.0),
+                ),
+                11.0,
+                fade(palette.ink, 0.75),
+            );
+            chip_x += chip_w + 6.0;
+        }
+    }
 
     // The inline replace-confirm strip rides above the input's bottom.
     if surface.state.replace_pending {
         let strip = shift(layout.replace_strip, rise);
-        cx.backend.fill_round_rect(strip, 8.0, palette.raised);
+        cx.backend.fill_round_rect(strip, 8.0, palette.panel);
         cx.backend
             .stroke_round_rect(strip, 8.0, fade(palette.blue, 0.4), 1.0);
         text(
@@ -191,12 +244,11 @@ pub(super) fn paint_composer(
                 } else if hovered {
                     palette.button_hover
                 } else {
-                    palette.raised
+                    palette.panel
                 },
             );
             if !primary {
-                cx.backend
-                    .stroke_round_rect(button, 7.0, palette.raised_line, 1.0);
+                cx.backend.stroke_round_rect(button, 7.0, palette.line, 1.0);
             }
             let label_w = cx.backend.measure_text_family(label, 12.0, SANS);
             text(
@@ -229,12 +281,6 @@ pub(super) fn paint_composer(
     ] {
         paint_tool_button(surface, cx, shift(rect, rise), hit, label, icon, palette);
     }
-    super::super::brand_chip::paint_link_hint(
-        surface,
-        cx,
-        shift(layout.reference_link, rise),
-        palette,
-    );
     let figma = shift(layout.figma, rise);
     let figma_hover = surface.state.hover == Some(HomeHit::Figma);
     let figma_color = if figma_hover {
@@ -261,22 +307,18 @@ pub(super) fn paint_composer(
     if figma_hover {
         paint_soon_tooltip(surface, cx, figma, palette);
     }
-    super::super::variants_toggle::paint_variants_toggle(
-        surface,
-        cx,
-        shift(layout.variants, rise),
-        palette,
-    );
 
     // ── submit row ───────────────────────────────────────────────────
     super::super::model::paint_model_chip(surface, cx, shift(layout.model_chip, rise), palette);
     let send = shift(layout.send, rise);
-    // An empty box is no longer a dead button: it starts from the
-    // example (see `HomeSendMode`), so the slab always paints live.
-    let mode = surface.send_mode();
-    let connect_mode = mode == op_editor_core::HomeSendMode::Connect;
+    let empty = surface.state.draft.trim().is_empty();
+    let connect_mode = !surface.usable_agent;
     let send_hover = surface.state.hover == Some(HomeHit::Send);
-    let fill = if !connect_mode && send_hover {
+    let fill = if connect_mode {
+        palette.blue
+    } else if empty {
+        palette.disabled_primary
+    } else if send_hover {
         palette.blue_hover
     } else {
         palette.blue
@@ -288,7 +330,7 @@ pub(super) fn paint_composer(
         send
     };
     cx.backend.fill_round_rect(send_rect, 9.0, fill);
-    if !connect_mode {
+    if !connect_mode && !empty {
         cx.backend.fill_drop_shadow(
             Rect::xywh(
                 send_rect.origin.x + 4.0,
@@ -301,22 +343,24 @@ pub(super) fn paint_composer(
             fade(palette.blue, 0.16),
         );
     }
-    let send_label = copy::home_str(locale, surface.send_label_key());
-    // "Start with example" and its translations run longer than 开始设计;
-    // the label shrinks to fit the fixed slab rather than overflow it.
-    let label_size =
-        copy::fit_label_size(cx.backend, send_label, 15.0, send_rect.size.x - 16.0 - 31.0);
-    let label_w = cx.backend.measure_text_family(send_label, label_size, SANS);
-    let send_ink = Color::WHITE;
+    let send_label = copy::home_str(
+        locale,
+        if connect_mode {
+            "home.submit.connect"
+        } else {
+            "home.submit.start"
+        },
+    );
+    let label_w = cx.backend.measure_text_family(send_label, 15.0, SANS);
     text_weighted(
         cx,
         send_label,
         Point2D::new(
             send_rect.origin.x + (send_rect.size.x - label_w - 21.0 - 10.0) / 2.0,
-            jian_widgets::centered_text_baseline_y(send_rect, label_size),
+            jian_widgets::centered_text_baseline_y(send_rect, 15.0),
         ),
-        label_size,
-        send_ink,
+        15.0,
+        Color::WHITE,
         550,
     );
     draw_icon(
@@ -327,44 +371,8 @@ pub(super) fn paint_composer(
             send_rect.origin.y + (send_rect.size.y - 21.0) / 2.0,
         ),
         21.0,
-        send_ink,
+        Color::WHITE,
         2.0,
-    );
-    if let Some(key) = surface.send_hint_key() {
-        paint_send_example_hint(surface, cx, send_rect, palette, key);
-    }
-}
-
-/// The hint over Send (`key`, see `HomeSurface::send_hint_key`): e.g. on
-/// an empty box, that the example brief is what will run, so the one-click
-/// start is discoverable rather than a surprise. Right-aligned to the
-/// button so it never leaves the composer.
-pub(in crate::widgets) fn paint_send_example_hint(
-    surface: &HomeSurface<'_>,
-    cx: &mut PaintCx<'_>,
-    anchor: Rect,
-    palette: StudioPalette,
-    key: &'static str,
-) {
-    let label = copy::home_str(surface.ui.locale, key);
-    let w = cx.backend.measure_text_family(label, 11.0, SANS) + 20.0;
-    let tooltip = Rect::xywh(
-        anchor.origin.x + anchor.size.x - w,
-        anchor.origin.y - 28.0,
-        w,
-        22.0,
-    );
-    cx.backend
-        .fill_round_rect(tooltip, 7.0, palette.tooltip_fill);
-    text(
-        cx,
-        label,
-        Point2D::new(
-            tooltip.origin.x + 10.0,
-            jian_widgets::centered_text_baseline_y(tooltip, 11.0),
-        ),
-        11.0,
-        palette.tooltip_ink,
     );
 }
 
@@ -379,10 +387,7 @@ fn paint_tool_button(
     palette: StudioPalette,
 ) {
     let hovered = surface.state.hover == Some(hit);
-    // 加链接 is live where the host can run a brand extraction (desktop);
-    // elsewhere it stays the "coming soon" tool, like Figma.
-    let disabled =
-        hit == HomeHit::Figma || (hit == HomeHit::ReferenceLink && !surface.state.brand.available);
+    let disabled = matches!(hit, HomeHit::ReferenceLink | HomeHit::Figma);
     let color = if disabled && hovered {
         fade(palette.ink, 0.5)
     } else if hovered {
@@ -423,7 +428,7 @@ fn paint_soon_tooltip(
     let w = cx.backend.measure_text_family(label, 11.0, SANS) + 20.0;
     let tooltip = Rect::xywh(anchor.origin.x, anchor.origin.y - 28.0, w, 22.0);
     cx.backend
-        .fill_round_rect(tooltip, 7.0, palette.tooltip_fill);
+        .fill_round_rect(tooltip, 7.0, fade(palette.ink, 0.9));
     text(
         cx,
         label,
@@ -432,7 +437,7 @@ fn paint_soon_tooltip(
             jian_widgets::centered_text_baseline_y(tooltip, 11.0),
         ),
         11.0,
-        palette.tooltip_ink,
+        Color::WHITE,
     );
 }
 
@@ -493,14 +498,37 @@ pub(super) fn paint_preview(
     );
 
     // Art area with the 300 ms art-in on task switch (prototype:
-    // opacity .2→1, rise 8 px, scale .985→1), shared by every task.
+    // opacity .2→1, rise 8 px, scale .985→1). The App path owns its
+    // motion inside `paint_app_art`; the template paths share the
+    // wrapper below.
     let art = shift(layout.preview_art, rise);
-    let phase = art_phase(
-        surface.ui.motion_stamp(surface.state.art_switched_at_ms),
-        surface.now_ms,
-    );
-    let (template, aspect) = task_art(surface);
-    paint_template_switched(cx, art, template, palette, aspect, phase);
+    let phase = art_phase(surface.state.art_switched_at_ms, surface.now_ms);
+    let draft = surface.state.task_draft();
+    match surface.state.task {
+        HomeFamily::AppUi => paint_app_art(cx, art, palette, draft.device, phase),
+        HomeFamily::Presentation => {
+            let aspect = match draft.ratio {
+                SlideRatio::Wide169 => Some(16.0 / 9.0),
+                SlideRatio::Classic43 => Some(4.0 / 3.0),
+            };
+            paint_template_switched(
+                cx,
+                art,
+                preview_template_for(HomeFamily::Presentation, InfoKind::Data),
+                palette,
+                aspect,
+                phase,
+            );
+        }
+        family => paint_template_switched(
+            cx,
+            art,
+            preview_template_for(family, draft.info_kind),
+            palette,
+            None,
+            phase,
+        ),
+    }
 
     // Footer: pages text left, 使用这个示例 / 回到工作区 link right.
     let footer = shift(layout.preview_footer, rise);
@@ -605,5 +633,48 @@ fn paint_template_switched(
 }
 
 fn fade_palette(palette: StudioPalette, factor: f32) -> StudioPalette {
-    palette.faded(factor)
+    let faded = |color| fade(color, factor);
+    StudioPalette {
+        page: faded(palette.page),
+        panel: faded(palette.panel),
+        line: faded(palette.line),
+        ink: faded(palette.ink),
+        muted: faded(palette.muted),
+        sub: faded(palette.sub),
+        context: faded(palette.context),
+        divider: faded(palette.divider),
+        blue: faded(palette.blue),
+        blue_hover: faded(palette.blue_hover),
+        blue_soft: faded(palette.blue_soft),
+        segment_bg: faded(palette.segment_bg),
+        segment_line: faded(palette.segment_line),
+        input_line: faded(palette.input_line),
+        placeholder: faded(palette.placeholder),
+        yellow: faded(palette.yellow),
+        disabled_primary: faded(palette.disabled_primary),
+        preview: faded(palette.preview),
+        preview_line: faded(palette.preview_line),
+        selected_tab: faded(palette.selected_tab),
+        tab_hover: faded(palette.tab_hover),
+        tab_fill: faded(palette.tab_fill),
+        tab_hover_fill: faded(palette.tab_hover_fill),
+        tab_hover_line: faded(palette.tab_hover_line),
+        tab_selected_fill: faded(palette.tab_selected_fill),
+        tab_selected_line: faded(palette.tab_selected_line),
+        tabs_hairline: faded(palette.tabs_hairline),
+        button_hover: faded(palette.button_hover),
+        button_hover_line: faded(palette.button_hover_line),
+        eyebrow: faded(palette.eyebrow),
+        preview_desc: faded(palette.preview_desc),
+        preview_footer: faded(palette.preview_footer),
+        status_green: faded(palette.status_green),
+        chip_bg: faded(palette.chip_bg),
+        chip_line: faded(palette.chip_line),
+        tint_knowledge: faded(palette.tint_knowledge),
+        tint_tutorial: faded(palette.tint_tutorial),
+        tint_poster: faded(palette.tint_poster),
+        tile_knowledge: faded(palette.tile_knowledge),
+        tile_tutorial: faded(palette.tile_tutorial),
+        tile_poster: faded(palette.tile_poster),
+    }
 }

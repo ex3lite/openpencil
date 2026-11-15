@@ -30,10 +30,6 @@ pub(crate) use geometry_echo::geometry_diagnostics_for_roots;
 
 #[path = "geometry_compact_status.rs"]
 mod geometry_compact_status;
-#[path = "geometry_intrinsic_rows.rs"]
-mod geometry_intrinsic_rows;
-#[path = "geometry_metadata_badges.rs"]
-mod geometry_metadata_badges;
 use geometry_compact_status::{
     compact_status_header_is_damaged, compact_trailing_status_pair, is_compact_status_badge,
     is_compact_status_badge_structure, stack_compact_status_header,
@@ -48,15 +44,11 @@ use text_collision::push_text_collision_diagnostics;
 // `geometry_diagnostics` / `fix_rail_width_collapse`); each family of
 // collectors lives in its own file and is re-imported here so the drivers (and
 // the test modules mounted below) see the same flat namespace as before.
-#[path = "geometry_board_containment.rs"]
-mod geometry_board_containment;
 #[path = "geometry_bottom_gap.rs"]
 mod geometry_bottom_gap;
-pub use geometry_board_containment::fixed_board_content_diagnostics;
 use geometry_bottom_gap::push_mobile_bottom_gap_diagnostic;
 pub(crate) use geometry_bottom_gap::{
-    fixed_mobile_bottom_gap, repair_mobile_bottom_breathing,
-    repair_mobile_bottom_breathing_for_all_roots,
+    repair_mobile_bottom_breathing, repair_mobile_bottom_breathing_for_all_roots,
 };
 #[path = "geometry_interaction_backfill.rs"]
 mod geometry_interaction_backfill;
@@ -70,19 +62,10 @@ mod absolute_child_clamp;
 mod card_inner_padding;
 #[path = "geometry_buried_overlay.rs"]
 mod geometry_buried_overlay;
-#[path = "geometry_tutorial_labels.rs"]
-mod geometry_tutorial_labels;
-pub use geometry_tutorial_labels::repair_scoped_tutorial_labels;
-#[path = "editorial_column_gutters.rs"]
-mod editorial_column_gutters;
-#[path = "headline_tail_fit.rs"]
-mod headline_tail_fit;
-pub(crate) use editorial_column_gutters::repair_divided_prose_gutters;
 #[path = "none_stack_inset.rs"]
 mod none_stack_inset;
 #[path = "text_fit.rs"]
 mod text_fit;
-pub(crate) use headline_tail_fit::repair_headline_tails;
 #[path = "touch_target_floor.rs"]
 mod touch_target_floor;
 pub(crate) use absolute_child_clamp::{
@@ -94,30 +77,18 @@ pub(crate) use text_fit::repair_text_fit;
 pub(crate) use touch_target_floor::repair_touch_target_floor;
 #[path = "geometry_card_rail_fixes.rs"]
 mod geometry_card_rail_fixes;
-#[path = "geometry_clipped_rows.rs"]
-mod geometry_clipped_rows;
 #[path = "geometry_diagnostics_collect.rs"]
 mod geometry_diagnostics_collect;
-#[path = "geometry_grid_row_fit.rs"]
-mod geometry_grid_row_fit;
 #[path = "geometry_grow_fit_fixes.rs"]
 mod geometry_grow_fit_fixes;
 #[path = "geometry_overflow_fixes.rs"]
 mod geometry_overflow_fixes;
-#[path = "geometry_photo_caption_flow.rs"]
-mod geometry_photo_caption_flow;
-#[path = "geometry_pinned_composer.rs"]
-mod geometry_pinned_composer;
 #[path = "geometry_row_fixes.rs"]
 mod geometry_row_fixes;
 #[path = "geometry_scale_ops.rs"]
 mod geometry_scale_ops;
-#[path = "geometry_sidebar_rail.rs"]
-mod geometry_sidebar_rail;
 #[path = "geometry_spill_diagnostics.rs"]
 mod geometry_spill_diagnostics;
-#[path = "geometry_starved_column.rs"]
-mod geometry_starved_column;
 #[path = "geometry_starved_row.rs"]
 mod geometry_starved_row;
 #[path = "geometry_value_readers.rs"]
@@ -131,10 +102,6 @@ use geometry_row_fixes::*;
 use geometry_scale_ops::*;
 use geometry_spill_diagnostics::*;
 use geometry_value_readers::*;
-
-#[cfg(test)]
-#[path = "geometry_media_strip_tests.rs"]
-mod media_strip_tests;
 
 #[derive(Clone, Copy, Debug)]
 struct Rect {
@@ -236,28 +203,6 @@ const MIN_FILL_COL: f64 = 40.0;
 /// shreds "a.sterling@email.com" into a one-glyph-per-line tower that blows
 /// the row to 400px tall. Reserve enough for a readable two-line wrap.
 const MIN_FILL_TEXT_COL: f64 = 120.0;
-
-/// Hug columns consume their measured width, not the readable reserve of a
-/// growing prose column. Reserving 120px for a short price can falsely starve
-/// its siblings and shrink a product's add button even when the row fits.
-fn non_fixed_column_floor(cell: &Value, rects: &HashMap<String, Rect>) -> f64 {
-    if cell.get("width").and_then(Value::as_str) == Some("fit_content") {
-        if let Some(width) = cell
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| rects.get(id))
-            .map(|rect| rect.w)
-            .filter(|width| *width > 0.0)
-        {
-            return width;
-        }
-    }
-    if bears_text(cell) {
-        MIN_FILL_TEXT_COL
-    } else {
-        MIN_FILL_COL
-    }
-}
 /// Slack so a table that fits by a hair isn't needlessly rescaled.
 const OVERFLOW_EPS: f64 = 4.0;
 /// Leave a little breathing room after scaling.
@@ -285,7 +230,7 @@ pub fn fix_table_column_overflow(sink: &mut dyn DocSink, root_id: &str) -> bool 
             return false;
         };
         let mut ops = Vec::new();
-        collect_scale_ops(sink.state(), &v, &rects, &mut ops);
+        collect_scale_ops(&v, &rects, &mut ops);
         ops
     };
     if ops.is_empty() {
@@ -300,12 +245,6 @@ pub fn fix_table_column_overflow(sink: &mut dyn DocSink, root_id: &str) -> bool 
 /// Max detect→fix→relayout rounds (Pencil's multi-round `snapshot_layout`
 /// feedback, bounded so a hard-to-fix design can't spin).
 const MAX_ROUNDS: usize = 3;
-
-/// Share the same measured metadata reflow with pre-insert section budgets.
-pub(crate) fn repair_metadata_badges(sink: &mut dyn DocSink, root_id: &str) -> bool {
-    let rects = resolved_rects(sink.state());
-    geometry_metadata_badges::repair(sink, root_id, &rects)
-}
 
 /// Geometry-driven validation LOOP: recompute the REAL layout, detect + fix the
 /// structural violations the resolved rects prove (table column overflow,
@@ -346,12 +285,6 @@ pub fn geometry_validate_and_fix_for_form(
     let mut rounds = 0;
     for _ in 0..MAX_ROUNDS {
         let rects = resolved_rects(sink.state());
-        // Metadata labels must remain readable. Reflow complete badges before
-        // generic overflow fixes can turn the tail into a clipped Fill cell.
-        if geometry_metadata_badges::repair(sink, root_id, &rects) {
-            rounds += 1;
-            continue;
-        }
         let cmds = {
             let Some(root) = op_editor_core::walkers::find_node(
                 sink.state().active_children(),
@@ -363,57 +296,20 @@ pub fn geometry_validate_and_fix_for_form(
                 break;
             };
             let mut cmds = Vec::new();
-            // Reflow indivisible content groups before shrink/clip collectors
-            // inspect stale geometry. Resolve the new axes on the next round.
-            geometry_intrinsic_rows::collect_reflows(&v, &rects, &mut cmds);
-            if !cmds.is_empty() {
-                for cmd in cmds {
-                    sink.apply(cmd);
-                }
-                rounds += 1;
-                continue;
-            }
-            collect_scale_ops(sink.state(), &v, &rects, &mut cmds);
+            collect_scale_ops(&v, &rects, &mut cmds);
             collect_collapse_fixes(&v, &rects, &mut cmds);
             collect_text_overflow_fixes(&v, &rects, &mut cmds);
             collect_frame_overflow_fixes(&v, &rects, &mut cmds);
-            collect_oversized_image_fixes(&v, &rects, &mut cmds);
+            collect_oversized_image_fixes(&v, &mut cmds);
             collect_absolute_fill_image_fixes(&v, &rects, &mut cmds);
             collect_grow_to_fit_fixes(&v, &rects, &mut cmds);
-            // A clipped card truncating a table body / list hugs its rows —
-            // past the small-overshoot bound the rule above keeps to.
-            geometry_clipped_rows::collect_clipped_rows_grow_fixes(&v, &rects, &mut cmds);
-            // A clipped pane hiding its bottom composer (reply box, chat
-            // input) scrolls its body instead.
-            geometry_pinned_composer::collect_pinned_composer_fixes(&v, &rects, &mut cmds);
-            // BEFORE the jam gap: a calendar week that cannot seat its
-            // identical cells gets the shared width and a narrower gap.
-            geometry_grid_row_fit::collect_grid_row_fit_fixes(&v, &rects, &mut cmds);
-            // A scaffold sidebar wider than the rail drawn inside it.
-            geometry_sidebar_rail::collect_sidebar_rail_fixes(&v, &rects, &mut cmds);
             collect_row_gap_fixes(&v, &rects, &mut cmds);
             collect_card_row_height_fixes(&v, &rects, &mut cmds, false);
             // BEFORE the inside-out overfull repair: a rigid row starved by
             // its own flex siblings must be widened at the ROW, not squeezed
             // through its columns (which have nothing to give).
             geometry_starved_row::collect_starved_rigid_row_fixes(&v, &rects, &mut cmds);
-            // The opposite starvation: a flexible TEXT column squeezed into a
-            // one-glyph tower by its rigid siblings — reclaimed from the
-            // row's gaps and its numeric text columns' slack.
-            geometry_starved_column::collect_starved_text_column_fixes(
-                sink.state(),
-                &v,
-                &rects,
-                &mut cmds,
-            );
-            geometry_buried_overlay::collect_buried_overlay_fixes_in_state(
-                sink.state(),
-                &v,
-                &rects,
-                &mut cmds,
-            );
-            geometry_photo_caption_flow::collect_fixes(&v, &rects, &mut cmds);
-            geometry_tutorial_labels::collect_fixes(&v, &rects, &mut cmds);
+            geometry_buried_overlay::collect_buried_overlay_fixes(&v, &rects, &mut cmds);
             collect_row_overfull_fixes(&v, &rects, &mut cmds, false);
             collect_rail_width_collapse_fixes(&v, &rects, &mut cmds);
             // BEFORE the clip fallback: a fixed-size absolute child that fits
@@ -460,12 +356,6 @@ pub fn geometry_diagnostics(state: &EditorState) -> Vec<String> {
             break;
         }
         if let Ok(v) = serde_json::to_value(root) {
-            crate::app_shell::height_contract_diagnostics(
-                &v,
-                |id| rects.get(id).map(|r| (r.x, r.y, r.w, r.h)),
-                &mut out,
-            );
-            geometry_board_containment::collect(&v, &rects, &mut out);
             bottom_nav_root_containment_diagnostic(&v, &rects, &mut out);
             bottom_nav_order_diagnostic(&v, &mut out);
             push_mobile_bottom_gap_diagnostic(&v, &rects, &mut out);
@@ -532,7 +422,13 @@ fn table_columns_exceed_width(v: &Value, rects: &HashMap<String, Rect>) -> Optio
         for cell in cells {
             floor_sum += match fixed_width(cell) {
                 Some(w) => w * MIN_SCALE,
-                None => non_fixed_column_floor(cell, rects),
+                None => {
+                    if bears_text(cell) {
+                        MIN_FILL_TEXT_COL
+                    } else {
+                        MIN_FILL_COL
+                    }
+                }
             };
         }
         let Some(row_id) = row.get("id").and_then(Value::as_str) else {

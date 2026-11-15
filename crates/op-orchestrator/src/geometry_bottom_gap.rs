@@ -10,12 +10,10 @@
 //! preserving every authored business node. The diagnostic uses the same
 //! resolved-geometry predicate, so cleanup and echo cannot disagree.
 //!
-//! The bottom-nav exception is decided from the authored
+//! No name heuristics: the bottom-nav exception is decided from the authored
 //! `role` semantic plus resolved geometry (full-width trailing band, nav-band
 //! height, ≥3 evenly-sized tap targets in a horizontal row) — never from what
 //! the model happened to call the frame.
-//! Explicit action bars also close the screen when their full-width bounded
-//! surface retains a safe inset below the button. They share cleanup semantics.
 
 use super::*;
 use op_editor_core::PenNodeExt;
@@ -73,7 +71,7 @@ pub(super) fn push_mobile_bottom_gap_diagnostic(
 
 /// Repair a no-nav mobile screen to the shared 28px bottom-room contract.
 ///
-/// OpenPencil's post-layout reconciliation can grow an explicitly open numeric root
+/// OpenPencil's post-layout reconciliation can grow an unclipped numeric root
 /// to include its content plus padding. Increasing only the root's bottom
 /// padding therefore grows the resolved artboard without relocating any
 /// business child. Existing compliant gaps, navigation chrome, desktop roots,
@@ -89,14 +87,6 @@ pub(crate) fn repair_mobile_bottom_breathing(sink: &mut dyn DocSink, root_id: &s
     let Ok(value) = serde_json::to_value(root) else {
         return false;
     };
-    // Implicit root clipping is an artboard viewport contract. Padding alone
-    // cannot create room under fixed business children without changing that
-    // viewport or cropping content; leave the diagnostic for a real reflow.
-    if value.get("height").and_then(Value::as_f64).is_some()
-        && value.get("clipContent").and_then(Value::as_bool) != Some(false)
-    {
-        return false;
-    }
     let Some(gap) = resolved_mobile_bottom_gap(&value, &rects) else {
         return false;
     };
@@ -132,26 +122,6 @@ pub(crate) fn repair_mobile_bottom_breathing_for_all_roots(sink: &mut dyn DocSin
 }
 
 fn resolved_mobile_bottom_gap(root: &Value, rects: &HashMap<String, Rect>) -> Option<f64> {
-    mobile_bottom_gap_including_overflow(root, rects).filter(|gap| *gap >= 0.0)
-}
-
-/// The fixed-board fitter must reserve breathing room while recovering overflow,
-/// not only after the content already happens to fit inside the viewport.
-pub(crate) fn fixed_mobile_bottom_gap(state: &EditorState, root_id: &str) -> Option<f64> {
-    let root = op_editor_core::walkers::find_node(state.active_children(), &NodeId::new(root_id))?;
-    let value = serde_json::to_value(root).ok()?;
-    if value.get("height").and_then(Value::as_f64).is_none()
-        || value.get("clipContent").and_then(Value::as_bool) == Some(false)
-    {
-        return None;
-    }
-    mobile_bottom_gap_including_overflow(&value, &resolved_rects(state))
-}
-
-fn mobile_bottom_gap_including_overflow(
-    root: &Value,
-    rects: &HashMap<String, Rect>,
-) -> Option<f64> {
     let root_rect = resolved(root, rects)?;
     if root_rect.w > MOBILE_ROOT_MAX_WIDTH || root_rect.h < MOBILE_ROOT_MIN_HEIGHT {
         return None;
@@ -163,23 +133,7 @@ fn mobile_bottom_gap_including_overflow(
     }
     let kids = children(root);
     let last = kids.last()?;
-    // An interactive viewport intentionally meets the device edge. Its body
-    // scrolls to a separate closing inset; its clip edge is not a content edge.
-    let scroll_viewport = last.get("clipContent").and_then(Value::as_bool) == Some(true)
-        && last.get("height").and_then(Value::as_str) == Some("fill_container")
-        && matches!(
-            last.get("role").and_then(Value::as_str),
-            Some("scroll" | "scroll-area" | "scroll-viewport")
-        )
-        && last
-            .get("events")
-            .and_then(|e| e.get("onScroll"))
-            .and_then(Value::as_array)
-            .is_some_and(|events| !events.is_empty());
-    if scroll_viewport
-        || is_bottom_nav_shape(last, &root_rect, rects)
-        || is_inset_action_bar(last, &root_rect, rects)
-    {
+    if is_bottom_nav_shape(last, &root_rect, rects) {
         return None;
     }
     // The lowest resolved edge across the root's direct children — not just
@@ -187,49 +141,19 @@ fn mobile_bottom_gap_including_overflow(
     // be what actually reaches the bottom.
     let content_bottom = kids
         .iter()
-        .filter_map(|child| content_bottom(child, rects))
+        .filter_map(|child| resolved(child, rects))
+        .map(|rect| rect.y + rect.h)
         .fold(f64::NEG_INFINITY, f64::max);
     if !content_bottom.is_finite() {
         return None;
     }
     let gap = root_rect.y + root_rect.h - content_bottom;
+    // A negative gap is content OVERFLOWING the root — a different fact, and
+    // the spill diagnostics already report it.
+    if gap < 0.0 {
+        return None;
+    }
     Some(gap)
-}
-
-fn is_inset_action_bar(child: &Value, root: &Rect, rects: &HashMap<String, Rect>) -> bool {
-    let Some(rect) = resolved(child, rects) else {
-        return false;
-    };
-    if rect.w < root.w - FULL_WIDTH_EPS
-        || !(44.0..=128.0).contains(&rect.h)
-        || !numeric_padding_sides(child).is_some_and(|padding| padding[2] >= MIN_BOTTOM_GAP)
-    {
-        return false;
-    }
-    serde_json::from_value(child.clone())
-        .ok()
-        .is_some_and(|node| crate::mobile_action_bar::is_action_bar(&node))
-}
-
-fn content_bottom(child: &Value, rects: &HashMap<String, Rect>) -> Option<f64> {
-    // A full-bleed navigation map is the backdrop, not the last control. Only
-    // the pipeline-owned viewport gets this exception; keep checking overlays.
-    if crate::map_viewport::is_viewport(child)
-        && children(child)
-            .iter()
-            .any(crate::map_viewport::is_map_background)
-    {
-        let bottom = children(child)
-            .iter()
-            .filter(|node| !crate::map_viewport::is_map_background(node))
-            .filter_map(|node| resolved(node, rects))
-            .map(|rect| rect.y + rect.h)
-            .reduce(f64::max);
-        if bottom.is_some() {
-            return bottom;
-        }
-    }
-    resolved(child, rects).map(|rect| rect.y + rect.h)
 }
 
 /// Does this trailing root child close the screen with bottom navigation?

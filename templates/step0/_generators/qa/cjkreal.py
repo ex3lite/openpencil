@@ -2,20 +2,15 @@
 """把 cjkcheck 的报告与 snapshot_layout 的实测行数交叉：
 真实行数 == 硬换行数 => 根本没发生自动折行 => 该报告是保守模拟的误报。
 只留真正折了行的节点。"""
-import json, os, re, shutil, subprocess, sys, pathlib, tempfile
-# OP_BIN_DIR points at another profile / worktree (e.g. target/debug).
-BIN=str(pathlib.Path(os.environ.get("OP_BIN_DIR",pathlib.Path(__file__).resolve().parents[4]/"target"/"release"))/"openpencil-desktop")
+import json, re, subprocess, sys, pathlib
+BIN="/Users/fini/workspace/openpencil/target/release/openpencil-desktop"
 TOOL=str(pathlib.Path(__file__).resolve().parent / "cjkcheck.py")
 def snap(path):
     req=[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}},
          {"jsonrpc":"2.0","id":2,"method":"tools/call",
           "params":{"name":"snapshot_layout","arguments":{"depth":40}}}]
-    # `--mcp <file>` finalizes and WRITES BACK to the file; run it on a copy.
-    with tempfile.TemporaryDirectory() as tmp:
-        copy=pathlib.Path(tmp)/pathlib.Path(path).name
-        shutil.copy(path,copy)
-        out=subprocess.run([BIN,"--mcp",str(copy)],input="\n".join(json.dumps(r) for r in req)+"\n",
-                           capture_output=True,text=True).stdout
+    out=subprocess.run([BIN,"--mcp",path],input="\n".join(json.dumps(r) for r in req)+"\n",
+                       capture_output=True,text=True).stdout
     last=[l for l in out.strip().splitlines() if l.startswith("{")][-1]
     return json.loads(json.loads(last)["result"]["content"][0]["text"])["layout"]
 def flat(ns,acc):

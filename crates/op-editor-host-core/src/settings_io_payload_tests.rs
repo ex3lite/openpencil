@@ -40,11 +40,13 @@ fn eight_cli_mcp_payload_drops_gemini_without_shifting_later_clis() {
 }
 
 #[test]
-fn eight_provider_connected_payload_is_the_current_layout_and_round_trips() {
-    // The current layout has eight slots (DeepSeek Harness, then Kimi Code,
-    // appended at the tail). An 8-entry file must round-trip VERBATIM.
+fn seven_provider_connected_payload_is_the_current_layout_and_round_trips() {
+    // The current layout has seven slots (DeepSeek Harness appended at
+    // the tail). A 7-entry file must round-trip VERBATIM — treating it
+    // as the legacy Gemini-era layout would silently shift every saved
+    // connection on every load.
     let payload: SettingsPayload = serde_json::from_str(
-        r#"{"version":1,"connected":[true,false,true,false,true,true,false,true]}"#,
+        r#"{"version":1,"connected":[true,false,true,false,true,true,false]}"#,
     )
     .unwrap();
     let mut dst = EditorState::new();
@@ -53,26 +55,7 @@ fn eight_provider_connected_payload_is_the_current_layout_and_round_trips() {
 
     assert_eq!(
         dst.editor_ui.agent_settings.connected,
-        [true, false, true, false, true, true, false, true]
-    );
-}
-
-#[test]
-fn seven_provider_connected_payload_keeps_flags_and_leaves_kimi_off() {
-    // Files written before Kimi Code joined have seven slots. They must be
-    // copied verbatim — treating them as the legacy Gemini-era layout would
-    // silently shift every saved connection — with the appended Kimi slot
-    // starting disconnected.
-    let payload: SettingsPayload =
-        serde_json::from_str(r#"{"version":1,"connected":[true,false,true,false,true,true,true]}"#)
-            .unwrap();
-    let mut dst = EditorState::new();
-
-    apply_payload(&mut dst, payload);
-
-    assert_eq!(
-        dst.editor_ui.agent_settings.connected,
-        [true, false, true, false, true, true, true, false]
+        [true, false, true, false, true, true, false]
     );
 }
 
@@ -89,7 +72,7 @@ fn six_provider_connected_payload_keeps_flags_and_leaves_dsh_off() {
 
     assert_eq!(
         dst.editor_ui.agent_settings.connected,
-        [true, false, true, false, true, true, false, false]
+        [true, false, true, false, true, true, false]
     );
 }
 
@@ -98,11 +81,11 @@ fn five_provider_connected_payload_drops_retired_gemini() {
     let payload: SettingsPayload =
         serde_json::from_str(r#"{"version":1,"connected":[true,false,false,false,true]}"#).unwrap();
     let mut dst = EditorState::new();
-    dst.editor_ui.agent_settings.connected = [false, false, false, false, true, true, true, true];
+    dst.editor_ui.agent_settings.connected = [false, false, false, false, true, true, true];
     apply_payload(&mut dst, payload);
     assert_eq!(
         dst.editor_ui.agent_settings.connected,
-        [true, false, false, false, false, false, false, false]
+        [true, false, false, false, false, false, false]
     );
 }
 
@@ -115,7 +98,7 @@ fn legacy_settings_without_connected_field_default_to_disconnected() {
     let payload: SettingsPayload = serde_json::from_str(legacy).unwrap();
     let mut dst = EditorState::new();
     apply_payload(&mut dst, payload);
-    assert_eq!(dst.editor_ui.agent_settings.connected, [false; 8]);
+    assert_eq!(dst.editor_ui.agent_settings.connected, [false; 7]);
 }
 
 #[test]
@@ -558,39 +541,4 @@ fn explicit_saved_builtin_preset_is_preserved_during_load() {
         dst.editor_ui.agent_settings.builtin_agents[0].preset,
         BuiltinAgentPresetKey::Doubao
     );
-}
-
-#[test]
-fn image_gen_enabled_round_trips_and_fingerprint_tracks_it() {
-    let mut src = EditorState::new();
-    assert!(
-        !src.editor_ui.agent_settings.image_gen_enabled,
-        "the persisted default is off"
-    );
-    src.editor_ui.agent_settings.add_image_gen_profile();
-    src.editor_ui.agent_settings.image_gen_profiles[0].api_key = "image-key".into();
-    src.editor_ui.agent_settings.image_gen_enabled = true;
-
-    let json = serde_json::to_string(&to_payload(&src)).unwrap();
-    assert!(json.contains("\"image_gen_enabled\""));
-    let payload: SettingsPayload = serde_json::from_str(&json).unwrap();
-    let mut dst = EditorState::new();
-    apply_payload(&mut dst, payload);
-    assert!(dst.editor_ui.agent_settings.image_gen_enabled);
-
-    // A settings file written before the field existed must load as off.
-    let legacy = serde_json::from_str::<SettingsPayload>(
-        &serde_json::to_string(&to_payload(&EditorState::new()))
-            .unwrap()
-            .replace(",\"image_gen_enabled\":false", ""),
-    )
-    .unwrap();
-    let mut older = EditorState::new();
-    apply_payload(&mut older, legacy);
-    assert!(!older.editor_ui.agent_settings.image_gen_enabled);
-
-    // Toggling the flag must trip the fingerprint so the file re-saves.
-    let before = fingerprint(&dst);
-    dst.editor_ui.agent_settings.image_gen_enabled = false;
-    assert_ne!(before, fingerprint(&dst));
 }

@@ -10,8 +10,6 @@
 //! desktop-only plumbing (`image_panel_host`'s active gen profile) and stay
 //! in the desktop crate (`image_search_session/intent.rs`).
 
-mod fallback_intent;
-mod page_context;
 mod query;
 use std::collections::{HashMap, HashSet};
 
@@ -31,23 +29,13 @@ pub struct ImageSearchTarget {
     pub query: String,
     pub aspect_ratio: Option<ImageAspectRatio>,
     /// AI-generation prompt bound to the node (`image_prompt`), if any. Used when
-    /// an image-gen model is configured; falls back to `generation_subject`
-    /// or `query` for automatic generation.
+    /// an image-gen model is configured; falls back to `query`.
     pub prompt: Option<String>,
-    /// Derived page/section art direction for automatic generation only.
-    /// Never used as a search keyword or as authored intent identity.
-    pub page_context: Option<String>,
-    /// Nearest heading and auxiliary text, only for a node-name query fallback.
-    /// Advisory generation subject; never changes search or intent identity.
-    pub generation_subject: Option<String>,
     /// Explicit `G()` acquisition mode, or Auto for legacy/heuristic slots.
     pub mode: ImageRequestMode,
     /// Resolved numeric dimensions (for the gen provider's aspect mapping).
     pub width: Option<f64>,
     pub height: Option<f64>,
-    /// Actual centered slot view for stock judging; unknown geometry keeps
-    /// the compatibility path that judges the complete image.
-    pub judge_view: Option<crate::ImageJudgeView>,
 }
 
 /// How a slot wants its image: stock search, AI generation, or the legacy
@@ -100,8 +88,6 @@ pub fn collect_targets_with_scene(
         &resolved_sizes,
         &mut targets,
         &[],
-        &[],
-        state.doc.name.as_deref(),
     );
     targets
 }
@@ -142,8 +128,6 @@ fn collect_from_children(
     resolved_sizes: &HashMap<String, (f64, f64)>,
     targets: &mut Vec<ImageSearchTarget>,
     parent_names: &[String],
-    ancestors: &[&PenNode],
-    document_name: Option<&str>,
 ) {
     // Direct sibling text of a bare anonymous slot may name its subject
     // ("Blinding Lights" next to a nameless 120px square = that track's
@@ -167,21 +151,14 @@ fn collect_from_children(
             .take(2)
             .collect();
 
-        if let Some(target) = image_search_target_for(
-            node,
-            known_node_ids,
-            resolved_sizes,
-            parent_names,
-            &context,
-            ancestors,
-            document_name,
-        ) {
+        if let Some(target) =
+            image_search_target_for(node, known_node_ids, resolved_sizes, parent_names, &context)
+        {
             targets.push(target);
         }
 
         if is_image_placeholder_frame(node)
             || is_unfilled_explicit_image_query_frame(node)
-            || is_unfilled_fallback_frame(node)
             || is_image_area_frame_by_heuristic(node)
             || is_image_area_rectangle_by_heuristic(node)
         {
@@ -191,16 +168,12 @@ fn collect_from_children(
             let mut child_parent_names = Vec::with_capacity(parent_names.len() + 1);
             child_parent_names.push(node.base().name.clone().unwrap_or_default());
             child_parent_names.extend(parent_names.iter().cloned());
-            let mut child_ancestors = ancestors.to_vec();
-            child_ancestors.push(node);
             collect_from_children(
                 grand,
                 known_node_ids,
                 resolved_sizes,
                 targets,
                 &child_parent_names,
-                &child_ancestors,
-                document_name,
             );
         }
     }
@@ -212,8 +185,6 @@ fn image_search_target_for(
     resolved_sizes: &HashMap<String, (f64, f64)>,
     parent_names: &[String],
     sibling_text: &[String],
-    ancestors: &[&PenNode],
-    document_name: Option<&str>,
 ) -> Option<ImageSearchTarget> {
     let id = node.base().id.as_str();
     if known_node_ids.contains(id) {
@@ -247,9 +218,7 @@ fn image_search_target_for(
         return None;
     }
 
-    let fallback = fallback_intent::for_node(node);
-    let intent_node = fallback.as_ref().map_or(node, |intent| &intent.restored);
-    let mut query = extract_query_for_node(intent_node, parent_names);
+    let mut query = extract_query_for_node(node, parent_names);
     if bare_slot_with_context {
         // The generic name-derived fallback ("placeholder") loses to the
         // card's own text; an EXPLICIT imageSearchQuery binding still wins.
@@ -268,49 +237,42 @@ fn image_search_target_for(
         // it can only ever come from siblings — and a card with no words of its
         // own would otherwise borrow its neighbour's ("Santorini" on the Bali
         // card, measured while fixing this).
-        query = query::ExtractedQuery::subject(if !explicit.is_empty() {
+        query = if !explicit.is_empty() {
             explicit
         } else if let Some(name) = parent_semantic_name(parent_names) {
             name
         } else {
             sibling_text.join(" ")
-        });
+        };
     }
-    if query.text.is_empty() {
+    if query.is_empty() {
         return None;
     }
 
-    // A policy fallback frame retains the original Image contract in its
-    // validated envelope. Ordinary frames still carry no rich image prompt.
-    let prompt = match intent_node {
+    // `image_prompt` is the author's AI-gen prompt (Image nodes only); placeholder
+    // frames / rectangles carry only a name-derived query.
+    let prompt = match node {
         PenNode::Image(image) => image.image_prompt.clone(),
         _ => None,
     };
-    let mode = fallback.map_or_else(|| image_request_mode(node), |intent| intent.mode);
+    let mode = image_request_mode(node);
     let (width, height) = resolved_sizes
         .get(id)
         .copied()
         .map(|(width, height)| (Some(width), Some(height)))
         .unwrap_or_else(|| (node.width_px(), node.height_px()));
-    let context = page_context::derive(ancestors, document_name);
     Some(ImageSearchTarget {
         node_id: NodeId::new(id),
-        query: query.text,
+        query,
         aspect_ratio: infer_aspect_ratio(width, height),
         prompt,
-        page_context: context.context,
-        generation_subject: context.subject.filter(|_| query.from_node_name),
         mode,
         width,
         height,
-        judge_view: crate::judge_view::for_node(node, width, height),
     })
 }
 
 pub fn image_request_mode(node: &PenNode) -> ImageRequestMode {
-    if let Some(intent) = fallback_intent::for_node(node) {
-        return intent.mode;
-    }
     match node {
         // Legacy / script-generated Image nodes intentionally carry both
         // fields: generation uses the richer prompt when a profile exists,
@@ -356,16 +318,6 @@ pub fn image_request_mode(node: &PenNode) -> ImageRequestMode {
     }
 }
 
-pub(crate) fn has_saved_image_fallback_intent(node: &PenNode) -> bool {
-    fallback_intent::for_node(node).is_some()
-}
-
-/// Whether the saved image intent and policy-owned decorations still match.
-/// Geometry consumers can preserve the slot without accepting authored cards.
-pub fn is_unchanged_image_fallback(node: &PenNode) -> bool {
-    fallback_intent::is_unchanged_tile(node)
-}
-
 fn is_placeholder_src(src: &str) -> bool {
     src.trim().is_empty() || src.starts_with("data:image/svg+xml;charset=utf-8,%3Csvg")
 }
@@ -391,22 +343,7 @@ fn is_image_placeholder_frame(node: &PenNode) -> bool {
 pub fn is_frame_placeholder_still_unfilled(node: &PenNode) -> bool {
     is_unfilled_image_placeholder_frame(node)
         || is_unfilled_explicit_image_query_frame(node)
-        || is_unfilled_fallback_frame(node)
         || is_image_area_frame_by_heuristic(node)
-}
-
-fn is_unfilled_fallback_frame(node: &PenNode) -> bool {
-    let PenNode::Frame(frame) = node else {
-        return false;
-    };
-    if !fallback_intent::is_unchanged_tile(node) {
-        return false;
-    }
-    !frame.container.fill.as_deref().is_some_and(|fills| {
-        fills
-            .iter()
-            .any(|fill| matches!(fill, PenFill::Image(body) if !is_placeholder_src(&body.url)))
-    })
 }
 
 fn is_unfilled_image_placeholder_frame(node: &PenNode) -> bool {
@@ -688,18 +625,6 @@ fn has_image_area_keyword(name: &str) -> bool {
         .filter(|character| character.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect();
-    // A reveal/wipe cover is animation geometry, not a book/album cover.
-    // The name fallback once searched "Reveal Cover" and replaced a solid
-    // chart mask with an unrelated product photo. Explicit image intent is
-    // handled separately and does not depend on this heuristic.
-    if ["reveal", "wipe", "mask", "scrim", "overlay"]
-        .iter()
-        .any(|word| compact.contains(word))
-        || name.contains("遮罩")
-        || name.contains("蒙版")
-    {
-        return false;
-    }
     if compact.ends_with("img")
         || compact.ends_with("image")
         || compact.ends_with("photo")

@@ -11,10 +11,6 @@ impl WidgetHostNative {
     /// Escape — priority cascade: rename → property → pickers →
     /// chat → selection. One layer per press.
     pub fn apply_escape(&mut self) -> bool {
-        if self.editor_state.editor_ui.escape_missing_fonts() {
-            self.mark_dirty();
-            return true;
-        }
         // Transient pointer capture is the topmost interaction layer. Escape
         // cancels it without replaying a delayed tap or committing a reorder.
         if self.editor_state.editor_ui.touch_chrome() && self.cancel_native_touch_gestures() {
@@ -30,14 +26,6 @@ impl WidgetHostNative {
         // settings / sign-in modals Home opens are closed by their own
         // rungs further down this ladder.)
         if self.editor_state.editor_ui.home.visible {
-            if self.editor_state.editor_ui.home.references_open {
-                self.editor_state
-                    .apply_home_reference_action(op_editor_core::HomeHit::ReferencesClose);
-                self.editor_state.editor_ui.home.key_focus =
-                    Some(op_editor_core::HomeHit::References);
-                self.mark_dirty();
-                return true;
-            }
             if self.editor_state.editor_ui.home.connect_card_open {
                 self.editor_state.editor_ui.home.connect_card_open = false;
                 self.mark_dirty();
@@ -45,7 +33,6 @@ impl WidgetHostNative {
             }
             if self.editor_state.editor_ui.home.more_open {
                 self.editor_state.editor_ui.home.more_open = false;
-                self.editor_state.editor_ui.home.key_focus = Some(op_editor_core::HomeHit::More);
                 self.mark_dirty();
                 return true;
             }
@@ -360,35 +347,7 @@ impl WidgetHostNative {
         if self.exit_image_crop_edit() {
             return true;
         }
-        // A narrow window's open chat drawer shuts before anything below
-        // it (this also releases the chat input it held).
-        if self.editor_state.editor_ui.workspace_drawer_active()
-            && self.editor_state.editor_ui.workspace.drawer_open
-            && self.set_workspace_drawer_open(false)
-        {
-            return true;
-        }
-        // The Studio keyboard focus ring steps down next.
-        if self.escape_studio_key_focus() {
-            return true;
-        }
         if escape::escape_chat_focus(&mut self.editor_state, self.now_ms) {
-            self.mark_dirty();
-            return true;
-        }
-        // Touch Home has an explicit composer focus; drop it before root
-        // navigation so Android Back can dismiss the software keyboard.
-        let ui = &mut self.editor_state.editor_ui;
-        if ui.touch_chrome() && ui.home.visible && ui.home.composer_focused {
-            ui.home.composer_focused = false;
-            ui.home.input.reset_transient();
-            self.mark_dirty();
-            return true;
-        }
-        // A mobile sheet is a layer above the canvas selection. Reuse its
-        // close path to release input ownership and collapsed chat state.
-        if let Some(kind) = self.editor_state.editor_ui.mobile_sheet {
-            self.toggle_mobile_sheet(kind);
             self.mark_dirty();
             return true;
         }

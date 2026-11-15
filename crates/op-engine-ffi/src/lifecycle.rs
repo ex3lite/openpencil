@@ -153,8 +153,6 @@ impl Session {
             }
             ui.size_class = op_editor_core::size_class::size_class(options.width, options.height);
             ui.sidebar_open = ui.size_class.is_rail_layout();
-            ui.home.visible =
-                crate::lifecycle_initial_document::opens_on_home(&src, ui.entry_surface);
             Some(host)
         } else {
             None
@@ -220,7 +218,8 @@ impl Session {
         // not disappear behind it. Idempotent and best-effort: a migration
         // failure never blocks the editor from opening.
         #[cfg(feature = "editor")]
-        if let Err(error) = crate::editor_document::initialize_documents(&mut session) {
+        if let Err(error) = crate::editor_document::migrate_legacy_documents(&session.document_save)
+        {
             session.emit_runtime_error(2, &error.message, "op-engine-ffi/save");
         }
         Ok(session)

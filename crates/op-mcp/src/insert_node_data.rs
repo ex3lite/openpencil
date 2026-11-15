@@ -12,43 +12,9 @@ const FLAT_INSERT_NODE_KINDS: &[&str] = &[
     "frame", "group", "rect", "ellipse", "polygon", "line", "text", "path",
 ];
 
-/// Validate without writing or allocating host ids. Use the exact replacement
-/// dialect normalization and temporary-id rules used by the MCP apply path.
-pub fn validate_replacement_node_data(value: &Value) -> Result<(), serde_json::Error> {
-    let mut value = value.clone();
-    prepare_ts_data_node(&mut value, false);
-    serde_json::from_value::<PenNode>(value).map(|_| ())
-}
-
-fn prepare_ts_data_node(value: &mut Value, add_text_defaults: bool) {
-    if add_text_defaults {
-        normalize_node_shape(value);
-    } else {
-        super::batch_design_normalize::normalize_replacement_node_shape(value);
-    }
-    normalize_ts_data_node_type_aliases(value);
-    let mut next_id = 1usize;
-    ensure_ts_data_node_ids(value, &mut next_id);
-}
-
 #[allow(clippy::result_large_err)]
 pub(super) fn ts_data_node(
     args: &BTreeMap<String, String>,
-) -> Result<Option<PenNode>, ToolOutcome> {
-    ts_data_node_with_defaults(args, true)
-}
-
-#[allow(clippy::result_large_err)]
-pub(super) fn ts_replacement_data_node(
-    args: &BTreeMap<String, String>,
-) -> Result<Option<PenNode>, ToolOutcome> {
-    ts_data_node_with_defaults(args, false)
-}
-
-#[allow(clippy::result_large_err)]
-fn ts_data_node_with_defaults(
-    args: &BTreeMap<String, String>,
-    add_text_defaults: bool,
 ) -> Result<Option<PenNode>, ToolOutcome> {
     let Some(raw) = args.get("data") else {
         return Ok(None);
@@ -72,7 +38,10 @@ fn ts_data_node_with_defaults(
         return Ok(None);
     }
 
-    prepare_ts_data_node(&mut value, add_text_defaults);
+    normalize_node_shape(&mut value);
+    normalize_ts_data_node_type_aliases(&mut value);
+    let mut next_id = 1usize;
+    ensure_ts_data_node_ids(&mut value, &mut next_id);
     let node: PenNode = serde_json::from_value(value).map_err(|e| {
         ToolOutcome::Err(
             ToolErrorCode::InvalidArgument,

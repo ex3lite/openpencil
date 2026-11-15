@@ -4,16 +4,13 @@
 //! that promised N repeated items and delivered 0–1. This one fires when the
 //! section was never planned at all.
 
-use crate::plan::{OrchestratorPlan, Subtask};
-use crate::plan_coverage_core::{chart_row_subtask, core_covering_subtask};
-pub use crate::plan_coverage_extract::{required_items, RequiredItem};
-use crate::plan_coverage_text::{
-    compound_section_parts, contains_term, de_head, label_names_section, screen_names_section,
-};
+use crate::plan::OrchestratorPlan;
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Bidirectional synonym groups. A required section that overlaps a group is
 /// covered when any member of that group appears in a subtask label/elements.
-pub(crate) const SYNONYM_GROUPS: &[&[&str]] = &[
+const SYNONYM_GROUPS: &[&[&str]] = &[
     &["日程", "schedule", "agenda"],
     &["底栏", "底部导航", "bottom nav", "tab bar"],
     &["状态栏", "status bar"],
@@ -25,310 +22,180 @@ pub(crate) const SYNONYM_GROUPS: &[&[&str]] = &[
     &["月历", "月视图", "month view", "month grid", "calendar"],
 ];
 
-/// Short forms and the English names planners write for common section
-/// nouns: the brief says `侧栏`, the plan `侧边导航栏` or `Sidebar`; the brief
-/// says `顶部标签切换`, the plan `View Tabs`. Kept apart from
-/// [`SYNONYM_GROUPS`] because that table also marks two-character field nouns
-/// (`日程`) for the extraction screen, and `侧栏`/`页脚` are real sections.
-const SECTION_SYNONYM_GROUPS: &[&[&str]] = &[
-    &[
-        "侧栏",
-        "侧边栏",
-        "侧边导航",
-        "左侧栏",
-        "左侧边栏",
-        "左侧导航",
-        "sidebar",
-        "side nav",
-    ],
-    &["标签切换", "视图切换", "tabs", "tab switcher"],
-    &["看板", "kanban", "board"],
-    &["抽屉", "drawer"],
-    &["数据表", "data table"],
-    &["页脚", "footer"],
-    &["订阅", "subscribe", "subscription", "newsletter"],
-    &["评价", "testimonial"],
-];
-
-/// Synonym terms too generic to vouch for a longer section on their own: a
-/// required `课程卡片轨道` is NOT covered by any subtask that mentions `cards`,
-/// and `今日日程列表` is not covered by any `list`. These terms only expand
-/// when the section IS the term. `看板` is here because a view switcher lists
-/// it as a tab label (`看板 / 列表 / 日历`) in plans with no board at all.
-const GENERIC_SYNONYM_TERMS: &[&str] = &[
-    "列表", "list", "卡片", "cards", "头部", "顶部", "header", "看板", "kanban", "board",
-];
-
-pub(crate) const TYPE_SUFFIXES: &[&str] = &[
+const TYPE_SUFFIXES: &[&str] = &[
     "区域", "模块", "部分", "列表", "网格", "section", "area", "区",
 ];
 
+static CJK_INTRO: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(需要有|包含|包括|含有|分为|有)([^。；\n]+)")
+        .expect("valid CJK intro-list pattern")
+});
+static CJK_PARTS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:[0-9]+|[一二三四五六七八九十]+)\s*个\s*(?:部分|区域|模块)[：:]\s*([^。；\n]+)")
+        .expect("valid CJK numbered-parts pattern")
+});
+static CJK_COLON: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[：:]\s*([^。；\n]*、[^。；\n]+)").expect("valid CJK colon-enumeration pattern")
+});
+static CJK_SPLIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"、|，|以及|及|与|和").expect("valid CJK item split"));
+static EN_WITH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:with|including|containing)\s+(.+?)(?:[.;\n]|$)")
+        .expect("valid English with/including list")
+});
+static EN_SECTIONS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bsections?:\s*(.+?)(?:[.;\n]|$)").expect("valid English sections: list")
+});
+static BULLET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(?:[-*•]|[0-9]+[.)]|[①②③④⑤⑥⑦⑧⑨⑩])\s+(.+?)\s*$")
+        .expect("valid bullet/numbered line")
+});
+static PARENS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"（[^）]*）|\([^)]*\)").expect("valid parenthetical strip"));
+/// `共<count>…` tail: `四组设置分组共十二行` → `四组设置分组`.
+static TRAILING_SHARED_TAIL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"共(?:[0-9]+|[零〇一二两三四五六七八九十]+)[^\s共（）()、，。；]*$")
+        .expect("valid 共-count tail")
+});
+/// Trailing quantity phrase: `<count>[measure][标签|带开关|带涨跌|按钮|横向卡|纵向卡]`.
+/// `底部导航四个标签` → `底部导航`, `播放控制五按钮` → `播放控制`, `车型选择三档横向卡` → `车型选择`.
+static TRAILING_COUNT_PHRASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?:[0-9]+|[零〇一二两三四五六七八九十]+)\s*[个条张项页行位款篇栏卡组档天]?\s*(?:标签|带开关|带涨跌|按钮|横向卡|纵向卡)?$",
+    )
+    .expect("valid trailing count phrase")
+});
+/// Descriptive `带…` tail without a count: `总资产卡带涨跌` → `总资产卡`, `账户区带头像` → `账户区`.
+/// Only stripped when the remainder keeps ≥3 CJK chars (guard in `strip_trailing_junk`).
+static TRAILING_DESC_TAIL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"带[^\s（）()、，。；]{1,2}$").expect("valid trailing 带 tail"));
+/// Leading `<count><measure>` prefix: `四组设置分组` → `设置分组` (remainder ≥3 CJK chars).
+static LEADING_COUNT_PHRASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[0-9]+|[零〇一二两三四五六七八九十]+)\s*[个条张项页行位款篇栏卡组档天]")
+        .expect("valid leading count phrase")
+});
+static CJK_YOU_PARTS_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[0-9]+|[一二三四五六七八九十]+)\s*个\s*(?:部分|区域|模块)")
+        .expect("valid 有-parts skip")
+});
+
 /// Extract section nouns the brief EXPLICITLY enumerates. High-precision only.
 pub fn required_sections(brief: &str) -> Vec<String> {
-    required_items(brief)
-        .into_iter()
-        .map(|item| item.name)
-        .collect()
-}
+    // (raw item, declared): declared items come from an explicit `N个部分：` list,
+    // so even short generic nouns (头部、内容) are trustworthy sections.
+    let mut raw_items: Vec<(String, bool)> = Vec::new();
 
-/// The required items the brief enumerated as a detail of a sibling
-/// (`右侧告警列表五条带时间与等级色标` → `等级色标`). They stay in
-/// [`required_sections`] so a re-plan can fold them into their section, but
-/// the appender never turns one into a subtask of its own.
-pub fn required_section_details(brief: &str) -> Vec<RequiredItem> {
-    required_items(brief)
-        .into_iter()
-        .filter(|item| item.detail_of.is_some())
-        .collect()
+    for captures in CJK_PARTS.captures_iter(brief) {
+        if let Some(list) = captures.get(1) {
+            raw_items.extend(
+                split_cjk_items(list.as_str())
+                    .into_iter()
+                    .map(|item| (item, true)),
+            );
+        }
+    }
+
+    for captures in CJK_INTRO.captures_iter(brief) {
+        let Some(intro) = captures.get(1) else {
+            continue;
+        };
+        let Some(list) = captures.get(2) else {
+            continue;
+        };
+        if intro.as_str() == "有" {
+            if let Some(prev) = brief[..intro.start()].chars().last() {
+                if matches!(prev, '没' | '所' | '还' | '只' | '拥' | '持') {
+                    continue;
+                }
+            }
+            let trimmed = list.as_str().trim_start();
+            if CJK_YOU_PARTS_PREFIX.is_match(trimmed) {
+                continue;
+            }
+            if !list.as_str().contains('、') {
+                continue;
+            }
+        } else if !has_cjk_list_separator(list.as_str()) {
+            continue;
+        }
+        raw_items.extend(
+            split_cjk_items(list.as_str())
+                .into_iter()
+                .map(|item| (item, false)),
+        );
+    }
+
+    for captures in CJK_COLON.captures_iter(brief) {
+        if let Some(list) = captures.get(1) {
+            raw_items.extend(
+                split_cjk_items(list.as_str())
+                    .into_iter()
+                    .map(|item| (item, false)),
+            );
+        }
+    }
+
+    for captures in EN_WITH.captures_iter(brief) {
+        if let Some(list) = captures.get(1) {
+            let text = list.as_str();
+            if has_english_list_separator(text) {
+                raw_items.extend(split_english_items(text).into_iter().map(|i| (i, false)));
+            }
+        }
+    }
+
+    for captures in EN_SECTIONS.captures_iter(brief) {
+        if let Some(list) = captures.get(1) {
+            raw_items.extend(
+                split_english_items(list.as_str())
+                    .into_iter()
+                    .map(|item| (item, false)),
+            );
+        }
+    }
+
+    let bullets: Vec<String> = BULLET
+        .captures_iter(brief)
+        .filter_map(|captures| captures.get(1).map(|m| m.as_str().to_string()))
+        .collect();
+    if bullets.len() >= 2 {
+        raw_items.extend(bullets.into_iter().map(|item| (item, false)));
+    }
+
+    dedupe_normalized(
+        raw_items
+            .into_iter()
+            .filter_map(|(item, declared)| normalize_section(&item, declared)),
+    )
 }
 
 /// Required sections the plan's subtask labels/elements do not cover.
 pub fn missing_sections(required: &[String], plan: &OrchestratorPlan) -> Vec<String> {
-    check_coverage(required, plan).missing
-}
-
-/// How one required section came to be covered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoverageSource {
-    /// A subtask's `covers` backfill matched the section after normalization.
-    Covers,
-    /// The legacy label/elements substring match found it.
-    Text,
-}
-
-impl CoverageSource {
-    fn tag(self) -> &'static str {
-        match self {
-            CoverageSource::Covers => "covers",
-            CoverageSource::Text => "text",
-        }
-    }
-}
-
-/// The gate's full verdict: the missing sections plus, for every covered
-/// section, which subtask covered it and how — the `covered-by:` diagnostic
-/// line's raw material.
-#[derive(Debug, Clone, Default)]
-pub struct CoverageCheck {
-    pub missing: Vec<String>,
-    /// `(section, subtask id, source)` per covered section, in required
-    /// order.
-    pub covered_by: Vec<(String, String, CoverageSource)>,
-}
-
-impl CoverageCheck {
-    /// `hero(covers) tokens(text)` — one entry per covered section, `-` when
-    /// nothing was covered.
-    pub fn covered_by_line(&self) -> String {
-        if self.covered_by.is_empty() {
-            return "-".to_string();
-        }
-        self.covered_by
-            .iter()
-            .map(|(_, id, source)| format!("{id}({})", source.tag()))
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-}
-
-/// Whether any subtask carries a non-empty `covers` backfill. Gates the
-/// diagnostics: a plan without backfill logs exactly as it did before the
-/// field existed.
-pub fn plan_has_covers(plan: &OrchestratorPlan) -> bool {
-    plan.subtasks.iter().any(covers_present)
-}
-
-/// The gate, two tiers per required section (plan-coverage v2):
-///
-/// 1. **Planner backfill** — any subtask whose `covers` entry equals the
-///    section after normalization (whitespace/full-half-width punctuation
-///    stripped, lowercased) covers it. The planner copies the brief's own
-///    wording, so exact equality is the contract — never a substring.
-/// 2. **Legacy substring** — the pre-v2 `label + elements` haystack match,
-///    unchanged, as the fallback for old models that do not backfill.
-///
-/// Tier 1 is strictly additive: with no backfill anywhere it can never fire,
-/// so a plan without `covers` gets byte-identical verdicts. Tier 2 then
-/// widens step by step — compound parts, screens, terse labels, and last the
-/// section's core once its position, count and state qualifiers are set
-/// aside ([`crate::plan_coverage_core`]).
-pub fn check_coverage(required: &[String], plan: &OrchestratorPlan) -> CoverageCheck {
     let haystack = plan_haystack(plan);
-    let mut check = CoverageCheck::default();
-    for section in required {
-        if let Some(id) = covering_subtask_id(plan, |st| {
-            covers_entry_matches(section, st.covers.as_deref())
-        }) {
-            check
-                .covered_by
-                .push((section.clone(), id, CoverageSource::Covers));
-            continue;
-        }
-        if section_covered(section, &haystack) {
-            // Annotate with the first subtask whose own text matches; the
-            // verdict itself stays the whole-plan haystack's (all-tokens
-            // matching may span subtask boundaries).
-            let id =
-                covering_subtask_id(plan, |st| section_covered(section, &subtask_haystack(st)))
-                    .unwrap_or_else(|| "plan".to_string());
-            check
-                .covered_by
-                .push((section.clone(), id, CoverageSource::Text));
-            continue;
-        }
-        if let Some(parts) = compound_section_parts(section) {
-            if let Some(id) = chart_row_subtask(&parts, plan) {
-                check
-                    .covered_by
-                    .push((section.clone(), id, CoverageSource::Text));
-                continue;
-            }
-            if parts.iter().all(|part| section_covered(part, &haystack)) {
-                let id = covering_subtask_id(plan, |st| {
-                    parts
-                        .iter()
-                        .all(|part| section_covered(part, &subtask_haystack(st)))
-                })
-                .unwrap_or_else(|| "plan".to_string());
-                check
-                    .covered_by
-                    .push((section.clone(), id, CoverageSource::Text));
-                continue;
-            }
-        }
-        if let Some(id) = covering_subtask_id(plan, |st| {
-            st.screen
-                .as_deref()
-                .is_some_and(|screen| screen_names_section(section, screen))
-        }) {
-            check
-                .covered_by
-                .push((section.clone(), id, CoverageSource::Text));
-            continue;
-        }
-        if let Some(id) = covering_subtask_id(plan, |st| label_names_section(section, &st.label)) {
-            check
-                .covered_by
-                .push((section.clone(), id, CoverageSource::Text));
-            continue;
-        }
-        if let Some(id) = crate::plan_coverage_quoted::quoted_title_subtask(section, plan) {
-            check
-                .covered_by
-                .push((section.clone(), id, CoverageSource::Text));
-            continue;
-        }
-        if let Some(id) = core_covering_subtask(section, plan) {
-            check
-                .covered_by
-                .push((section.clone(), id, CoverageSource::Text));
-            continue;
-        }
-        check.missing.push(section.clone());
-    }
-    check
+    required
+        .iter()
+        .filter(|section| !section_covered(section, &haystack))
+        .cloned()
+        .collect()
 }
 
 /// Prompt-side paragraph appended to a one-shot re-plan request.
-///
-/// A missing item is often a detail OF a planned section rather than a
-/// section of its own ("folder sidebar with counts" → the counts). Asked to
-/// add a subtask per item, a planner split the sidebar's unread badges into
-/// their own subtask, which the scaffold then laid out as a full-width band
-/// in the main column and the three-pane mail layout collapsed. So a detail
-/// goes into the subtask it belongs to; only a standalone section gets one.
 pub fn coverage_feedback(missing: &[String]) -> String {
     format!(
-        "The brief explicitly asks for these, which the plan does not cover: {}. For each one: if it is a detail of a section you already planned (e.g. counts inside a sidebar, a button inside a hero), add it to that subtask's elements; only if it is a standalone section, add one subtask for it. Keep the existing subtasks.",
+        "The brief explicitly asks for these sections, which the plan does not cover: {}. Add one subtask per missing section (keep the existing ones).",
         missing.join(", ")
     )
 }
 
-fn covering_subtask_id(
-    plan: &OrchestratorPlan,
-    matches: impl Fn(&Subtask) -> bool,
-) -> Option<String> {
-    plan.subtasks
-        .iter()
-        .find(|st| matches(st))
-        .map(|st| st.id.clone())
-}
-
-fn covers_present(st: &Subtask) -> bool {
-    st.covers
-        .as_ref()
-        .is_some_and(|entries| !entries.is_empty())
-}
-
-/// A `covers` entry matches the required section on normalized equality —
-/// `定价` does NOT match `定价三档`.
-fn covers_entry_matches(section: &str, covers: Option<&[String]>) -> bool {
-    let target = normalize_for_equality(section);
-    !target.is_empty()
-        && covers.is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| normalize_for_equality(entry) == target)
-        })
-}
-
-/// Normalize a section name / covers entry for equality: drop whitespace and
-/// full/half-width punctuation, lowercase. `英雄 区` and `英雄区。` both
-/// reduce to `英雄区`.
-fn normalize_for_equality(text: &str) -> String {
-    text.chars()
-        .filter(|ch| !ch.is_whitespace() && !is_punctuation_for_equality(*ch))
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-/// ASCII punctuation plus the common full-width/CJK punctuation forms.
-fn is_punctuation_for_equality(ch: char) -> bool {
-    ch.is_ascii_punctuation()
-        || matches!(
-            ch,
-            '，' | '。'
-                | '、'
-                | '；'
-                | '：'
-                | '！'
-                | '？'
-                | '…'
-                | '—'
-                | '～'
-                | '·'
-                | '“'
-                | '”'
-                | '‘'
-                | '’'
-                | '（'
-                | '）'
-                | '《'
-                | '》'
-                | '「'
-                | '」'
-                | '『'
-                | '』'
-                | '【'
-                | '】'
-        )
-}
-
 fn plan_haystack(plan: &OrchestratorPlan) -> String {
-    plan.subtasks
-        .iter()
-        .map(subtask_haystack)
-        .collect::<Vec<_>>()
-        .join("")
-}
-
-pub(crate) fn subtask_haystack(st: &Subtask) -> String {
     let mut haystack = String::new();
-    haystack.push_str(&st.label);
-    haystack.push(' ');
-    if let Some(elements) = &st.elements {
-        haystack.push_str(elements);
+    for subtask in &plan.subtasks {
+        haystack.push_str(&subtask.label);
         haystack.push(' ');
+        if let Some(elements) = &subtask.elements {
+            haystack.push_str(elements);
+            haystack.push(' ');
+        }
     }
     haystack.to_lowercase()
 }
@@ -339,16 +206,6 @@ fn section_covered(required: &str, haystack: &str) -> bool {
         .any(|alias| alias_matches(haystack, alias))
     {
         return true;
-    }
-    // `横向滚动的课程卡片轨道` is covered by a plan naming its noun head
-    // `课程卡片轨道` — the modifier is layout direction, not identity.
-    if let Some(head) = de_head(required) {
-        if aliases_for(&head)
-            .iter()
-            .any(|alias| alias_matches(haystack, alias))
-        {
-            return true;
-        }
     }
     // A required `商家列表` is also covered when the plan names just the
     // suffix-stripped head `商家` (substring or synonym on the head).
@@ -361,37 +218,17 @@ fn section_covered(required: &str, haystack: &str) -> bool {
         .any(|alias| alias_matches(haystack, alias))
 }
 
-pub(crate) fn alias_matches(haystack: &str, alias: &str) -> bool {
+fn alias_matches(haystack: &str, alias: &str) -> bool {
     let needle = alias.to_lowercase();
     if needle.is_empty() {
         return false;
     }
-    contains_term(haystack, &needle) || all_tokens_present(haystack, &needle)
+    haystack.contains(&needle) || all_tokens_present(haystack, &needle)
 }
 
 fn all_tokens_present(haystack: &str, phrase: &str) -> bool {
     let tokens = tokens(phrase);
-    !tokens.is_empty() && tokens.iter().all(|token| contains_word(haystack, token))
-}
-
-/// `contains_term`, also accepting the singular of an English plural: the
-/// brief asks for "counts" and the plan writes "an unread count badge".
-fn contains_word(haystack: &str, token: &str) -> bool {
-    contains_term(haystack, token)
-        || english_singular(token).is_some_and(|singular| contains_term(haystack, &singular))
-}
-
-pub(crate) fn english_singular(token: &str) -> Option<String> {
-    if !token.is_ascii() || token.len() <= 3 || token.ends_with("ss") {
-        return None;
-    }
-    if let Some(stem) = token.strip_suffix("ies") {
-        return Some(format!("{stem}y"));
-    }
-    if token.ends_with("ches") || token.ends_with("shes") {
-        return Some(token[..token.len() - 2].to_string());
-    }
-    token.strip_suffix('s').map(str::to_string)
+    !tokens.is_empty() && tokens.iter().all(|token| haystack.contains(token))
 }
 
 fn tokens(text: &str) -> Vec<String> {
@@ -411,14 +248,13 @@ fn tokens(text: &str) -> Vec<String> {
     tokens
 }
 
-pub(crate) fn aliases_for(section: &str) -> Vec<String> {
+fn aliases_for(section: &str) -> Vec<String> {
     let mut aliases = vec![section.to_string()];
     let lower = section.to_lowercase();
-    for group in SYNONYM_GROUPS.iter().chain(SECTION_SYNONYM_GROUPS) {
+    for group in SYNONYM_GROUPS {
         let overlaps = group.iter().any(|term| {
             let term_lower = term.to_lowercase();
-            lower == term_lower
-                || (!GENERIC_SYNONYM_TERMS.contains(term) && contains_term(&lower, &term_lower))
+            lower == term_lower || lower.contains(&term_lower)
         });
         if !overlaps {
             continue;
@@ -435,6 +271,67 @@ pub(crate) fn aliases_for(section: &str) -> Vec<String> {
     aliases
 }
 
+/// Normalise a raw enumerated item into a required-section name.
+///
+/// Quantity/descriptor tails are stripped (`商家列表五个` → `商家列表`,
+/// `底部导航四个标签` → `底部导航`) but the item itself is emitted WHOLE —
+/// type suffixes (`列表`/`网格`/…) are never stripped here; the suffix-stripped
+/// head is only used as an extra matching alias in [`section_covered`].
+fn normalize_section(raw: &str, declared: bool) -> Option<String> {
+    let mut text = raw
+        .trim()
+        .trim_matches(|ch| {
+            matches!(
+                ch,
+                '"' | '\'' | '“' | '”' | '‘' | '’' | '。' | '.' | '；' | ';'
+            )
+        })
+        .to_string();
+    text = PARENS.replace_all(&text, "").into_owned();
+    let text = strip_trailing_junk(text.trim());
+    let text = strip_leading_count(text.trim());
+    let text = text.trim();
+    if text.is_empty()
+        || is_negated_section(text)
+        || is_sentence_length(text)
+        || is_short_field_noun(text, declared)
+    {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+/// Strip trailing quantity/descriptor tails: `共…` tail, then `<count>[measure][tail]`,
+/// then a bare `带…` tail when the remainder keeps ≥3 CJK chars.
+fn strip_trailing_junk(text: &str) -> String {
+    let stripped = TRAILING_SHARED_TAIL.replace(text, "").into_owned();
+    let stripped = TRAILING_COUNT_PHRASE
+        .replace(stripped.trim(), "")
+        .into_owned();
+    let trimmed = stripped.trim();
+    if let Some(mat) = TRAILING_DESC_TAIL.find(trimmed) {
+        let head = trimmed[..mat.start()].trim();
+        if han_count(head) >= 3 {
+            return head.to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+/// Strip a leading `<count><measure>` prefix (`四组设置分组` → `设置分组`)
+/// only when the remainder keeps ≥3 CJK chars.
+fn strip_leading_count(text: &str) -> String {
+    let Some(mat) = LEADING_COUNT_PHRASE.find(text) else {
+        return text.to_string();
+    };
+    let rest = text[mat.end()..].trim();
+    if han_count(rest) >= 3 {
+        rest.to_string()
+    } else {
+        text.to_string()
+    }
+}
+
 fn strip_type_suffix(text: &str) -> String {
     let lower = text.to_lowercase();
     for suffix in TYPE_SUFFIXES {
@@ -449,25 +346,140 @@ fn strip_type_suffix(text: &str) -> String {
     text.to_string()
 }
 
-pub(crate) fn han_count(text: &str) -> usize {
+/// A section the brief explicitly excluded (`不要底部导航`) is never required.
+fn is_negated_section(text: &str) -> bool {
+    text.starts_with("不要")
+        || text.starts_with("不用")
+        || text.starts_with("无需")
+        || text.starts_with("别加")
+        || text.starts_with("别放")
+        || text.starts_with("没有")
+}
+
+/// Very short CJK items are usually text fields, not sections (`歌名`, `时间`,
+/// `搜索`). Kept when they carry a type suffix (`区块`) or are known section
+/// nouns from the synonym table (`日程`), except `搜索`, which stays too
+/// generic. Declared `N个部分：` items bypass this screen.
+fn is_short_field_noun(text: &str, declared: bool) -> bool {
+    if declared {
+        return false;
+    }
+    let han = han_count(text);
+    if han == 0 || han > 2 {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    if TYPE_SUFFIXES
+        .iter()
+        .any(|suffix| lower != *suffix && lower.ends_with(suffix))
+    {
+        return false;
+    }
+    if text == "搜索" {
+        return true;
+    }
+    han == 2 && SYNONYM_GROUPS.iter().any(|group| group.contains(&text))
+}
+
+fn is_sentence_length(text: &str) -> bool {
+    let han = han_count(text);
+    let words = text.split_whitespace().count();
+    han > 12 || (han == 0 && words > 5)
+}
+
+fn han_count(text: &str) -> usize {
     text.chars().filter(|ch| is_han(*ch)).count()
 }
 
-pub(crate) fn is_han(ch: char) -> bool {
+fn is_han(ch: char) -> bool {
     matches!(
         ch,
         '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}'
     )
 }
 
+fn has_cjk_list_separator(text: &str) -> bool {
+    text.contains('、')
+        || text.contains('，')
+        || text.contains('和')
+        || text.contains('与')
+        || text.contains('及')
+}
+
+fn has_english_list_separator(text: &str) -> bool {
+    text.contains(',') || text.to_ascii_lowercase().contains(" and ")
+}
+
+fn split_cjk_items(list: &str) -> Vec<String> {
+    // Split on every separator, remembering the conjunction that followed each
+    // piece: a `与/和` pair with a ≤2-char side is kept whole (they are the text
+    // fields of one section, `歌名与歌手`), not split into bare nouns.
+    let mut pieces: Vec<(&str, &str)> = Vec::new();
+    let mut start = 0;
+    for sep in CJK_SPLIT.find_iter(list) {
+        pieces.push((list[start..sep.start()].trim(), sep.as_str()));
+        start = sep.end();
+    }
+    pieces.push((list[start..].trim(), ""));
+
+    let mut items: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < pieces.len() {
+        let (first, mut sep) = pieces[index];
+        index += 1;
+        if first.is_empty() {
+            continue;
+        }
+        let mut item = first.to_string();
+        while matches!(sep, "与" | "和") && index < pieces.len() {
+            let (next, next_sep) = pieces[index];
+            if next.is_empty() || (han_count(&item) > 2 && han_count(next) > 2) {
+                break;
+            }
+            item.push_str(sep);
+            item.push_str(next);
+            sep = next_sep;
+            index += 1;
+        }
+        items.push(item);
+    }
+    items
+}
+
+fn split_english_items(list: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    for comma_part in list.split(',') {
+        let trimmed = comma_part
+            .trim()
+            .trim_start_matches("and ")
+            .trim_start_matches("And ")
+            .trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        for and_part in trimmed.split(" and ") {
+            let item = and_part.trim();
+            if !item.is_empty() {
+                items.push(item.to_string());
+            }
+        }
+    }
+    items
+}
+
+fn dedupe_normalized(items: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in items {
+        if !out
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&item))
+        {
+            out.push(item);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 #[path = "plan_coverage_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "plan_coverage_corpus_tests.rs"]
-mod corpus_tests;
-
-#[cfg(test)]
-#[path = "plan_coverage_brief_tests.rs"]
-mod brief_tests;

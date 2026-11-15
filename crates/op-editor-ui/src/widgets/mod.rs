@@ -51,16 +51,11 @@ mod layer_panel_walkers;
 pub mod path_anchor_context_menu;
 pub mod prompt_center_panel;
 pub use home_surface::{home_enter, HomeEnterBlock, HomeLayout, HomeSurface, HOME_TOPBAR_H};
-pub mod workspace_quality;
-pub use workspace_quality::{QualityPanelLayout, QualityRow, QualityRowKind};
-pub mod studio_focus_ring;
 pub mod workspace_surface;
 pub use workspace_surface::{
-    family_has_strip, family_views, layout_for as workspace_layout_for, variant_bar_layout,
-    workspace_enter, VariantBarItem, WorkspaceLayout, WorkspaceSurface,
+    family_has_strip, family_views, layout_for as workspace_layout_for, workspace_enter,
+    WorkspaceLayout, WorkspaceSurface,
 };
-pub mod works_reader;
-pub use works_reader::{ReaderLayout, WorksReader};
 pub(crate) mod prompt_center_previews;
 pub mod scene_template_panel;
 pub use scene_template_panel::{
@@ -98,7 +93,6 @@ mod property_panel_fill_picker;
 #[cfg(test)]
 mod property_panel_fill_tests;
 pub mod property_panel_flex;
-pub mod property_panel_generator;
 pub mod property_panel_icon;
 #[cfg(test)]
 mod property_panel_icon_tests;
@@ -192,13 +186,11 @@ mod canvas_frame_labels;
 mod canvas_generation_scan;
 #[cfg(test)]
 mod canvas_generation_scan_tests;
-mod canvas_generator_badge;
 pub mod canvas_layout_transition;
 pub mod canvas_overlay_transform;
 mod canvas_path_overlay;
 mod canvas_selection_overlay;
 pub mod canvas_text_edit;
-mod canvas_text_kinsoku;
 pub mod canvas_viewport;
 mod canvas_viewport_background;
 mod canvas_viewport_fill_layers;
@@ -212,7 +204,7 @@ pub mod canvas_viewport_paint;
 #[cfg(test)]
 mod canvas_viewport_paint_pop_tests;
 mod canvas_viewport_text;
-pub(crate) mod canvas_viewport_widget;
+mod canvas_viewport_widget;
 pub mod preview_device_switcher;
 pub mod scene_paint_options;
 pub mod screen_switcher_pills;
@@ -350,7 +342,6 @@ pub(crate) mod ai_chat_transcript_selection;
 pub(crate) mod ai_chat_transcript_steps;
 pub(crate) mod ai_chat_transcript_text;
 pub(crate) mod ai_chat_transcript_tools;
-mod ai_chat_workspace_copy;
 pub mod align_toolbar;
 pub mod color_picker;
 mod component_browser_kits;
@@ -402,7 +393,6 @@ pub mod login_modal;
 pub mod marquee_flow;
 pub(crate) mod menu_paint;
 pub mod missing_fonts_flow;
-pub mod missing_fonts_notice;
 pub mod missing_fonts_panel;
 pub mod mobile_chrome;
 #[cfg(test)]

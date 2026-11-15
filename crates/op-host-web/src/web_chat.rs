@@ -73,11 +73,6 @@ fn abort_active_turn() {
     }
 }
 
-/// Whether a chat turn's stream is still open for this page.
-pub(crate) fn turn_in_flight() -> bool {
-    ACTIVE_TURN.with(|slot| slot.borrow().is_some())
-}
-
 /// The tab index the in-flight turn is currently bound to.
 fn running_tab() -> Option<usize> {
     RUNNING_TAB.with(|t| t.get())
@@ -101,13 +96,6 @@ pub(crate) fn drain_chat_flags<C: RepaintContext + 'static>(inner: &Rc<RefCell<C
     };
     if new_chat || stop {
         abort_active_turn();
-    }
-    if stop {
-        // A generating Studio workspace is now Stopped: the idle edge that
-        // follows must not flip it to Done or Failed.
-        if let Ok(mut b) = inner.try_borrow_mut() {
-            b.host_mut().stop_workspace_run();
-        }
     }
     // A pending close-tab (MT.3): abort the run if it's bound to the closed
     // tab, shift the binding otherwise, then remove the tab. Done before the
@@ -141,15 +129,7 @@ pub(crate) fn drain_chat_flags<C: RepaintContext + 'static>(inner: &Rc<RefCell<C
         // Bind a run to the tab it starts on BEFORE launching (the active tab
         // is the sending tab at this point).
         let active = state.chat.active_index();
-        let had_pending = state.chat.pending_send.is_some();
-        let prepared = prepare_turn(state);
-        let consumed_without_launch =
-            had_pending && state.chat.pending_send.is_none() && prepared.is_none();
-        if consumed_without_launch {
-            b.host_mut().mark_editor_state_dirty();
-            let _ = b.repaint();
-        }
-        prepared.inspect(|_| RUNNING_TAB.with(|t| t.set(Some(active))))
+        prepare_turn(state).inspect(|_| RUNNING_TAB.with(|t| t.set(Some(active))))
     };
     if let Some(prepared) = prepared {
         launch_turn(inner, prepared);
@@ -200,7 +180,6 @@ fn launch_turn<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, prepared: Pr
                 *slot.borrow_mut() = Some(ActiveTurn { handle, generation });
             });
             start_pump(inner.clone(), queue, generation);
-            crate::studio_web::on_turn_launched(inner, generation);
         }
         Err(_e) => {
             // Transport refused to even start (XHR open/send failed) —
@@ -251,21 +230,6 @@ fn start_pump<C: RepaintContext + 'static>(
             // queue borrow across editor-state mutation.
             let evt = queue.borrow_mut().pop_front();
             let Some(evt) = evt else { break };
-            // The finished run's quality report belongs to the Studio
-            // workspace this turn was stamped on, not to the bubble text.
-            if let AiEvent::QualityReport(report) = evt {
-                changed |= b
-                    .host_mut()
-                    .apply_run_quality(generation, running_tab(), *report);
-                continue;
-            }
-            // So does a variants run's per-direction report.
-            if let AiEvent::Variant(event) = evt {
-                changed |= b
-                    .host_mut()
-                    .apply_run_variant(generation, running_tab(), *event);
-                continue;
-            }
             // Write into the tab this run is bound to (MT.3 session-per-tab),
             // not whichever tab is active now.
             let target = b
@@ -330,37 +294,6 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         return None;
     }
     let user_text = state.chat.pending_send.take()?;
-    // A pinned route (Studio Home brief / draft refine) travels with the
-    // turn and is consumed by it, like the desktop launcher's drain.
-    let route = std::mem::take(&mut state.chat.launch_route);
-    if route == op_editor_core::LaunchRoute::Auto {
-        let scope = op_editor_core::workspace_edit::begin_workspace_edit(state, &user_text);
-        state.editor_ui.workspace.clear_staged_page_edit();
-        if scope == op_editor_core::workspace_edit::WorkspaceEditScope::NeedsTarget {
-            if let Some(message) = state.chat.messages.last_mut() {
-                message.content = format!(
-                    "error: {}",
-                    op_editor_core::workspace_edit::scope_unavailable_message(
-                        state.editor_ui.locale
-                    )
-                );
-                message.streaming = false;
-            }
-            state.chat.pending_attachments.clear();
-            return None;
-        }
-    } else {
-        state.editor_ui.workspace.page_edit_retry = None;
-    }
-    let launch_route = match route {
-        op_editor_core::LaunchRoute::Auto => None,
-        op_editor_core::LaunchRoute::Orchestrator => Some("orchestrator"),
-        // N side-by-side directions; a daemon that does not run them
-        // answers with one orchestrated design.
-        op_editor_core::LaunchRoute::Variants(_) => Some("variants"),
-        op_editor_core::LaunchRoute::Refine => Some("refine"),
-    };
-    let variant_count = route.variant_count();
     let (model, credential, builtin_provider_id) =
         crate::web_ai_credentials::selected_target(state);
     let provider = selected.as_ref().and_then(|entry| {
@@ -424,13 +357,7 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         "document": state.doc,
         "editorMeta": op_pen_loader::EditorMeta::from_state(state),
         "selectedIds": selected_ids,
-        "workspaceVisible": state.editor_ui.workspace.visible,
-        "workspaceSelected": state.editor_ui.workspace.selected,
         "activePageId": active_page_id,
-        "launchRoute": launch_route,
-        "variantCount": variant_count,
-        // Direction names the daemon stamps on boards follow the UI.
-        "locale": state.editor_ui.effective_locale().code(),
     });
     Some(PreparedTurn {
         endpoint: "/api/ai/standard",
@@ -461,8 +388,6 @@ pub(crate) fn apply_event_to_chat(chat: &mut ChatState, evt: &AiEvent) -> bool {
             msg.streaming = false;
         }
         AiEvent::Done => msg.streaming = false,
-        // Routed to the workspace by the pump before it reaches here.
-        AiEvent::QualityReport(_) | AiEvent::Variant(_) => {}
     }
     terminal
 }

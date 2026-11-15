@@ -23,19 +23,14 @@ fn poll_into_applies_finished_job_to_placeholder_frame() {
     ));
 
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::super::JobOutcome::Search(Some(
-        "https://example.com/photo.jpg".to_string(),
-    )))
-    .unwrap();
+    tx.send(Some("https://example.com/photo.jpg".to_string()))
+        .unwrap();
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["photo".to_string()]),
         completed: HashSet::new(),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("photo"),
             intent: None,
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -69,18 +64,13 @@ fn poll_discards_standalone_image_result_after_collaboration_binds() {
     // document was standalone, then the editor joined as a collaborator
     // before the worker result reached the UI-thread sink.
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::super::JobOutcome::Search(Some(
-        "https://result.example.com/burger.jpg".to_string(),
-    )))
-    .unwrap();
+    tx.send(Some("https://result.example.com/burger.jpg".to_string()))
+        .unwrap();
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["img1".to_string()]),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("img1"),
             intent: None,
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -130,19 +120,14 @@ fn successful_apply_does_not_suppress_later_unfilled_retry() {
     ));
 
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::super::JobOutcome::Search(Some(
-        "https://example.com/photo.jpg".to_string(),
-    )))
-    .unwrap();
+    tx.send(Some("https://example.com/photo.jpg".to_string()))
+        .unwrap();
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["photo".to_string()]),
         completed: HashSet::new(),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("photo"),
             intent: None,
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -193,17 +178,14 @@ fn poll_into_completion_invalidates_scan_gate() {
     // A completed (here: failed) job mutates `in_flight`/`completed`, which
     // must force one rescan on the next `enqueue_missing` even though the
     // document revision did not change.
-    let (tx, rx) = std::sync::mpsc::channel::<super::super::JobOutcome>();
-    tx.send(super::super::JobOutcome::Search(None)).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+    tx.send(None).unwrap();
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["img1".to_string()]),
         completed: HashSet::new(),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("img1"),
             intent: None,
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -248,18 +230,13 @@ fn poll_discards_a_result_when_the_nodes_image_intent_changed() {
     state.mark_document_changed();
 
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::super::JobOutcome::Search(Some(
-        "https://stale.example.com/burger.jpg".to_string(),
-    )))
-    .unwrap();
+    tx.send(Some("https://stale.example.com/burger.jpg".to_string()))
+        .unwrap();
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["img1".to_string()]),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("img1"),
             intent: Some(expected),
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -271,56 +248,6 @@ fn poll_discards_a_result_when_the_nodes_image_intent_changed() {
     };
     assert!(image.src.is_empty(), "stale URL must not land");
     assert!(!session.completed.contains("img1"));
-}
-
-#[test]
-fn poll_discards_a_result_when_only_the_image_prompt_changed() {
-    let mut state = EditorState::default();
-    state.active_children_mut().clear();
-    let mut node = image_node("img1", "", Some("ceramic vase"));
-    let PenNode::Image(image) = &mut node else {
-        panic!("image")
-    };
-    image.image_prompt = Some("Warm studio photograph on an ivory background".into());
-    state.active_children_mut().push(node);
-    let original = collect_targets(&state, &HashSet::new()).remove(0);
-    let expected = intent_fingerprint(&original, None);
-
-    let PenNode::Image(image) = &mut state.active_children_mut()[0] else {
-        panic!("image")
-    };
-    image.image_prompt = Some("Cool outdoor photograph on dark stone".into());
-    state.mark_document_changed();
-    let current = collect_targets(&state, &HashSet::new()).remove(0);
-    assert_eq!(original.query, current.query);
-    assert_eq!(original.aspect_ratio, current.aspect_ratio);
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(JobOutcome::Search(Some(
-        "https://stale.example/warm.jpg".into(),
-    )))
-    .unwrap();
-    let mut session = ImageSearchSession {
-        in_flight: HashSet::from(["img1".to_string()]),
-        jobs: vec![ImageSearchJob {
-            deadline: None,
-            node_id: NodeId::new("img1"),
-            intent: Some(expected),
-            stock_view: None,
-            fallback_target: None,
-            rx,
-        }],
-        ..Default::default()
-    };
-    assert!(!session.poll_into(&mut state));
-    let PenNode::Image(image) = &state.active_children()[0] else {
-        panic!("image")
-    };
-    assert!(image.src.is_empty(), "the old art direction must not land");
-    assert!(session.jobs.is_empty());
-    assert!(session.in_flight.is_empty());
-    assert!(!session.completed.contains("img1"));
-    assert_eq!(collect_targets(&state, &session.completed).len(), 1);
 }
 
 #[test]
@@ -351,18 +278,13 @@ fn poll_discards_a_result_when_only_provider_truncated_words_changed() {
     state.mark_document_changed();
 
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::super::JobOutcome::Search(Some(
-        "https://stale.example.com/blue-dome.jpg".to_string(),
-    )))
-    .unwrap();
+    tx.send(Some("https://stale.example.com/blue-dome.jpg".to_string()))
+        .unwrap();
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["img1".to_string()]),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("img1"),
             intent: Some(expected),
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -406,16 +328,11 @@ fn poll_shares_one_stale_intent_scan_across_a_completed_batch() {
     let mut jobs = Vec::new();
     for id in ["img1", "img2"] {
         let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(super::super::JobOutcome::Search(Some(format!(
-            "https://result.example.com/{id}.jpg"
-        ))))
-        .unwrap();
+        tx.send(Some(format!("https://result.example.com/{id}.jpg")))
+            .unwrap();
         jobs.push(ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new(id),
             intent: Some(expected_by_id[id].clone()),
-            stock_view: None,
-            fallback_target: None,
             rx,
         });
     }
@@ -461,11 +378,8 @@ fn poll_does_not_scan_intents_while_all_jobs_are_pending() {
     let mut session = ImageSearchSession {
         in_flight: HashSet::from(["img1".to_string()]),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("img1"),
             intent: Some(intent_fingerprint(&target, None)),
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -614,11 +528,8 @@ fn document_replacement_reset_drops_stale_pending_job_so_it_cannot_apply_to_new_
         in_flight: HashSet::from(["photo".to_string()]),
         completed: HashSet::new(),
         jobs: vec![ImageSearchJob {
-            deadline: None,
             node_id: NodeId::new("photo"),
             intent: None,
-            stock_view: None,
-            fallback_target: None,
             rx,
         }],
         ..Default::default()
@@ -642,9 +553,9 @@ fn document_replacement_reset_drops_stale_pending_job_so_it_cannot_apply_to_new_
 
     // The stale job resolves AFTER the replacement — its result must not land on
     // the new document's unrelated "photo" node.
-    let _ = tx.send(super::super::JobOutcome::Search(Some(
+    let _ = tx.send(Some(
         "https://stale.example.com/old-document-photo.jpg".to_string(),
-    )));
+    ));
 
     let changed = session.poll_into(&mut new_state);
 

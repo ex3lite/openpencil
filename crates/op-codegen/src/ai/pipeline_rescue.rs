@@ -65,32 +65,16 @@ impl CodegenPipeline {
     }
 
     fn finish_with_deterministic_fallback(&mut self) -> PipelineStep {
-        self.finish_deterministic(true)
-    }
-
-    /// Deterministic targets never dispatch a model request: the first
-    /// `step()` generates the whole file and reports every phase done.
-    pub(super) fn finish_deterministic_target(&mut self) -> PipelineStep {
-        self.planning_done = Some(true);
-        self.finish_deterministic(false)
-    }
-
-    fn finish_deterministic(&mut self, degraded: bool) -> PipelineStep {
-        let context = deterministic_fallback::DocumentContext {
-            variables_json: self.input.variables_json.as_deref(),
-            themes_json: self.input.themes_json.as_deref(),
-            components_json: self.input.components_json.as_deref(),
-        };
         match deterministic_fallback::generate(
             &self.sanitized_nodes_json,
-            context,
+            self.input.variables_json.as_deref(),
             self.input.framework,
         ) {
             Ok(code) => {
                 self.assembly_done = Some(true);
                 let step = PipelineStep::Done {
                     code,
-                    degraded,
+                    degraded: true,
                     assets: self.assets.clone(),
                 };
                 self.phase = Phase::Terminal(step.clone());
@@ -99,13 +83,8 @@ impl CodegenPipeline {
             Err(error) => {
                 // `record_failure` takes `impl AsRef<str>`; render the typed
                 // error to keep the recorded text byte-identical.
-                if degraded {
-                    self.record_failure("deterministic fallback", error.to_string());
-                    self.fail_with_history("Code generation failed after every fallback")
-                } else {
-                    self.record_failure("deterministic generator", error.to_string());
-                    self.fail_with_history("Code generation failed")
-                }
+                self.record_failure("deterministic fallback", error.to_string());
+                self.fail_with_history("Code generation failed after every fallback")
             }
         }
     }

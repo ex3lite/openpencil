@@ -21,7 +21,6 @@ impl WidgetHostNative {
     pub(in crate::widget_host) fn press_rail_overlay_tiers(
         &mut self,
         ctx: &PressCtx,
-        allow_touch_panel_defer: bool,
     ) -> Option<bool> {
         let (x, y) = (ctx.x, ctx.y);
         let viewport_width = ctx.viewport_width;
@@ -95,13 +94,6 @@ impl WidgetHostNative {
         // upward model dropdown across the bar, so its visible overlap must be
         // routed before the lower TopBar surface. Other dropdowns/modals above
         // chat already had first refusal in the blocks above.
-        if y < TOP_BAR_HEIGHT
-            && !in_git_panel
-            && allow_touch_panel_defer
-            && self.begin_model_picker_touch_gesture(x, y, viewport_width, viewport_height)
-        {
-            return Some(true);
-        }
         if y < TOP_BAR_HEIGHT
             && !in_git_panel
             && self.apply_chat_model_picker_overlay_press(x, y, viewport_width, viewport_height)
@@ -303,28 +295,6 @@ impl WidgetHostNative {
         let hit = bar.hit_test(bar_rect, point)?;
         let now = self.now_ms;
         match hit {
-            op_editor_ui::widgets::MobileAppBarHit::Home => {
-                // The 普通 half of the phone's mode switch, on the
-                // professional canvas: the SAME EditorState comes back
-                // under the Home takeover — no document swap, so page
-                // selection and undo history ride through unchanged
-                // (the mirror of `HomeHit::Professional`).
-                // A phone work with a workspace returns to ITS normal view
-                // (the reader) rather than the Home page: 普通 ⇄ 专业 is a
-                // view switch on one work, not a navigation away from it.
-                if self.editor_state.editor_ui.workspace.active
-                    && self.editor_state.editor_ui.compact_layout()
-                {
-                    self.editor_state.editor_ui.workspace.previous_tool =
-                        Some(self.editor_state.tool);
-                    self.editor_state.editor_ui.workspace.reenter(self.now_ms);
-                    self.frame_reader_board(ctx.viewport_width, ctx.viewport_height);
-                } else {
-                    let ui = &mut self.editor_state.editor_ui;
-                    ui.entry_surface = op_editor_core::EntrySurface::Home;
-                    ui.home.visible = true;
-                }
-            }
             op_editor_ui::widgets::MobileAppBarHit::Layers => {
                 if self.editor_state.editor_ui.expanded_touch_layout() {
                     self.cancel_native_touch_gestures();
@@ -493,11 +463,6 @@ impl WidgetHostNative {
         let kind = self.editor_state.editor_ui.mobile_sheet?;
         let panel = self.mobile_sheet_rect(ctx.viewport_width, ctx.viewport_height, kind);
         let point = Point2D::new(ctx.x, ctx.y);
-        // The picker is painted above its AI surface, including any portion
-        // outside the sheet. Its tap must never dismiss the sheet underneath.
-        if kind == op_editor_core::size_class::MobileSheetKind::Ai && ctx.in_chat_model_picker {
-            return None;
-        }
 
         if kind == op_editor_core::size_class::MobileSheetKind::Ai
             && !self.editor_state.editor_ui.compact_layout()
@@ -637,14 +602,6 @@ impl WidgetHostNative {
             self.dismiss_mobile_surface();
             match entry {
                 op_editor_ui::widgets::MobileMoreEntry::Ai => unreachable!("handled above"),
-                op_editor_ui::widgets::MobileMoreEntry::Undo => {
-                    self.editor_state.chat.focused = false;
-                    self.apply_undo();
-                }
-                op_editor_ui::widgets::MobileMoreEntry::Redo => {
-                    self.editor_state.chat.focused = false;
-                    self.apply_redo();
-                }
                 op_editor_ui::widgets::MobileMoreEntry::Code => {
                     let ui = &mut self.editor_state.editor_ui;
                     ui.set_property_tab(op_editor_core::PropertyTab::Code);

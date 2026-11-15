@@ -22,17 +22,8 @@ use op_orchestrator::Progress;
 
 use op_host_services::design_session::fit_design_viewport_to_content;
 
-#[path = "design_session_lifecycle.rs"]
-mod lifecycle;
 #[path = "design_session_workers.rs"]
 mod workers;
-pub(crate) use lifecycle::stop_design_transcript;
-
-#[path = "design_session_quality.rs"]
-mod quality;
-
-#[path = "design_session_variants.rs"]
-mod variants;
 
 /// Drain every pending apply request from the in-flight design
 /// session and execute it against the real `EditorState`. Each
@@ -48,9 +39,6 @@ pub fn pump_commands(
     let Some(session) = current.as_mut() else {
         return false;
     };
-    if lifecycle::discard_stale_commands(session) {
-        return false;
-    }
     let reqs = session.drain_cmd_requests();
     if reqs.is_empty() {
         return false;
@@ -153,9 +141,6 @@ pub fn pump_progress(
     current: &mut Option<DesignSession>,
     running_tab: Option<usize>,
 ) -> bool {
-    if lifecycle::retire_stale_session(host, current, running_tab) {
-        return true;
-    }
     let Some(session) = current.as_mut() else {
         return false;
     };
@@ -163,8 +148,6 @@ pub fn pump_progress(
     let poll = session.poll_progress();
     let mut changed = false;
     if !poll.progress.is_empty() {
-        changed |= quality::fold_quality_progress(host.editor_state_mut(), &poll.progress);
-        changed |= variants::fold_variant_progress(host.editor_state_mut(), &poll.progress);
         let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
         changed |=
             workers::apply_progress_to_transcript(&mut chat.messages, &poll.progress, locale);
@@ -178,16 +161,7 @@ pub fn pump_progress(
     if let Some(summary) = &poll.summary {
         let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
         changed |= match summary {
-            Ok(summary) => {
-                let finished = workers::finish_design_success(&mut chat.messages, summary, locale);
-                finished
-                    | quality::finish_quality_report(
-                        host.editor_state_mut(),
-                        summary,
-                        running_tab,
-                        locale,
-                    )
-            }
+            Ok(summary) => workers::finish_design_success(&mut chat.messages, summary, locale),
             Err(error) => {
                 workers::finish_design_error(&mut chat.messages, &error.to_string(), locale)
             }
@@ -203,6 +177,22 @@ pub fn pump_progress(
     }
     if poll.finished {
         *current = None;
+    }
+    changed
+}
+
+/// Finalize transcript rows for an explicit Stop before the design session is
+/// dropped. The widget already cleared every `streaming` bit, so worker
+/// metadata and active activities — not streaming state — identify the turn.
+pub(crate) fn stop_design_transcript(
+    host: &mut WidgetHostNative,
+    running_tab: Option<usize>,
+) -> bool {
+    let locale = host.editor_state().editor_ui.locale;
+    let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
+    let changed = workers::stop_design_messages(&mut chat.messages, locale);
+    if changed {
+        host.mark_editor_state_dirty();
     }
     changed
 }
@@ -286,17 +276,18 @@ pub fn launch_subtask_retry_if_pending(
         );
         return true;
     };
-    let hosted_session_epoch = provider.hosted_session_epoch();
     let provider_arc: std::sync::Arc<dyn op_ai::chat_provider::ChatProvider> =
         std::sync::Arc::from(provider);
     let llm = op_host_services::chat_provider_llm::ChatProviderLlmClient::new(provider_arc)
         .with_model(crate::chat_session::selected_cli_model_id(host));
     let initial_state =
         op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
-    *current_design = Some(
-        op_host_services::design_session::start_subtask_retry(llm, request, subtask, initial_state)
-            .with_hosted_session_epoch(hosted_session_epoch),
-    );
+    *current_design = Some(op_host_services::design_session::start_subtask_retry(
+        llm,
+        request,
+        subtask,
+        initial_state,
+    ));
     // Reuse the exact message that owns the failed activity row. This also
     // makes a non-primary worker bubble the explicit target for the retry's
     // unscoped SubtaskStarted/Done/Failed events until its channel closes.
@@ -361,13 +352,23 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
                 ChatActivityStatus::Error,
                 Some(subtask_failure_detail(locale, error)),
             ),
-            Progress::SubtaskIncomplete { id, expected, delivered } => update_activity(
+            Progress::SubtaskIncomplete {
+                id,
+                expected,
+                delivered,
+            } => update_activity(
                 msg,
                 id,
                 ChatActivityStatus::Error,
-                Some(format!("Only {delivered} of {expected} promised item(s) delivered")),
+                Some(format!(
+                    "Only {delivered} of {expected} promised item(s) delivered"
+                )),
             ),
-            Progress::SubtaskLanguageMismatch { id, checked, mismatched } => update_activity(
+            Progress::SubtaskLanguageMismatch {
+                id,
+                checked,
+                mismatched,
+            } => update_activity(
                 msg,
                 id,
                 ChatActivityStatus::Error,
@@ -382,10 +383,6 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
                     missing.join(", ")
                 ),
             ),
-            // Run-level circuit breaker (motion50 fix 1) — untranslated, like the other diagnostic lines.
-            Progress::RunAborted { reason } => {
-                append_narration(msg, &format!("• Run aborted: {reason}"))
-            }
             Progress::SubtaskRetry { id, attempt, .. } => update_activity(
                 msg,
                 id,
@@ -506,9 +503,6 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
             Progress::ReferenceUnavailable { reason } => {
                 append_narration(msg, &format!("• {reason}"))
             }
-            Progress::VariantReady(_) | Progress::VariantFailed { .. } => {
-                variants::narrate_variant(msg, event, locale)
-            }
             // "承诺-交付" honest report — not translated, same diagnostic
             // confirmation-line treatment as GeometryEcho above. The canvas
             // itself already carries the " (unfilled)" name suffix
@@ -532,7 +526,6 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
                 repairs,
                 records,
                 notes,
-                ..
             } => {
                 let quality = op_ai::chat_provider::QualitySummary {
                     checks: checks.clone(),
@@ -541,8 +534,8 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
                     notes: notes.clone(),
                 };
                 let mut event_changed =
-                    match op_host_services::quality_credential::quality_credential_line_for_locale(
-                        &quality, locale,
+                    match op_host_services::quality_credential::quality_credential_line(
+                        &quality, None,
                     ) {
                         Some(line) => append_narration(msg, line.trim_start()),
                         None => false,
@@ -781,5 +774,26 @@ fn friendly_quota_error(raw: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "design_session_quota_tests.rs"]
-mod quota_error_tests;
+mod quota_error_tests {
+    use super::friendly_quota_error;
+
+    #[test]
+    fn ark_quota_json_renders_one_friendly_sentence_with_reset_time() {
+        let raw = r#"orchestration failed: openai-compatible http 429 Too Many Requests: {"error":{"code":"AccountQuotaExceeded","message":"You have exceeded the 5-hour usage quota. It will reset at 2026-07-10 16:59:53 +0800 CST. We recommend upgrading your plan for more quota, or waiting for the reset. Request id: 0217","param":"","type":"TooManyRequests"}}"#;
+        let friendly = friendly_quota_error(raw).expect("quota-shaped error");
+        assert!(
+            friendly.contains("2026-07-10 16:59:53 +0800 CST"),
+            "{friendly}"
+        );
+        assert!(
+            !friendly.contains('{'),
+            "no raw JSON in the friendly line: {friendly}"
+        );
+    }
+
+    #[test]
+    fn non_quota_errors_pass_through() {
+        assert!(friendly_quota_error("orchestration failed: http 500 internal").is_none());
+        assert!(friendly_quota_error("parse error in subtask").is_none());
+    }
+}

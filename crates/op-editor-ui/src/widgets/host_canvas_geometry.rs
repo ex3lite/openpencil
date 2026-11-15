@@ -234,20 +234,6 @@ pub fn pinned_chat(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Opt
         return None;
     }
     if ui.workspace.visible {
-        // Narrow window: the chat is a drawer over the canvas, at its
-        // settled (open) rect — the host slides the paint, not the hits.
-        if ui.workspace.drawer_mode {
-            return Some(if ui.workspace.drawer_open {
-                PinnedChat::At(Rect::xywh(
-                    0.0,
-                    op_editor_core::WORKSPACE_HEADER_H,
-                    ui.workspace_drawer_width(viewport_w),
-                    (viewport_h - op_editor_core::WORKSPACE_HEADER_H).max(0.0),
-                ))
-            } else {
-                PinnedChat::Closed
-            });
-        }
         return if ui.sidebar_open {
             Some(PinnedChat::At(Rect::xywh(
                 0.0,
@@ -294,17 +280,8 @@ pub fn pinned_chat(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Opt
 /// which is the LEFT PANEL's edge (`layer_panel_width`, 0 when the
 /// panel is closed) — below the workspace header + toolbar.
 pub fn canvas_origin(state: &EditorState) -> (f32, f32) {
-    if state.editor_ui.works_reader_visible() {
-        // The reader's stage: left-anchored under its header in every
-        // form (phone, tablet portrait, tablet landscape).
-        return (
-            0.0,
-            crate::widgets::works_reader::reader_header_h(&state.editor_ui),
-        );
-    }
     if workspace_docked(state) {
-        // A drawer overlays the canvas instead of pushing it.
-        let dock_x = if state.editor_ui.sidebar_open && !state.editor_ui.workspace.drawer_mode {
+        let dock_x = if state.editor_ui.sidebar_open {
             state.editor_ui.layer_panel_width
         } else {
             0.0
@@ -343,19 +320,6 @@ pub fn canvas_region(
     viewport_w: f32,
     viewport_h: f32,
 ) -> (f32, f32, f32, f32) {
-    if state.editor_ui.works_reader_visible() {
-        use crate::widgets::works_reader::{
-            reader_chat_open, reader_paged_for, reader_stage_rect_for, ReaderForm,
-        };
-        let stage = reader_stage_rect_for(
-            ReaderForm::for_ui(&state.editor_ui, viewport_w, viewport_h),
-            viewport_w,
-            viewport_h,
-            reader_paged_for(state),
-            reader_chat_open(&state.editor_ui),
-        );
-        return (stage.origin.x, stage.origin.y, stage.size.x, stage.size.y);
-    }
     let (canvas_left, canvas_top) = canvas_origin(state);
     if workspace_docked(state) {
         let workspace = &state.editor_ui.workspace;

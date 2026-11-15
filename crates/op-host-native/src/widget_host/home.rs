@@ -1,79 +1,13 @@
 //! Home surface input routing for the native widget host.
 
 use super::WidgetHostNative;
-use op_editor_core::{HomeDevice, HomeFamily, HomeHit, InfoKind, SlideRatio};
+use op_editor_core::{EntrySurface, HomeDevice, HomeFamily, HomeHit, InfoKind, SlideRatio};
 use op_editor_ui::widgets::HomeSurface;
-use op_editor_ui::{Point2D, Rect};
-
-#[cfg(test)]
-#[path = "home_references_tests.rs"]
-mod reference_tests;
-
-/// The keyboard-safe gap kept under the composer's input box while the
-/// software keyboard is up (the same margin the agent-settings reveal
-/// uses).
-const HOME_COMPOSER_GAP: f32 = 12.0;
+use op_editor_ui::Point2D;
 
 impl WidgetHostNative {
     pub fn home_visible(&self) -> bool {
         self.editor_state.editor_ui.home.visible
-    }
-
-    /// Pull the Home composer above the software keyboard, the same way
-    /// `ensure_focused_agent_settings_visible` serves the settings modal:
-    /// recompute the composer's input rect at the current scroll, then
-    /// advance `home.scroll_y` until the box clears the keyboard band (or
-    /// reaches the page's furthest scroll). Desktop Home has no software
-    /// keyboard, so only touch hosts scroll.
-    pub(in crate::widget_host) fn ensure_home_composer_visible(
-        &mut self,
-        viewport_w: f32,
-        viewport_h: f32,
-    ) -> bool {
-        if !self.editor_state.editor_ui.touch_chrome()
-            || !self.editor_state.editor_ui.home.visible
-            || !self.editor_state.editor_ui.home.composer_focused
-            || self.keyboard_occlusion <= 0.0
-            || viewport_w <= 0.0
-            || viewport_h <= 0.0
-        {
-            return false;
-        }
-        let (composer, current_scroll, max_scroll) = {
-            let Some(home) = HomeSurface::for_editor_at(&self.editor_state, self.now_ms) else {
-                return false;
-            };
-            let chip_w = op_editor_ui::widgets::home_surface::model_chip_width(&home.chip_label);
-            let compact = self.editor_state.editor_ui.compact_layout();
-            let max_scroll = self.home_max_scroll(viewport_w, viewport_h, chip_w, compact);
-            // Reveal the whole composer, not just the box being typed in:
-            // a visible caret with the 开始设计 button still under the
-            // keyboard is a dead end on a phone.
-            let layout = home.layout(viewport_w, viewport_h);
-            let composer = Rect {
-                origin: layout.input_box.origin,
-                size: Point2D::new(
-                    layout.input_box.size.x,
-                    (layout.send.origin.y + layout.send.size.y - layout.input_box.origin.y)
-                        .max(layout.input_box.size.y),
-                ),
-            };
-            (composer, home.state.scroll_y, max_scroll)
-        };
-        // Only an occluded box moves the page. The agent-settings reveal
-        // leaves an already-visible field where it is for the same reason:
-        // pulling the page back up under the user is a worse surprise than
-        // the slack it would recover.
-        let deficit = (composer.origin.y + composer.size.y + HOME_COMPOSER_GAP
-            - self.keyboard_visible_bottom(viewport_h))
-        .max(0.0);
-        let next = (current_scroll + deficit).clamp(0.0, max_scroll);
-        let scroll = &mut self.editor_state.editor_ui.home.scroll_y;
-        if (*scroll - next).abs() <= f32::EPSILON {
-            return false;
-        }
-        *scroll = next;
-        true
     }
 
     pub(in crate::widget_host) fn press_home(
@@ -87,25 +21,12 @@ impl WidgetHostNative {
             return None;
         }
         let point = Point2D::new(x, y);
-        // A pointer press ends keyboard navigation (keyboard activation
-        // restores the focus after its synthetic press).
-        self.editor_state.editor_ui.home.key_focus = None;
         let home = HomeSurface::for_editor_at(&self.editor_state, self.now_ms)?;
         let hit = home.hit_test(viewport_width, viewport_height, point);
-        let input_offset = matches!(hit, Some(HomeHit::Sheet)).then(|| {
-            self.home_input_geometry
-                .as_ref()
-                .and_then(|geometry| {
-                    geometry.byte_offset_at(&home, viewport_width, viewport_height, point)
-                })
-                .or_else(|| home.input_offset_at(viewport_width, viewport_height, point))
-                .unwrap_or(home.state.input.caret())
-        });
         drop(home);
         let Some(hit) = hit else {
             // A press outside the 更多 popover closes it, like the
             // prototype's document-level click handler.
-            self.editor_state.editor_ui.home.composer_focused = false;
             if self.editor_state.editor_ui.home.more_open {
                 self.editor_state.editor_ui.home.more_open = false;
                 self.mark_dirty();
@@ -113,30 +34,18 @@ impl WidgetHostNative {
             return Some(true);
         };
         self.editor_state.editor_ui.home.pressed = Some(hit);
-        // The software keyboard follows the composer, not the surface: the
-        // input box owns the focus, every other target releases it (a
-        // touch tap replays through this same ladder on release, so both
-        // the immediate and the deferred path stay consistent).
-        self.editor_state.editor_ui.home.composer_focused = matches!(hit, HomeHit::Sheet);
         if self.editor_state.editor_ui.home.more_open
             && !matches!(hit, HomeHit::More | HomeHit::MoreItem(_))
         {
             self.editor_state.editor_ui.home.more_open = false;
         }
         match hit {
-            HomeHit::References | HomeHit::ReferenceRemove(_) | HomeHit::ReferencesClose => {
-                self.editor_state.apply_home_reference_action(hit);
-            }
             HomeHit::Sheet => {
-                let caret = input_offset.unwrap_or(self.editor_state.editor_ui.home.input.caret());
+                let caret = self.editor_state.editor_ui.home.input.text().len();
                 self.editor_state
                     .editor_ui
                     .home
                     .set_caret(caret, self.now_ms);
-                // Raise-with-focus ordering: when the software keyboard is
-                // already up (occlusion set before this tap landed), the
-                // composer must still be pulled above it.
-                self.ensure_home_composer_visible(viewport_width, viewport_height);
             }
             HomeHit::Tab(family) | HomeHit::MoreItem(family) => {
                 self.editor_state
@@ -149,19 +58,8 @@ impl WidgetHostNative {
                 self.editor_state.editor_ui.home.more_open = open;
             }
             HomeHit::Segment(index) => {
-                let old_example = HomeSurface::for_editor(&self.editor_state)
-                    .map(|s| s.example_prompt().to_string());
-                let replace_example = old_example.as_deref().is_some_and(|s| {
-                    !self.editor_state.editor_ui.home.draft.is_empty()
-                        && self.editor_state.editor_ui.home.draft == s
-                });
                 let home = &mut self.editor_state.editor_ui.home;
                 match home.task {
-                    HomeFamily::AppUi if index >= 2 => home.set_app_pages(if index == 3 {
-                        op_editor_core::AppPages::Multiple
-                    } else {
-                        op_editor_core::AppPages::Single
-                    }),
                     HomeFamily::AppUi => home.set_device(match index {
                         1 => HomeDevice::Desktop,
                         _ => HomeDevice::Mobile,
@@ -178,13 +76,6 @@ impl WidgetHostNative {
                     _ => {}
                 }
                 home.art_switched_at_ms = self.now_ms.max(1);
-                if replace_example {
-                    let new_example = HomeSurface::for_editor(&self.editor_state)
-                        .map(|s| s.example_prompt().to_string());
-                    if let Some(example) = new_example {
-                        self.editor_state.editor_ui.home.set_draft(example);
-                    }
-                }
             }
             HomeHit::Attachment => {
                 // The existing chat attachment picker is the one M1-supported
@@ -204,11 +95,6 @@ impl WidgetHostNative {
                 // (state, view, and phase were all kept).
                 self.editor_state.editor_ui.home.hide();
                 self.editor_state.editor_ui.workspace.reenter(self.now_ms);
-                // On a phone the workspace is the reader: land framed on
-                // the board it was showing, whatever the canvas did since.
-                if self.works_reader_visible() {
-                    self.frame_reader_board(viewport_width, viewport_height);
-                }
             }
             HomeHit::ReplaceKeep => {
                 self.editor_state.editor_ui.home.keep_draft();
@@ -231,47 +117,8 @@ impl WidgetHostNative {
                 home.use_example(&example);
             }
             HomeHit::Professional => {
-                self.clear_reader_open_intent();
-                self.enter_professional_canvas();
-            }
-            HomeHit::ModeNormal => {
-                // Home IS the normal mode: the 普通 half of the compact
-                // top bar switch only confirms the segment already
-                // selected. No surface change, no document change.
-            }
-            HomeHit::NavCreate => {
-                // Back to the 创作 page (from 作品), or — already there —
-                // reset the reading position.
-                let home = &mut self.editor_state.editor_ui.home;
-                home.works_open = false;
-                home.scroll_y = 0.0;
-            }
-            HomeHit::NavProjects => {
-                // The 作品 page: the live work and the recent documents.
-                let home = &mut self.editor_state.editor_ui.home;
-                home.works_open = true;
-                home.composer_focused = false;
-                home.more_open = false;
-            }
-            HomeHit::WorksCurrent => {
-                self.open_current_work_in_reader(viewport_width, viewport_height);
-            }
-            HomeHit::WorksRecent(index) => {
-                // The shell performs the load (it owns the file system);
-                // the reader opens once the document is installed.
-                if index < self.editor_state.editor_ui.recent_files.len() {
-                    self.editor_state.editor_ui.pending_file_action =
-                        Some(op_editor_core::FileAction::OpenRecent(index));
-                    self.arm_reader_on_next_open();
-                }
-            }
-            HomeHit::NavSettings => {
-                // The settings destination the compact nav and the top
-                // bar's gear share: the existing agent-settings modal
-                // (Home already paints it above the takeover).
-                self.editor_state.editor_ui.agent_settings_open = true;
-                self.editor_state.editor_ui.agent_settings.tab =
-                    op_editor_core::AgentSettingsTab::Agents;
+                self.editor_state.editor_ui.home.hide();
+                self.editor_state.editor_ui.entry_surface = EntrySurface::Canvas;
             }
             HomeHit::ModelChip => {
                 if !self.editor_state.has_usable_chat_agent() {
@@ -302,13 +149,7 @@ impl WidgetHostNative {
                     self.editor_state.editor_ui.login_modal_hover = None;
                 }
             }
-            HomeHit::ConnectApiKey => {
-                op_editor_ui::widgets::agent_settings_press_focus::open_builtin_setup(
-                    &mut self.editor_state,
-                    self.now_ms,
-                );
-            }
-            HomeHit::ConnectCli => {
+            HomeHit::ConnectApiKey | HomeHit::ConnectCli => {
                 self.editor_state.editor_ui.home.connect_card_open = false;
                 self.editor_state.editor_ui.agent_settings_open = true;
                 self.editor_state.editor_ui.agent_settings.tab =
@@ -318,14 +159,15 @@ impl WidgetHostNative {
                 self.editor_state.editor_ui.home.connect_card_open = false;
             }
             HomeHit::Send => {
-                // One decision for the label and the press: a brief of the
-                // user's own generates, an empty box (or the unchanged
-                // example) opens the example's instant template draft, and
-                // nothing runnable opens the connect card.
-                self.home_send();
+                if !self.editor_state.has_usable_chat_agent() {
+                    // The send would fail silently — open the connect
+                    // card instead of queueing a dead turn.
+                    self.editor_state.editor_ui.home.connect_card_open = true;
+                } else {
+                    self.queue_home_send();
+                }
             }
             HomeHit::NewCanvas => {
-                self.clear_reader_open_intent();
                 self.editor_state.editor_ui.pending_file_action =
                     Some(op_editor_core::FileAction::New);
             }
@@ -337,7 +179,6 @@ impl WidgetHostNative {
                 self.open_account_entry();
             }
             HomeHit::OpenFile => {
-                self.arm_reader_from_home_picker();
                 self.editor_state.editor_ui.pending_file_action =
                     Some(op_editor_core::FileAction::Open);
             }
@@ -347,13 +188,7 @@ impl WidgetHostNative {
                         Some(op_editor_core::FileAction::OpenRecent(index));
                 }
             }
-            HomeHit::Variants => {
-                let home = &mut self.editor_state.editor_ui.home;
-                home.variants_on = !home.variants_on;
-            }
-            HomeHit::ReferenceLink => self.home_brand_press(),
-            HomeHit::BrandClear => self.editor_state.editor_ui.home.brand.clear(),
-            HomeHit::Figma => {
+            HomeHit::ReferenceLink | HomeHit::Figma => {
                 // Visible but disabled in M1; the tooltip explains why.
             }
         }
@@ -414,9 +249,6 @@ impl WidgetHostNative {
     }
 
     pub(in crate::widget_host) fn queue_home_send(&mut self) -> bool {
-        if self.editor_state.editor_ui.home.references_open {
-            return false;
-        }
         let Some(prompt) = self.editor_state.editor_ui.home.generation_prompt() else {
             return false;
         };
@@ -431,11 +263,6 @@ impl WidgetHostNative {
         if !op_editor_core::blank_starter::active_page_is_blank_starter(&self.editor_state) {
             self.start_fresh_document_for_home();
         }
-        // A staged brand kit lands on the document the run will draw on.
-        self.apply_staged_home_brand();
-        // The swap dropped every document-scoped pin; a Make-one-like-this
-        // send gets its recipe's style guide back (a no-op otherwise).
-        self.editor_state.editor_ui.restore_make_same_pin();
         // Open the generation workspace on the SAME document: the chat
         // pins into the dock and the canvas renders the boards the run
         // produces. Family, brief, and the task's options are captured
@@ -452,7 +279,7 @@ impl WidgetHostNative {
             // visible and Professional Editing keeps it that way.
             self.editor_state.editor_ui.open_workspace_for_generation(
                 family,
-                brief.clone(),
+                brief,
                 options,
                 0,
                 self.now_ms,
@@ -468,18 +295,15 @@ impl WidgetHostNative {
         // Home briefs are whole-design requests — pin the turn to the
         // orchestrator pipeline (reasoning-budget models finish there;
         // the design-agent loop burns their budget thinking). The
-        // desktop launcher consumes the route on the next drain. The
-        // 3-directions toggle turns the brief into N side-by-side
-        // directions, each pinned to its own style guide.
-        op_editor_core::pin_home_brief_route(&mut self.editor_state);
-        self.editor_state.chat.title_from_prompt_if_untitled(&brief);
-        let sent = self.editor_state.chat.begin_send_showing(&brief);
+        // desktop launcher consumes the route on the next drain.
+        self.editor_state.chat.launch_route = op_editor_core::LaunchRoute::Orchestrator;
+        let sent = self.editor_state.chat.begin_send();
         self.editor_state.chat.focused = false;
         sent
     }
 
     pub(in crate::widget_host) fn home_text(&mut self, c: char) -> bool {
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() || c.is_control() {
+        if !self.home_visible() || c.is_control() {
             return false;
         }
         let changed = self
@@ -494,13 +318,7 @@ impl WidgetHostNative {
     }
 
     pub(in crate::widget_host) fn home_backspace(&mut self) -> Option<bool> {
-        if self.home_visible()
-            && self.editor_state.editor_ui.home.references_open
-            && !self.editor_state.editor_ui.agent_settings_open
-        {
-            return Some(true);
-        }
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
+        if !self.home_visible() {
             return None;
         }
         self.editor_state.editor_ui.home.backspace(self.now_ms);
@@ -509,11 +327,8 @@ impl WidgetHostNative {
     }
 
     pub(in crate::widget_host) fn home_delete(&mut self) -> Option<bool> {
-        if !self.home_visible() || self.editor_state.editor_ui.agent_settings_open {
+        if !self.home_visible() {
             return None;
-        }
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
-            return Some(true);
         }
         self.editor_state.editor_ui.home.delete_forward(self.now_ms);
         self.mark_dirty();
@@ -521,7 +336,7 @@ impl WidgetHostNative {
     }
 
     pub(in crate::widget_host) fn home_caret(&mut self, forward: bool, extend: bool) -> bool {
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
+        if !self.home_visible() {
             return false;
         }
         self.editor_state
@@ -533,7 +348,7 @@ impl WidgetHostNative {
     }
 
     pub(in crate::widget_host) fn home_select_all(&mut self) -> bool {
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
+        if !self.home_visible() {
             return false;
         }
         self.editor_state.editor_ui.home.select_all(self.now_ms);
@@ -546,7 +361,7 @@ impl WidgetHostNative {
         text: &str,
         cursor: Option<(usize, usize)>,
     ) -> bool {
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
+        if !self.home_visible() {
             return false;
         }
         let input = &mut self.editor_state.editor_ui.home.input;
@@ -561,7 +376,7 @@ impl WidgetHostNative {
     }
 
     pub(in crate::widget_host) fn home_ime_commit(&mut self, text: &str) -> bool {
-        if !self.editor_state.editor_ui.home_composer_owns_keyboard() {
+        if !self.home_visible() {
             return false;
         }
         if !text.is_empty() {
@@ -638,7 +453,7 @@ mod tests {
             host.editor_state().chat.pending_send.as_deref(),
             Some(expected.as_str())
         );
-        assert_eq!(host.editor_state().chat.messages[0].content, "取餐预约");
+        assert_eq!(host.editor_state().chat.messages[0].content, expected);
     }
 
     #[test]
@@ -665,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn send_with_an_empty_draft_and_no_agent_opens_the_example_draft() {
+    fn send_with_an_empty_draft_is_a_noop() {
         let mut host = WidgetHostNative::new();
         host.editor_state_mut().editor_ui.home.visible = true;
         let home = HomeSurface::for_editor(host.editor_state()).expect("home");
@@ -673,15 +488,11 @@ mod tests {
         assert!(host.apply_press(send.x, send.y, W, H));
         assert!(
             host.editor_state().chat.pending_send.is_none(),
-            "an empty draft queues nothing without an agent"
+            "an empty draft queues nothing"
         );
         assert!(
-            !host.editor_state().editor_ui.home.connect_card_open,
-            "the App example has a template, so no connect card"
-        );
-        assert_eq!(
-            host.editor_state().editor_ui.workspace.draft_template,
-            Some("coffee-order-app")
+            host.editor_state().editor_ui.home.connect_card_open,
+            "with no usable agent the connect card opens instead"
         );
     }
 
@@ -735,7 +546,7 @@ mod tests {
         assert!(!host.home_visible());
         assert_eq!(
             host.editor_state().editor_ui.entry_surface,
-            op_editor_core::EntrySurface::Canvas
+            EntrySurface::Canvas
         );
     }
 
@@ -746,9 +557,3 @@ mod tests {
         )
     }
 }
-#[cfg(test)]
-#[path = "home_compact_tests.rs"]
-mod compact_tests;
-#[cfg(test)]
-#[path = "home_ime_focus_tests.rs"]
-mod ime_focus_tests;

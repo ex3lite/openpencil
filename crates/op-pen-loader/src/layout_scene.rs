@@ -26,6 +26,7 @@ use jian_scene::layout_scene::{
     stable_image_source_id, DropShadow, Effect, LayoutScene, SceneFillLayer, SceneFillType,
     SceneGradient, SceneGradientStop, SceneImageFit, SceneNode, ScenePage, SceneShader,
     SceneShaderUniform, SceneTextAlign, SceneTextRun, SceneTextVerticalAlign, SceneVideo,
+    SceneWidget, SceneWidgetOption,
 };
 use op_editor_core::render_backend::{Color, ImageBlendMode};
 use op_editor_core::scene_vars::VariableTable;
@@ -41,8 +42,6 @@ use crate::editor_scene::editor_state_to_layout_scene;
 
 mod stroke;
 use stroke::{is_status_bar_shell_stroke, is_unpainted_widget_stroke, scene_stroke};
-mod widget;
-use widget::widget_payload_to_scene;
 
 /// Build a [`LayoutScene`] from a bare [`PenDocument`], theme, and active page index.
 ///
@@ -133,30 +132,10 @@ pub fn pen_document_to_layout_scene_for_preview(
     active_theme: &std::collections::BTreeMap<String, String>,
     active_page_index: usize,
 ) -> LayoutScene {
-    pen_document_to_layout_scene_for_preview_with_measure(
-        paint_doc,
-        layout_doc,
-        preserve_authored_geometry,
-        active_theme,
-        active_page_index,
-        crate::adapter::pages::layout_measure_backend(),
-    )
-}
-
-/// Build preview paint geometry with the exact backend used for runtime hits.
-pub fn pen_document_to_layout_scene_for_preview_with_measure(
-    paint_doc: &jian_ops_schema::PenDocument,
-    layout_doc: &jian_ops_schema::PenDocument,
-    preserve_authored_geometry: bool,
-    active_theme: &std::collections::BTreeMap<String, String>,
-    active_page_index: usize,
-    measure: std::rc::Rc<dyn jian_core::layout::measure::MeasureBackend>,
-) -> LayoutScene {
     let payload: DocPayload = crate::adapter::pen_documents_to_payload_for_preview(
         paint_doc,
         layout_doc,
         preserve_authored_geometry,
-        measure,
     )
     .payload;
     let mut var_table = crate::adapter::build_var_table(paint_doc);
@@ -349,12 +328,38 @@ pub(crate) fn node_payload_to_scene(
         hidden: node.hidden,
         locked: node.locked,
         // Widget props are already concrete after the adapter harvested them;
-        // only the adjacent-label page colour comes from the variable table.
-        widget: node
-            .widget
-            .as_ref()
-            .map(|w| widget_payload_to_scene(w, var_table)),
+        // no `$ref` resolution is needed here.
+        widget: node.widget.as_ref().map(widget_payload_to_scene),
         children,
+    }
+}
+
+/// Convert a payload [`WidgetPayload`] into the paint-only
+/// [`SceneWidget`]. Plain field copy — option rows map 1:1.
+fn widget_payload_to_scene(w: &crate::payload::WidgetPayload) -> SceneWidget {
+    SceneWidget {
+        kind: w.kind.clone(),
+        checked: w.checked,
+        toggle_progress: None,
+        value_num: w.value_num,
+        value_str: w.value_str.clone(),
+        placeholder: w.placeholder.clone(),
+        leading_icon: w.leading_icon.clone(),
+        trailing_icon: w.trailing_icon.clone(),
+        label: w.label.clone(),
+        min: w.min,
+        max: w.max,
+        step: w.step,
+        indeterminate: w.indeterminate,
+        corner_radius_authored: w.corner_radius_authored,
+        options: w
+            .options
+            .iter()
+            .map(|o| SceneWidgetOption {
+                value: o.value.clone(),
+                label: o.label.clone(),
+            })
+            .collect(),
     }
 }
 

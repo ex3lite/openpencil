@@ -61,7 +61,6 @@ fn sink_with_roots(roots: Vec<serde_json::Value>) -> VecDocSink {
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Page".into(),
@@ -74,7 +73,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: Vec::new(),
         style_guide_name: None,
-        palette: None,
     }
 }
 

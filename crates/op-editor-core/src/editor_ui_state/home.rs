@@ -9,17 +9,6 @@
 
 use jian_core::text_input::TextInputState;
 
-#[path = "home_references.rs"]
-mod references;
-
-#[path = "home_brand.rs"]
-pub mod brand;
-#[path = "share_recipe.rs"]
-pub mod share_recipe;
-#[path = "home_site_import.rs"]
-pub mod site_import;
-use share_recipe::{MakeSameStage, ShareRecipe};
-
 /// The persisted first-launch entry preference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EntrySurface {
@@ -90,8 +79,8 @@ impl HomeFamily {
     /// Home surface itself resolves copy through i18n `home.task.<id>.*`).
     pub const fn label(self) -> &'static str {
         match self {
-            Self::AppUi => "应用界面",
-            Self::Web => "网站设计",
+            Self::AppUi => "App 界面",
+            Self::Web => "网页设计",
             Self::Presentation => "演示文稿",
             Self::KnowledgeCards => "图文卡片",
             Self::ScreenshotTutorial => "截图教程",
@@ -119,13 +108,11 @@ impl HomeFamily {
         let prompt = match self {
             Self::AppUi if draft.device == HomeDevice::Mobile => format!(
                 "请设计一套可编辑的高保真手机 App 界面（mobile app，375×812）。\
-{}统一的组件、变量与图层结构。\n\n用户需求：{text}",
-                draft.app_pages.delivery(text)
+交付一组完整界面：统一的组件、变量与图层结构，屏幕之间用 onTap 串起导航。\n\n用户需求：{text}"
             ),
             Self::AppUi => format!(
                 "请设计一套可编辑的高保真桌面端应用界面（desktop app，1440 宽的 dashboard \
-工作台）。{}统一的组件、变量与图层结构。\n\n用户需求：{text}",
-                draft.app_pages.delivery(text)
+工作台）。交付一组完整界面：统一的组件、变量与图层结构。\n\n用户需求：{text}"
             ),
             Self::Web => format!(
                 "请设计一个完整的纵向滚动网站页面（landing page，1440 宽）。\
@@ -146,11 +133,7 @@ impl HomeFamily {
             ),
             Self::ScreenshotTutorial => format!(
                 "请做一篇截图教程图文（card，竖版，截图配上步骤说明）。按步骤组织画面，\
-每页标题直接写“步骤N”和操作名称，避免空白序号圆点。截图保持完整比例，说明文字放在截图外。\
-按小屏阅读设计文字层级：以1080宽画板为例，标题字号至少64、步骤说明至少48，其他宽度等比调整；\
-每页用一到两句简短说明，宁可调整截图位置与留白，也不要缩小文字塞进版面。整套使用一致的标题、说明字号和对齐。\
-圈注必须对应截图里的真实控件：确认目标后优先用可用的 annotate_image 按源图归一化坐标生成，\
-不要把图片外框或顶部留白当成控件位置；无法确认时用文字步骤，不猜圈注。\n\n用户需求：{text}"
+并为关键操作加清晰标注。\n\n用户需求：{text}"
             ),
             Self::Infographic => format!(
                 "请做一张{}信息图长图（card，竖版图文长图）。信息层级清晰，\
@@ -158,8 +141,8 @@ impl HomeFamily {
                 Self::info_kind_label(draft.info_kind)
             ),
             Self::EventPoster => format!(
-                "请做活动海报（card，竖版图文）。按用户指定的数量与尺寸交付，未指定时先做一张竖版主海报。\
-主视觉、时间地点与报名信息完整，图层保持可编辑；社交方图或成套物料仅在用户要求时增加。\n\n用户需求：{text}"
+                "请做一套活动海报（card，主海报竖版 + 社交方图）。整组海报视觉一致，\
+主视觉、时间地点与报名信息完整，图层保持可编辑。\n\n用户需求：{text}"
             ),
         };
         Some(prompt)
@@ -228,51 +211,11 @@ pub enum InfoKind {
     Comparison,
 }
 
-/// The App task starts with one screen; a flow is an explicit choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum AppPages {
-    #[default]
-    Single,
-    Multiple,
-}
-
-impl AppPages {
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Single => "single",
-            Self::Multiple => "multiple",
-        }
-    }
-    pub fn from_id(value: &str) -> Option<Self> {
-        match value {
-            "single" => Some(Self::Single),
-            "multiple" => Some(Self::Multiple),
-            _ => None,
-        }
-    }
-    fn delivery(self, text: &str) -> String {
-        match self {
-            Self::Single => {
-                "交付 1 页界面：只设计用户最需要的一个页面，不要额外生成其他页面或画板。".into()
-            }
-            Self::Multiple => {
-                let count = explicit_app_page_count(text).unwrap_or(3);
-                format!("交付 {count} 页完整界面：用户指定页面名称时遵从需求，页面之间用 onTap 串起导航。")
-            }
-        }
-    }
-}
-
-#[path = "home_page_count.rs"]
-mod page_count;
-use page_count::explicit_app_page_count;
-
 /// One task's kept draft: the text plus the options its segmented
 /// control owns. Attachments deliberately live in the chat composer's
 /// `pending_attachments` — that list is the single source of truth.
 #[derive(Debug, Clone, Default)]
 pub struct TaskDraft {
-    pub app_pages: AppPages,
     pub text: String,
     pub device: HomeDevice,
     pub ratio: SlideRatio,
@@ -300,20 +243,10 @@ pub enum HomeHit {
     Segment(u8),
     /// The 添加截图 tool.
     Attachment,
-    /// Manage all staged reference images, including collapsed chips.
-    References,
-    ReferenceRemove(usize),
-    ReferencesClose,
-    /// The 加链接 tool: read a brand from the brief's link or staged
-    /// screenshot (disabled on hosts without an extraction runner).
+    /// The 参考链接 tool (disabled M1).
     ReferenceLink,
-    /// The staged brand chip's remove (×) button.
-    BrandClear,
     /// The Figma tool (disabled M1).
     Figma,
-    /// The 3-directions toggle: the next send generates
-    /// [`crate::DEFAULT_VARIANT_COUNT`] directions side by side.
-    Variants,
     /// The model button on the submit row.
     ModelChip,
     /// The 开始设计 primary button.
@@ -341,20 +274,6 @@ pub enum HomeHit {
     OpenFile,
     /// The top bar's 进入专业画布 button.
     Professional,
-    /// The 普通 half of the compact (phone) top bar's 普通 / 专业
-    /// segmented control. Home IS the normal mode, so the press only
-    /// confirms the already-selected segment.
-    ModeNormal,
-    /// The compact bottom nav's 创作 tab (the Home page itself).
-    NavCreate,
-    /// The compact bottom nav's 作品 tab.
-    NavProjects,
-    /// The compact bottom nav's 设置 tab (and the top bar's gear).
-    NavSettings,
-    /// The 作品 page's current (in-memory) work card.
-    WorksCurrent,
-    /// One recent-file row on the 作品 page (index into `recent_files`).
-    WorksRecent(usize),
     /// The 接入卡's free-tier row.
     ConnectFreeTier,
     /// The 接入卡's own-API-key row.
@@ -376,16 +295,6 @@ pub struct HomeState {
     pub draft: String,
     pub hover: Option<HomeHit>,
     pub pressed: Option<HomeHit>,
-    /// Whether the composer's input box currently owns the text focus.
-    /// Desktop Home ignores it (the surface IS the composer, so it always
-    /// reports keyboard focus); touch shells raise and dismiss the
-    /// software keyboard off this bit, so it must follow the last pressed
-    /// target instead of staying latched to the surface.
-    pub composer_focused: bool,
-    /// The target the keyboard (Tab / Shift+Tab) moved to, drawn with a
-    /// focus ring and activated by Enter / Space. Any pointer press drops
-    /// it — the ring is focus-VISIBLE, keyboard users only.
-    pub key_focus: Option<HomeHit>,
     /// Scroll offset for a home stack that is taller than the viewport.
     /// The top bar stays pinned while the page content scrolls under it.
     pub scroll_y: f32,
@@ -400,8 +309,6 @@ pub struct HomeState {
     /// The "先接入一个模型" connect card, opened by Send / the model chip
     /// when no chat agent can answer yet. Modal over the composer.
     pub connect_card_open: bool,
-    /// The staged reference-image list is modal over Home.
-    pub references_open: bool,
     /// The narrow-viewport 更多 task popover.
     pub more_open: bool,
     /// The inline 替换现有需求？ confirm strip inside the composer.
@@ -416,36 +323,6 @@ pub struct HomeState {
     /// The explore card the cursor most recently LEFT, so only that card
     /// plays the descent half of the lift; every other rest card stays put.
     pub card_hover_leaving: Option<HomeFamily>,
-    /// The compact bottom nav's 作品 page is on show instead of the
-    /// 创作 page. Phone-only; every hide returns to 创作.
-    pub works_open: bool,
-    /// The composer's 3-directions toggle: the next send asks for
-    /// several distinct directions side by side instead of one design.
-    /// Session state shared by every task, like the model chip.
-    pub variants_on: bool,
-    /// Host capability: this host cannot run several directions (web has
-    /// no variants runner yet), so the toggle is not offered at all.
-    pub variants_unavailable: bool,
-    /// The 加链接 tool's brand kit: request, status, and the staged kit
-    /// the next send applies.
-    pub brand: brand::HomeBrandState,
-    /// One-click website import: a link-only draft imports the page.
-    pub site_import: site_import::HomeSiteImportState,
-    /// How the open document was made (its `editorMeta.shareRecipe`), when
-    /// the file carries one. Drives Make-one-like-this; see
-    /// `share_recipe.rs`. Document-scoped: every open replaces it.
-    pub recipe: Option<ShareRecipe>,
-    /// Declared purpose of the current document, without its generation brief.
-    /// Document-scoped: never inherit it when opening another work.
-    pub work_family: Option<HomeFamily>,
-    /// The website the open document was imported from (its
-    /// `editorMeta.importedFrom`), already reduced to scheme + host + path
-    /// by [`site_import::sanitize_import_origin`]. The repair policy reads
-    /// it to keep a later AI edit from restyling the imported design.
-    /// Document-scoped like [`Self::recipe`]: every open replaces it.
-    pub imported_from: Option<String>,
-    /// A Make-one-like-this press staged for the next send.
-    pub make_same: Option<MakeSameStage>,
 }
 
 impl Default for HomeState {
@@ -457,27 +334,15 @@ impl Default for HomeState {
             draft: String::new(),
             hover: None,
             pressed: None,
-            composer_focused: false,
-            key_focus: None,
             scroll_y: 0.0,
             shown_at_ms: 0,
             input: TextInputState::default(),
             connect_card_open: false,
-            references_open: false,
             more_open: false,
             replace_pending: false,
             art_switched_at_ms: 0,
             card_hover_since_ms: 0,
             card_hover_leaving: None,
-            works_open: false,
-            variants_on: false,
-            variants_unavailable: false,
-            brand: brand::HomeBrandState::default(),
-            site_import: site_import::HomeSiteImportState::default(),
-            recipe: None,
-            work_family: None,
-            imported_from: None,
-            make_same: None,
         }
     }
 }
@@ -489,16 +354,12 @@ impl HomeState {
         self.visible = false;
         self.hover = None;
         self.pressed = None;
-        self.composer_focused = false;
-        self.key_focus = None;
         self.shown_at_ms = 0;
         self.connect_card_open = false;
-        self.references_open = false;
         self.more_open = false;
         self.replace_pending = false;
         self.card_hover_since_ms = 0;
         self.card_hover_leaving = None;
-        self.works_open = false;
     }
 
     /// The next frame instant the entrance choreography still needs, or
@@ -576,10 +437,6 @@ impl HomeState {
         true
     }
 
-    pub fn set_app_pages(&mut self, pages: AppPages) {
-        self.task_draft_mut().app_pages = pages;
-    }
-
     pub fn set_device(&mut self, device: HomeDevice) {
         self.task_draft_mut().device = device;
     }
@@ -645,18 +502,6 @@ impl HomeState {
         true
     }
 
-    /// Paste a complete material payload, preserving its row boundaries and
-    /// replacing the current selection. Normalize platform newline spellings.
-    pub fn paste_text(&mut self, text: &str, now_ms: u64) -> bool {
-        let normalized: String = text
-            .replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .chars()
-            .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
-            .collect();
-        self.insert_text(&normalized, now_ms)
-    }
-
     pub fn backspace(&mut self, now_ms: u64) -> bool {
         let before = (self.input.text().to_string(), self.input.selection());
         self.input.backspace(now_ms);
@@ -697,21 +542,6 @@ impl HomeState {
 
     pub fn generation_prompt(&self) -> Option<String> {
         self.task.generation_prompt(self.task_draft())
-    }
-}
-
-impl super::EditorUiState {
-    /// Home may stay visible underneath its overlays. Only the exposed
-    /// composer owns text selection, clipboard, caret and IME events.
-    /// Touch keyboard visibility additionally follows `composer_focused`.
-    pub fn home_composer_owns_keyboard(&self) -> bool {
-        self.home.visible
-            && !self.home.references_open
-            && !self.agent_settings_open
-            && !self.save_name_dialog.open
-            && !self.login_modal_open
-            && !self.account_menu_open
-            && !self.chat_model_picker.open
     }
 }
 

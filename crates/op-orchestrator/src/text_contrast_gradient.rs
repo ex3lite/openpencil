@@ -44,26 +44,11 @@ pub(super) struct ResolvedGradient {
 struct ResolvedStop {
     offset: f64,
     color: String,
-    rgba: [u8; 4],
 }
 
 impl ResolvedGradient {
     pub(super) fn colors(&self) -> Vec<String> {
         self.stops.iter().map(|stop| stop.color.clone()).collect()
-    }
-
-    /// Composite translucent stops over the opaque paint beneath them, the
-    /// way a semi-transparent solid already is. A hero glow of `#A78BFA26`
-    /// over `#0A0F1C` renders near-black, not lavender; reading the stop as
-    /// opaque let `$--card` (#18181B) headline text pass at ~7:1 while it
-    /// actually rendered at ~1.1:1 (arena l02, 2026-09-27).
-    pub(super) fn flatten_over(&mut self, under: [u8; 4]) {
-        for stop in &mut self.stops {
-            if stop.rgba[3] < u8::MAX {
-                stop.color = super::composite_over(stop.rgba, under);
-                stop.rgba = super::parse_color_rgba(&stop.color).unwrap_or(stop.rgba);
-            }
-        }
     }
 }
 
@@ -82,7 +67,6 @@ pub(super) fn resolve_gradient(
             Some(ResolvedStop {
                 offset,
                 color: super::rgb_hex(rgba),
-                rgba,
             })
         })
         .collect();
@@ -94,45 +78,6 @@ pub(super) fn resolve_gradient(
         kind: source.kind,
         stops,
     })
-}
-
-/// Vertices of a provably uniform mesh may differ by at most this contrast
-/// ratio pairwise — a subtle sheen over one colour, not a light-to-dark
-/// sweep whose colour under the text cannot be known without rendering.
-const MESH_UNIFORM_MAX_CONTRAST: f64 = 1.5;
-
-/// A mesh gradient the contrast pass can reason about: every vertex
-/// resolves and all of them are near-uniform, so the text contrasts with
-/// each one or with none. Measured: a dark subscription panel painted as a
-/// mesh carried near-black headlines that the pass skipped as unprovable.
-/// Returned as a flat gradient over the vertex colours (worst case holds).
-pub(super) fn uniform_mesh(
-    colors: &[String],
-    variables: &Variables,
-    theme: &Theme,
-) -> Option<ResolvedGradient> {
-    let resolved: Vec<String> = colors
-        .iter()
-        .map(|raw| {
-            let color = resolve_color_ref(raw, variables, theme)?;
-            super::parse_color_rgba(&color).map(super::rgb_hex)
-        })
-        .collect::<Option<_>>()?;
-    let uniform = resolved.iter().all(|a| {
-        resolved
-            .iter()
-            .all(|b| op_design_lint::color::color_contrast(a, b) <= MESH_UNIFORM_MAX_CONTRAST)
-    });
-    if resolved.is_empty() || !uniform {
-        return None;
-    }
-    let last = (resolved.len() - 1).max(1) as f64;
-    let stops = resolved
-        .into_iter()
-        .enumerate()
-        .map(|(index, color)| (index as f64 / last, color))
-        .collect();
-    resolve_gradient(GradientSource::linear(90.0, stops), variables, theme)
 }
 
 /// Sample a resolved gradient at the centre of a text node.

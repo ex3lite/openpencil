@@ -1,9 +1,9 @@
 //! Shared facts for deterministic interaction backfill and its geometry echo.
 //!
 //! Back controls are recognized only from resolved geometry and dedicated icon
-//! data (`iconFontName` / `iconId`). Repeated card shapes can identify missing
-//! interactions, but cannot prove the destination's entity identity. Card
-//! navigation is diagnostic-only; cleanup never invents a detail handoff.
+//! data (`iconFontName` / `iconId`). Card routing requires one unambiguous
+//! detail-shaped screen and repeated image+text subtree shapes. Node names,
+//! ids, and inferred intent never participate.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -47,10 +47,6 @@ struct BackShapeFact {
 /// Persist every interaction that the shared fact scan proves unambiguous.
 /// This is cleanup-only; preview's cloned-state fallback never calls it.
 pub(crate) fn wire_interaction_backfill(sink: &mut dyn DocSink) {
-    crate::table_filter_contract::wire(sink);
-    crate::table_filter_contract::repair_status_tints(sink);
-    crate::table_filter_contract::wire_timestamp_filters(sink);
-    crate::table_filter_contract::wire_local_pagination(sink);
     let facts = interaction_backfill_facts(sink.state());
     for target in facts.back_targets {
         sink.apply(EditorCommand::PatchNodeData {
@@ -58,6 +54,15 @@ pub(crate) fn wire_interaction_backfill(sink: &mut dyn DocSink) {
             patch_json: r#"{"events":{"onTap":[{"pop":null}]}}"#.to_string(),
             page_id: None,
         });
+    }
+    if let Some(route) = facts.detail_route {
+        for target in facts.card_targets {
+            sink.apply(EditorCommand::PatchNodeData {
+                node_id: NodeId::new(target.node_id),
+                patch_json: crate::wire_screen_navigation::navigate_patch("push", &route),
+                page_id: None,
+            });
+        }
     }
 }
 
@@ -82,8 +87,8 @@ pub(crate) fn screen_has_back_control_shape(state: &EditorState, screen_id: &str
     !shapes.is_empty()
 }
 
-/// Whole-document interaction-gap echo. Only back controls have enough facts
-/// for automatic repair; cards require an authored entity handoff contract.
+/// Whole-document interaction-gap echo. The repair and echo consume the exact
+/// same [`interaction_backfill_facts`] result, so their eligibility cannot drift.
 pub(super) fn push_interaction_backfill_diagnostics(
     state: &EditorState,
     root_ids: Option<&[String]>,
@@ -122,10 +127,8 @@ pub(super) fn push_interaction_backfill_diagnostics(
         if let Some(route) = facts.detail_route {
             out.push(format!(
                 "interaction-unwired-cards: {card_count} repeated image+text card(s) have no \
-                 onTap, and the document has one detail route {route:?}. If the brief requests \
-                 these cards to open details, pass the selected entity before push and bind \
-                 the detail content to that same state. One available route alone does not \
-                 prove it represents every card; never route distinct entities to unchanged details."
+                 onTap, and the document has one detail route {route:?}; bind their onTap to \
+                 push that exact route."
             ));
         }
     }

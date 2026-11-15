@@ -2,7 +2,6 @@
 //! of `canvas_viewport.rs` to keep that file under the 800-line
 //! ceiling.
 
-use super::canvas_text_kinsoku::carry_for_line_start;
 use crate::layout_scene::{SceneGradient, SceneNode, SceneShader, SceneStrokeAlign};
 use crate::theme::Theme;
 use crate::widgets::PaintCx;
@@ -437,7 +436,6 @@ pub(crate) fn paint_shader_rect(
 /// segment via the per-character-CJK / word-Latin algorithm from
 /// `pen-renderer/paint-utils.ts::wrapLine`. Empty segments survive
 /// as blank lines so authored paragraph breaks paint as gaps.
-#[cfg(test)]
 pub(super) fn wrap_text(
     backend: &mut dyn crate::RenderBackend,
     text: &str,
@@ -446,49 +444,24 @@ pub(super) fn wrap_text(
     weight: u16,
     letter_spacing: f32,
 ) -> Vec<String> {
-    wrap_text_in_family(
-        backend,
-        text,
-        &WrapFont {
-            font_size,
-            weight,
-            letter_spacing,
-            family: "",
-            italic: false,
-        },
-        max_w,
-    )
-}
-
-/// The font a wrap is measured in. Line breaks MUST be decided in the
-/// family the painter draws with: a family-blind measure resolves the
-/// backend's default face, and when the drawn family is wider (a
-/// monospace display figure in "DM Mono") the line that "fits" by the
-/// blind measure paints past its box — the jian layout (family-aware)
-/// reserved two lines while paint drew one overflowing line.
-pub(super) struct WrapFont<'a> {
-    pub(super) font_size: f32,
-    pub(super) weight: u16,
-    pub(super) letter_spacing: f32,
-    /// Empty = the backend default face (the historical family-blind path).
-    pub(super) family: &'a str,
-    pub(super) italic: bool,
-}
-
-/// [`wrap_text`] measured in `font`'s family (see [`WrapFont`]).
-pub(super) fn wrap_text_in_family(
-    backend: &mut dyn crate::RenderBackend,
-    text: &str,
-    font: &WrapFont<'_>,
-    max_w: f32,
-) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for segment in text.split('\n') {
-        if max_w <= 0.0 || measure_text_with_letter_spacing(backend, segment, font) <= max_w {
+        if max_w <= 0.0
+            || measure_text_with_letter_spacing(backend, segment, font_size, weight, letter_spacing)
+                <= max_w
+        {
             out.push(segment.to_string());
             continue;
         }
-        wrap_segment(backend, segment, font, max_w, &mut out);
+        wrap_segment(
+            backend,
+            segment,
+            font_size,
+            max_w,
+            weight,
+            letter_spacing,
+            &mut out,
+        );
     }
     if out.is_empty() {
         out.push(String::new());
@@ -500,8 +473,10 @@ pub(super) fn wrap_text_in_family(
 fn wrap_segment(
     backend: &mut dyn crate::RenderBackend,
     segment: &str,
-    font: &WrapFont<'_>,
+    font_size: f32,
     max_w: f32,
+    weight: u16,
+    letter_spacing: f32,
     out: &mut Vec<String>,
 ) {
     let chars: Vec<char> = segment.chars().collect();
@@ -513,12 +488,11 @@ fn wrap_segment(
         if is_cjk(ch) {
             let mut ch_buf = [0; 4];
             build_probe(&mut probe, &current, ch.encode_utf8(&mut ch_buf));
-            if measure_text_with_letter_spacing(backend, &probe, font) > max_w
+            if measure_text_with_letter_spacing(backend, &probe, font_size, weight, letter_spacing)
+                > max_w
                 && !current.is_empty()
             {
-                let carried = carry_for_line_start(&mut current, ch);
                 out.push(std::mem::take(&mut current));
-                current = carried;
                 current.push(ch);
             } else {
                 std::mem::swap(&mut current, &mut probe);
@@ -526,7 +500,8 @@ fn wrap_segment(
             i += 1;
         } else if ch == ' ' {
             build_probe(&mut probe, &current, " ");
-            if measure_text_with_letter_spacing(backend, &probe, font) > max_w
+            if measure_text_with_letter_spacing(backend, &probe, font_size, weight, letter_spacing)
+                > max_w
                 && !current.is_empty()
             {
                 out.push(std::mem::take(&mut current));
@@ -541,16 +516,11 @@ fn wrap_segment(
                 i += 1;
             }
             build_probe(&mut probe, &current, &word);
-            if measure_text_with_letter_spacing(backend, &probe, font) > max_w
+            if measure_text_with_letter_spacing(backend, &probe, font_size, weight, letter_spacing)
+                > max_w
                 && !current.is_empty()
             {
-                let carried = word
-                    .chars()
-                    .next()
-                    .map(|first| carry_for_line_start(&mut current, first))
-                    .unwrap_or_default();
                 out.push(std::mem::take(&mut current));
-                current = carried;
                 current.push_str(&word);
             } else {
                 std::mem::swap(&mut current, &mut probe);
@@ -565,21 +535,13 @@ fn wrap_segment(
 fn measure_text_with_letter_spacing(
     backend: &mut dyn crate::RenderBackend,
     text: &str,
-    font: &WrapFont<'_>,
+    font_size: f32,
+    weight: u16,
+    letter_spacing: f32,
 ) -> f32 {
-    let base = if font.family.is_empty() {
-        backend.measure_text_weighted(text, font.font_size, font.weight)
-    } else {
-        backend.measure_text_family_styled(
-            text,
-            font.font_size,
-            font.family,
-            font.weight,
-            font.italic,
-        )
-    };
+    let base = backend.measure_text_weighted(text, font_size, weight);
     let gaps = text.chars().count().saturating_sub(1) as f32;
-    (base + gaps * font.letter_spacing).max(0.0)
+    (base + gaps * letter_spacing).max(0.0)
 }
 
 fn build_probe(probe: &mut String, current: &str, suffix: &str) {
@@ -649,13 +611,6 @@ mod wrap_tests {
         // "world " (60), "world foo" (90) fits.
         let lines = wrap_text(&mut b, "hello world foo", 13.0, 100.0, 400, 0.0);
         assert_eq!(lines, vec!["hello ", "world foo"]);
-    }
-
-    #[test]
-    fn a_trailing_full_stop_never_starts_a_line() {
-        let mut b = UniformBackend;
-        let lines = wrap_text(&mut b, "一二三四五。", 13.0, 50.0, 400, 0.0);
-        assert_eq!(lines, vec!["一二三四", "五。"]);
     }
 
     #[test]

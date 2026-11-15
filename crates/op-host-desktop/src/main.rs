@@ -17,7 +17,6 @@ mod app_handler;
 mod app_poll;
 mod app_state;
 mod asset_fetch_error;
-mod brand_extract_host;
 mod builtin_model_refresh_host;
 mod bundled_fonts;
 mod chat_acp;
@@ -48,7 +47,6 @@ mod git_overflow_host;
 mod git_session;
 mod git_ssh_host;
 mod heap_pressure;
-mod home_document_swap_host;
 mod html_import_error;
 mod html_import_session;
 mod iconify_host;
@@ -56,7 +54,6 @@ mod image_decode_host;
 mod image_downscale;
 mod image_drop_host;
 mod image_enrich_cli;
-mod image_gen_test_host;
 mod image_generate_host;
 mod image_panel_host;
 mod image_search_session;
@@ -89,11 +86,8 @@ mod persistence_export_batch;
 mod persistence_export_html;
 mod persistence_export_pptx;
 mod persistence_image;
-mod persistence_replace_guard;
-mod persistence_share;
 mod prompt_center_store;
 mod provider_probe_host;
-mod reduced_motion;
 mod remote_image_host;
 mod render_cli;
 mod render_cli_error;
@@ -102,7 +96,6 @@ mod scene_template_generate;
 mod scene_template_open;
 mod settings_io;
 mod single_instance;
-mod site_import_host;
 mod style_import_host;
 mod sub_agent_session;
 mod sub_agent_spawn_error;
@@ -330,10 +323,6 @@ struct DesktopApp {
     /// Property-panel image-section workers: Search / Generate
     /// popover requests + the local-asset existence check.
     image_panel: image_panel_host::ImagePanelJobs,
-    /// Studio Home 加链接 brand extractions running off the UI thread.
-    brand_jobs: brand_extract_host::BrandJobs,
-    /// Studio Home one-click website imports running off the UI thread.
-    site_imports: site_import_host::SiteImportJobs,
     /// Background fetches for remote `http(s)` image sources the
     /// canvas painter recorded as cache misses — fetched bytes land in
     /// the painter's shared byte cache so the next frame draws them.
@@ -352,10 +341,6 @@ struct DesktopApp {
     /// drained on the UI thread by `drain_forwarded_files`.
     forwarded_files: single_instance::ForwardQueue,
     iconify_job: Option<iconify_host::IconifyJob>,
-    /// In-flight Workbench image-gen status probe (Settings → Images →
-    /// Test) — spawned from the `pending_image_gen_test` seam, drained by
-    /// `drain_image_gen_test`.
-    image_gen_test_job: Option<image_gen_test_host::ImageGenTestJob>,
     /// The `component_browser_open` value last written to
     /// `uikits.json` — `drain_kit_io` rewrites the store when the live
     /// value drifts (TS persists `browserOpen` on every toggle).
@@ -373,11 +358,11 @@ struct DesktopApp {
     /// only when the user explicitly disconnects. Deliberately not a
     /// mirror of the live `connected` flags: a failed probe must not
     /// evict a provider from next launch's reconnect replay.
-    remembered_connections: [bool; 8],
+    remembered_connections: [bool; 7],
     /// Previous frame's per-provider connect phase, so
     /// `persist_connection_changes` can tell an explicit Disconnect (card
     /// returns to Idle) from a probe failure (card shows Error).
-    last_seen_provider_phase: [op_editor_core::agent_settings::ProviderConnectPhase; 8],
+    last_seen_provider_phase: [op_editor_core::agent_settings::ProviderConnectPhase; 7],
     /// In-flight ACP-agent connect probe (Settings → Agents → ACP
     /// Connect), drained by `drain_acp_agent_connect`.
     acp_agent_connect_job: Option<acp_agent_probe_host::AcpAgentConnectJob>,
@@ -613,25 +598,12 @@ fn main() {
     // blocklist forbids passing PATH per-request, so the process env is the
     // only correct carrier.
     op_host_services::chat_spawn::repair_gui_process_env();
-    // Local integration runs can isolate settings and device sessions without
-    // changing HOME or the production profile. Release builds ignore this.
-    #[cfg(debug_assertions)]
-    if let Some(root) = std::env::var_os("OPENPENCIL_DEV_PROFILE_DIR") {
-        if let Err(error) = op_config_store::configure_user_root(PathBuf::from(root)) {
-            eprintln!("openpencil-desktop: invalid development profile: {error}");
-            std::process::exit(1);
-        }
-    }
     // Register the brand-logo catalog (omitted from the wasm bundle, embedded in
     // this binary) BEFORE any path that can render natively — the GUI app, the
     // headless `--render-shots` rasterizer below, MCP — so they resolve
     // simple-icons instead of the unknown-glyph fallback dot. Set-once /
     // idempotent.
     op_editor_ui::set_brand_catalog(op_host_services::web_static::ICONIFY_BRANDS_JSON);
-    // Canvas generators: this binary can run their programs (QuickJS), so the
-    // Generator panel and the toolbar starters are live here. The browser
-    // bundle installs no runtime and shows generators as read-only frames.
-    op_mcp::generator_runtime::install();
     // Same rationale for bundled design fonts (Inter / Space Grotesk /
     // …): register before any native render or measure pass so designs
     // referencing them resolve the right glyphs + metrics without a

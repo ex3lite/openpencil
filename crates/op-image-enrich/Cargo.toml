@@ -33,7 +33,6 @@ image = { version = "0.25", default-features = false, features = [
   "jpeg",
 ], optional = true }
 reqwest = { version = "0.12", default-features = false, features = [
-    "system-proxy",
   "rustls-tls",
   "json",
   "stream",
@@ -50,5 +49,4 @@ tokio = { version = "1", default-features = false, features = [
 
 [features]
 default = []
-pixels = ["dep:base64", "dep:image"]
 net = ["dep:base64", "dep:image", "dep:reqwest", "dep:skia-safe", "dep:tokio"]

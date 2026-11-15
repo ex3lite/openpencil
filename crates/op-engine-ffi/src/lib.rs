@@ -24,27 +24,6 @@
 //! stream is not). Safe-area and keyboard occlusion are separate
 //! logical-point channels.
 //!
-//! ## Shell actions
-//!
-//! Some editor gestures need a platform surface the engine does not own (a
-//! document or photo picker, a login web view, the system share sheet). The
-//! engine never calls out for these: it queues a one-shot request and the
-//! shell polls [`op_editor_take_shell_action`] after input / each frame,
-//! handling one `SHELL_ACTION_*` code per call until it returns
-//! [`SHELL_ACTION_NONE`]. Draining consumes the request, so a cancelled
-//! platform UI is a silent no-op. Codes are append-only.
-//!
-//! **Chat / Home image attachments** — the Studio Home *Add screenshot*
-//! button and the chat attach button surface as
-//! [`SHELL_ACTION_PICK_CHAT_ATTACHMENT`]. The shell presents its image
-//! picker and, on a pick, calls [`op_editor_attach_chat_image`] with the
-//! bytes (≤ 5 MiB), an optional `image/*` media type (sniffed when absent)
-//! and an optional file name. The image is staged on the chat's pending
-//! attachments exactly like the desktop picker does, so Home's thumbnail
-//! strip and the next send carry it. `Busy` means the turn already holds
-//! the maximum number of attachments; `InvalidArg` means the bytes are not
-//! a supported image. On cancel the shell does nothing.
-//!
 //! ## Versioning
 //!
 //! `OpCreateDesc.size` / `OpCallbacks.size` / `OpSurfaceDesc.size` are
@@ -60,23 +39,15 @@ mod editor_auth;
 #[cfg(all(feature = "editor", test))]
 mod editor_auth_window_tests;
 #[cfg(feature = "editor")]
-mod editor_back;
-#[cfg(feature = "editor")]
 mod editor_builtin_provider;
 #[cfg(feature = "editor")]
 mod editor_chat;
-#[cfg(feature = "editor")]
-mod editor_chat_attachment;
 #[cfg(feature = "editor")]
 mod editor_chat_design;
 #[cfg(feature = "editor")]
 mod editor_chat_design_tools;
 #[cfg(feature = "editor")]
-mod editor_chat_hosted_design;
-#[cfg(feature = "editor")]
 mod editor_chat_turn;
-#[cfg(feature = "editor")]
-mod editor_chat_workspace;
 #[cfg(feature = "editor")]
 mod editor_codegen;
 #[cfg(feature = "editor")]
@@ -99,24 +70,18 @@ mod editor_image_import;
 mod editor_image_search;
 #[cfg(feature = "editor")]
 mod editor_ime;
-#[cfg(all(feature = "editor", test))]
-mod editor_ime_home_focus_tests;
 #[cfg(feature = "editor")]
 mod editor_model_discovery;
 #[cfg(feature = "editor")]
 mod editor_pointer;
 #[cfg(all(feature = "editor", test))]
 mod editor_pointer_clock_tests;
-#[cfg(all(feature = "editor", test))]
-mod editor_pointer_home_tests;
 #[cfg(feature = "editor")]
 mod editor_pointer_release;
 #[cfg(all(test, feature = "editor"))]
 mod editor_presence_tests;
 #[cfg(all(feature = "editor", test))]
 mod editor_settings_input_tests;
-#[cfg(all(feature = "editor", test))]
-mod editor_tablet_reader_tests;
 #[cfg(feature = "editor")]
 mod editor_template;
 #[cfg(feature = "editor")]
@@ -156,10 +121,6 @@ pub use editor_auth::{
     SHELL_ACTION_WINDOW_CLOSE, SHELL_ACTION_WINDOW_MINIMIZE, SHELL_ACTION_WINDOW_ZOOM,
 };
 #[cfg(feature = "editor")]
-pub use editor_back::op_editor_back;
-#[cfg(feature = "editor")]
-pub use editor_chat_attachment::{op_editor_attach_chat_image, SHELL_ACTION_PICK_CHAT_ATTACHMENT};
-#[cfg(feature = "editor")]
 pub use editor_document_shell::{
     op_editor_cancel_save, op_editor_commit_save, op_editor_configure_save_picker,
     op_editor_copy_save_file_name, op_editor_copy_save_target, op_editor_stage_save_to_path,
@@ -174,8 +135,8 @@ pub use editor_export::{
 pub use editor_image_import::{op_editor_import_image_or_svg, SHELL_ACTION_IMPORT_IMAGE_OR_SVG};
 #[cfg(feature = "editor")]
 pub use editor_ime::{
-    op_editor_ime_commit, op_editor_ime_dismiss, op_editor_ime_focused, op_editor_ime_preedit,
-    op_editor_paste_text, op_editor_take_copy_text,
+    op_editor_ime_commit, op_editor_ime_focused, op_editor_ime_preedit, op_editor_paste_text,
+    op_editor_take_copy_text,
 };
 #[cfg(feature = "editor")]
 pub use editor_pointer::{
@@ -604,6 +565,3 @@ mod tests {
         assert!(storage < configure);
     }
 }
-
-#[cfg(test)]
-mod test_http;

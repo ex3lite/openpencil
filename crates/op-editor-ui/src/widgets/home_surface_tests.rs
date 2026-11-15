@@ -39,70 +39,14 @@ fn studio_palette_owns_the_exact_light_and_dark_tokens() {
     assert_hex(light.tile_tutorial, "68A6FF");
     assert_hex(light.tile_poster, "C9FA15");
 
-    // The founder-approved dark values (prototype `dark-theme.css`).
     let dark = StudioPalette::dark();
-    assert_hex(dark.page, "10131A");
-    assert_hex(dark.panel, "191E28");
-    assert_hex(dark.line, "293244");
-    assert_hex(dark.ink, "EDF1F8");
-    assert_hex(dark.muted, "A0AEC3");
-    assert_hex(dark.placeholder, "8F9DB3");
-    assert_hex(dark.topbar, "141821");
-    assert_hex(dark.topbar_line, "262F3E");
-    assert_hex(dark.raised, "222A38");
-    assert_hex(dark.raised_line, "303A4D");
-    assert_hex(dark.surface_input, "131821");
-    assert_hex(dark.input_line, "364157");
-    assert_hex(dark.button_hover, "2A3445");
-    assert_hex(dark.preview, "1B2538");
-    assert_hex(dark.preview_line, "2A3952");
-    assert_hex(dark.disabled_primary, "253754");
-    assert_hex(dark.disabled_primary_ink, "93A8C8");
-    assert_hex(dark.tab_selected_fill, "202F4C");
-    assert_hex(dark.tab_selected_line, "3B5682");
-    assert_hex(dark.tab_selected_ink, "A7C6FF");
-    assert_hex(dark.canvas, "111620");
-    assert_hex(dark.canvas_dot, "303A4E");
-    assert_hex(dark.tint_knowledge, "2B2321");
-    assert_hex(dark.tint_tutorial, "1D293C");
-    assert_hex(dark.tint_poster, "252C1D");
-
-    // Three contracts the dark theme must not break.
-    // 1. The button blue stays the button blue; only the TEXT blue lifts.
+    assert_hex(dark.page, "0F1524");
+    assert_hex(dark.panel, "161D30");
+    assert_hex(dark.line, "25304A");
+    assert_hex(dark.ink, "EEF2FA");
+    assert_hex(dark.muted, "8B97AE");
     assert_hex(dark.blue, "075BFF");
-    assert_hex(dark.link, "8BB3FF");
-    assert_ne!(dark.blue, dark.link);
-    // 2. Cards, inset inputs and raised popovers stay three distinct
-    //    surfaces — this is what a single `panel` token cannot express.
-    assert_ne!(dark.panel, dark.surface_input);
-    assert_ne!(dark.panel, dark.raised);
-    assert_ne!(dark.surface_input, dark.raised);
-    // 3. The work keeps its own colours: the yellow marker, the sticker's
-    //    dark ink and the three bright example tiles are theme-independent.
     assert_hex(dark.yellow, "F3FF23");
-    assert_hex(dark.sticker_ink, "182019");
-    assert_eq!(dark.tile_knowledge, light.tile_knowledge);
-    assert_eq!(dark.tile_tutorial, light.tile_tutorial);
-    assert_eq!(dark.tile_poster, light.tile_poster);
-    // The marker becomes an underline in dark so it cannot sit behind
-    // near-white glyphs.
-    assert!(!light.marker_underline);
-    assert!(dark.marker_underline);
-}
-
-#[test]
-fn fading_the_palette_touches_every_colour_and_no_flag() {
-    // The three surfaces that crossfade share one implementation, so a
-    // token added later cannot be left at full alpha on one of them.
-    let full = StudioPalette::dark();
-    let half = full.faded(0.5);
-    assert_eq!(half.page.a, full.page.a * 0.5);
-    assert_eq!(half.raised.a, full.raised.a * 0.5);
-    assert_eq!(half.surface_input.a, full.surface_input.a * 0.5);
-    assert_eq!(half.canvas_dot.a, full.canvas_dot.a * 0.5);
-    assert_eq!(half.link.a, full.link.a * 0.5);
-    assert_eq!(half.sticker_ink.a, full.sticker_ink.a * 0.5);
-    assert_eq!(half.marker_underline, full.marker_underline);
 }
 
 #[test]
@@ -187,50 +131,6 @@ fn tasks_without_a_segment_hide_the_control() {
 }
 
 #[test]
-fn an_empty_box_makes_send_start_from_the_example_and_says_so() {
-    use op_editor_core::HomeSendMode;
-    let mut state = visible_home();
-    state.editor_ui.home.set_task(HomeFamily::Web, 1);
-    let home = HomeSurface::for_editor(&state).expect("home");
-    // No model, but the web example has a template draft: still live.
-    assert_eq!(home.send_mode(), HomeSendMode::UseExample);
-    assert!(
-        !home.send_example_hint_visible(),
-        "the hint waits for hover"
-    );
-    let send = home.layout(1440.0, 900.0).send;
-    assert_eq!(
-        home.hit_test(1440.0, 900.0, center(send)),
-        Some(HomeHit::Send)
-    );
-
-    state.editor_ui.home.hover = Some(HomeHit::Send);
-    let home = HomeSurface::for_editor(&state).expect("home");
-    assert!(home.send_example_hint_visible());
-    let mut backend = crate::widgets::test_capture_backend::CaptureBackend::default();
-    {
-        let mut cx = crate::widgets::PaintCx {
-            backend: &mut backend,
-        };
-        crate::widgets::Widget::paint(&home, &mut cx, Rect::xywh(0.0, 0.0, 1440.0, 900.0));
-    }
-    let locale = state.editor_ui.locale;
-    for key in ["home.submit.example", "home.submit.exampleHint"] {
-        let label = op_i18n::translate(locale, key);
-        assert!(
-            backend.texts.iter().any(|(text, _)| text == label),
-            "{key} painted"
-        );
-    }
-
-    // A brief of the user's own is not the example.
-    state.editor_ui.home.set_draft("我的面包店官网");
-    let home = HomeSurface::for_editor(&state).expect("home");
-    assert_eq!(home.send_mode(), HomeSendMode::Connect);
-    assert!(!home.send_example_hint_visible());
-}
-
-#[test]
 fn model_chip_label_reuses_the_chat_selection_and_empties_without_an_agent() {
     let mut state = op_editor_core::EditorState::new();
     assert_eq!(
@@ -249,13 +149,11 @@ fn model_chip_label_reuses_the_chat_selection_and_empties_without_an_agent() {
 
 #[test]
 fn connect_card_rows_stack_without_overlap_inside_the_card() {
-    let mut state = visible_home();
-    state.editor_ui.account_ui_available = true;
-    state.editor_ui.agent_settings.web_served_models = true;
+    let state = visible_home();
     let home = HomeSurface::for_editor(&state).expect("home");
     let layout = home.layout(1440.0, 900.0);
     let (card, rows) = (layout.connect_card, layout.connect_rows);
-    assert_eq!(card.size, Point2D::new(440.0, 308.0));
+    assert_eq!(card.size, Point2D::new(440.0, 280.0));
     // Centred over the composer panel.
     assert_close(
         card.origin.x + card.size.x / 2.0
@@ -278,8 +176,6 @@ fn connect_card_rows_stack_without_overlap_inside_the_card() {
 #[test]
 fn connect_card_open_hides_home_hits_behind_the_modal() {
     let mut state = visible_home();
-    state.editor_ui.account_ui_available = true;
-    state.editor_ui.agent_settings.web_served_models = true;
     state.editor_ui.home.connect_card_open = true;
     let home = HomeSurface::for_editor(&state).expect("home");
     let layout = home.layout(1440.0, 900.0);
@@ -349,42 +245,4 @@ fn overlaps(a: Rect, b: Rect) -> bool {
         && b.origin.x < a.origin.x + a.size.x
         && a.origin.y < b.origin.y + b.size.y
         && b.origin.y < a.origin.y + a.size.y
-}
-
-#[test]
-fn novice_connect_card_only_offers_supported_paths() {
-    let mut state = visible_home();
-    state.editor_ui.touch = true;
-    state.editor_ui.size_class = op_editor_core::size_class::EditorSizeClass::Compact;
-    state.editor_ui.external_cli_available = false;
-    state.editor_ui.home.connect_card_open = true;
-    let home = HomeSurface::for_editor(&state).unwrap();
-    let layout = home.layout(390.0, 844.0);
-    assert_eq!(
-        layout.connect_rows[0],
-        Rect::ZERO,
-        "no hosted quota promise without that capability"
-    );
-    assert_eq!(
-        layout.connect_rows[2],
-        Rect::ZERO,
-        "phones cannot launch a CLI"
-    );
-    assert!(layout.connect_rows[1].size.y >= 44.0);
-    assert_eq!(
-        home.hit_test(390.0, 844.0, center(layout.connect_rows[1])),
-        Some(HomeHit::ConnectApiKey)
-    );
-    let mut capture = crate::widgets::test_capture_backend::CaptureBackend::default();
-    crate::widgets::Widget::paint(
-        &home,
-        &mut crate::widgets::PaintCx {
-            backend: &mut capture,
-        },
-        Rect::xywh(0.0, 0.0, 390.0, 844.0),
-    );
-    assert!(!capture
-        .texts
-        .iter()
-        .any(|(s, _)| s.contains("20") || s.contains("CLI")));
 }

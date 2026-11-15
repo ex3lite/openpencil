@@ -54,23 +54,6 @@ pub fn pump(
     results: &mut CodegenResults,
 ) -> bool {
     let live_identity = document_identity(host);
-    if retire_stale_codegen_session(current, live_identity) {
-        return false;
-    }
-    if current.as_ref().is_some_and(|session| {
-        !crate::chat_session::hosted_epoch_is_current(session.hosted_session_epoch)
-    }) {
-        *current = None;
-        let error = op_editor_core::hosted_model_catalog::hosted_transport_unavailable_message(
-            host.editor_state().editor_ui.locale,
-        )
-        .to_string();
-        let codegen = &mut host.editor_state_mut().codegen;
-        codegen.error = Some(error);
-        codegen.phase = op_editor_core::codegen::CodegenPhase::Error;
-        host.mark_editor_state_dirty();
-        return true;
-    }
     let changed = pump_codegen_state(
         &mut host.editor_state_mut().codegen,
         live_identity,
@@ -120,16 +103,6 @@ pub fn launch_codegen_if_pending(
     };
     // Capture the target framework BEFORE `input` is moved into the worker.
     let framework = host.editor_state().codegen.framework;
-    if framework.is_deterministic() {
-        // No model turn: no provider checks, no worker thread.
-        let selection_snapshot = selection_snapshot(host);
-        let session = CodegenSession::start_deterministic(input, framework)
-            .with_document_identity(live_document_identity)
-            .with_selection_snapshot(selection_snapshot);
-        begin_generating(host);
-        *current = Some(session);
-        return true;
-    }
     if let Some(error) = fixed_provider_launch_error(host) {
         let cg = &mut host.editor_state_mut().codegen;
         cg.error = Some(error);
@@ -146,7 +119,13 @@ pub fn launch_codegen_if_pending(
     // Keep this run's targets on the session until Done. A failed
     // regeneration can keep displaying the previous successful code, so
     // overwriting its snapshot at launch would create a mixed cache entry.
-    let selection_snapshot = selection_snapshot(host);
+    let selection_snapshot: Vec<String> = host
+        .editor_state()
+        .selection
+        .set
+        .iter()
+        .map(|id| id.as_str().to_string())
+        .collect();
     let session = match CodegenSession::try_start_with_model(provider, input, framework, model) {
         Ok(session) => session
             .with_document_identity(live_document_identity)
@@ -158,27 +137,12 @@ pub fn launch_codegen_if_pending(
             return true;
         }
     };
-    begin_generating(host);
-    *current = Some(session);
-    true
-}
-
-/// Node ids this run targets, committed to the cache only on `Done`.
-fn selection_snapshot(host: &WidgetHostNative) -> Vec<String> {
-    host.editor_state()
-        .selection
-        .set
-        .iter()
-        .map(|id| id.as_str().to_string())
-        .collect()
-}
-
-/// Reset the panel into the Generating phase for a freshly launched run.
-fn begin_generating(host: &mut WidgetHostNative) {
     let cg = &mut host.editor_state_mut().codegen;
     cg.progress = Default::default();
     cg.error = None;
     cg.phase = op_editor_core::codegen::CodegenPhase::Generating;
+    *current = Some(session);
+    true
 }
 
 /// Built-in and ACP selections carry their own ready-state and are validated
@@ -189,11 +153,11 @@ fn fixed_provider_launch_error(host: &WidgetHostNative) -> Option<String> {
     use op_editor_core::agent_settings::ProviderConnectPhase;
 
     let state = host.editor_state();
-    if state.chat.selected_model_entry().is_some_and(|entry| {
-        entry.hosted_route_id().is_some()
-            || entry.builtin_provider_id.is_some()
-            || entry.acp_agent_id().is_some()
-    }) {
+    if state
+        .chat
+        .selected_model_entry()
+        .is_some_and(|entry| entry.builtin_provider_id.is_some() || entry.acp_agent_id().is_some())
+    {
         return None;
     }
     let provider = *op_editor_core::AgentProvider::ALL.get(state.editor_ui.chat_selected_agent)?;

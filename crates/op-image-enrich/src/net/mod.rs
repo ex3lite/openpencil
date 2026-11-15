@@ -11,11 +11,7 @@
 pub mod downscale;
 pub mod fetch;
 pub mod judge;
-mod judge_thumbnail;
-mod original_delivery;
 pub mod providers;
-pub mod resolve;
-pub mod search_trace;
 
 pub use judge::{
     format_judge_log, select_with_judge, ImageRelevanceJudge, JudgeSelection, JudgedCandidate,

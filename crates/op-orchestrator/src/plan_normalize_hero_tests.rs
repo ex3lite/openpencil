@@ -17,14 +17,12 @@ fn subtask(id: &str, screen: Option<&str>, elements: Option<&str>) -> Subtask {
         screen: screen.map(str::to_owned),
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
 
 fn plan(subtasks: Vec<Subtask>) -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Root".into(),
@@ -37,7 +35,6 @@ fn plan(subtasks: Vec<Subtask>) -> OrchestratorPlan {
         },
         subtasks,
         style_guide_name: None,
-        palette: None,
     }
 }
 

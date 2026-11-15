@@ -22,14 +22,12 @@ fn subtask() -> Subtask {
         screen: Some("Screen".into()),
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "App".into(),
@@ -42,7 +40,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: vec![subtask()],
         style_guide_name: None,
-        palette: None,
     }
 }
 

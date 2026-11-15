@@ -55,27 +55,10 @@ pub(crate) fn apply_entry_hit(
                 .image_gen_profiles
                 .get_mut(index)
             {
-                // Workbench is the one provider without a preset host: its
-                // endpoint is a required field, and its probe is a real
-                // status request the host must run (raised as a seam here —
-                // the editor layer never dials).
-                let workbench = matches!(
-                    profile.provider,
-                    op_editor_core::agent_settings::ImageGenProvider::Workbench
-                );
-                let has_endpoint = profile
-                    .base_url
-                    .as_deref()
-                    .is_some_and(|base| !base.trim().is_empty());
-                let ready = !profile.api_key.trim().is_empty() && (!workbench || has_endpoint);
-                profile.test_status = if ready {
-                    if workbench {
-                        state.editor_ui.agent_settings.pending_image_gen_test =
-                            Some(profile.id.clone());
-                    }
-                    ImageTestStatus::Testing
-                } else {
+                profile.test_status = if profile.api_key.trim().is_empty() {
                     ImageTestStatus::Invalid
+                } else {
+                    ImageTestStatus::Testing
                 };
             }
             SettingsPressOutcome::handled()
@@ -151,11 +134,8 @@ pub(crate) fn apply_entry_hit(
                     .agent_settings
                     .take_over_browser_builtin_agent(index);
             }
-            if state
-                .editor_ui
-                .agent_settings
-                .edit_builtin_agent(index, |agent| agent.toggle_kind_for_preset())
-            {
+            if let Some(agent) = state.editor_ui.agent_settings.builtin_agents.get_mut(index) {
+                agent.toggle_kind_for_preset();
                 state.rebuild_chat_models();
             }
             queue_builtin_discovery(state, index, now_ms);
@@ -231,9 +211,9 @@ pub(crate) fn apply_entry_hit(
                 let settings = &mut state.editor_ui.agent_settings;
                 match index {
                     Some(index) => {
-                        settings.edit_builtin_agent(index, |agent| {
+                        if let Some(agent) = settings.builtin_agents.get_mut(index) {
                             agent.toggle_model(&model_id);
-                        });
+                        }
                     }
                     None => {
                         if let Some(agent) = settings.builtin_agent_draft.as_mut() {
@@ -309,11 +289,8 @@ pub(crate) fn apply_entry_hit(
                     .agent_settings
                     .take_over_browser_builtin_agent(index);
             }
-            if state
-                .editor_ui
-                .agent_settings
-                .edit_builtin_agent(index, |agent| agent.enabled = !agent.enabled)
-            {
+            if let Some(agent) = state.editor_ui.agent_settings.builtin_agents.get_mut(index) {
+                agent.enabled = !agent.enabled;
                 state.rebuild_chat_models();
             }
             queue_builtin_discovery(state, index, now_ms);
@@ -515,7 +492,6 @@ pub(crate) fn apply_entry_hit(
         | AgentSettingsHit::Connect(_)
         | AgentSettingsHit::ToggleMcpServer
         | AgentSettingsHit::ToggleMcpCli(_)
-        | AgentSettingsHit::ToggleMcpLeanProfile
         | AgentSettingsHit::CopyMcpClientConfig
         | AgentSettingsHit::Fonts(_)
         | AgentSettingsHit::ToggleImagesAdvanced

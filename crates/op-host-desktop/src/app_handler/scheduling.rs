@@ -98,12 +98,9 @@ impl DesktopApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
         } else if self.update_probe.is_pending()
             || self.host.auth_flow_active()
-            || op_host_services::hosted_models::needs_poll()
             || self.model_probe.is_pending()
             || self.image_search.is_pending()
             || self.image_panel.is_pending()
-            || self.brand_jobs.is_pending()
-            || self.site_imports.is_pending()
             // Remote-image fetches in flight, or fresh misses the last
             // paint recorded (the next pump picks them up).
             || self.remote_images.is_pending()
@@ -181,12 +178,9 @@ impl DesktopApp {
             || self.host.top_bar_tooltip_showing()
             || self.update_probe.is_pending()
             || self.host.auth_flow_active()
-            || op_host_services::hosted_models::needs_poll()
             || self.model_probe.is_pending()
             || self.image_search.is_pending()
             || self.image_panel.is_pending()
-            || self.brand_jobs.is_pending()
-            || self.site_imports.is_pending()
             || self.collab_avatars.is_pending()
             || op_editor_ui::collab_avatar_runtime::has_pending_collab_avatar_requests()
             || self.image_decodes.is_pending()

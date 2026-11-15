@@ -21,7 +21,6 @@ use crate::plan::{Region, RootFrameSpec};
 /// artboard `decomposition`'s type-4 branch mandates.
 fn deck_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "deck".into(),
             name: "Deck".into(),
@@ -34,7 +33,6 @@ fn deck_plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -54,7 +52,6 @@ fn deck_subtask() -> crate::plan::Subtask {
         screen: Some("封面".into()),
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }

@@ -252,7 +252,6 @@ fn dominant_accent_prefers_most_used_chart_token() {
 fn nested_card_redundant_shadow_and_radius_stripped() {
     let mut outer = json!({
         "type":"frame","role":"card","cornerRadius":12,
-        "fill":[{"type":"solid","color":"#FFFFFF"}],
         "effects":[{"type":"shadow","offsetX":0,"offsetY":1,"blur":3,"color":"#0000001A"}],
         "children":[{
             "type":"frame","role":"card","cornerRadius":10,
@@ -402,7 +401,6 @@ fn next_panel_fixture_cleanup_keeps_white_surface_and_border() {
         batch_depth: 0,
     };
     let plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "Result screen".into(),
@@ -415,7 +413,6 @@ fn next_panel_fixture_cleanup_keeps_white_surface_and_border() {
         },
         subtasks: Vec::new(),
         style_guide_name: None,
-        palette: None,
     };
     let mut summary = RepairSummary::default();
     run_cleanup_passes_with_summary(&mut sink, &plan, &["root"], &mut summary);

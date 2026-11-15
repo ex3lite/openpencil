@@ -12,7 +12,7 @@
 //!   regression lock.
 //! - [`BufferDocSink`] — isolated command buffering with a local staging state;
 //!   successful commands are replayed atomically into the real sink.
-//! - [`run_subtask_retry_ladder_with_outcomes`] — the 3-attempt tier-gated retry ladder,
+//! - [`run_subtask_retry_ladder`] — the 3-attempt tier-gated retry ladder,
 //!   extracted from `run.rs`'s sequential loop so BOTH the sequential path
 //!   and each screen-group worker share the IDENTICAL retry semantics —
 //!   parallelizing groups must never let a group's retry behavior drift from
@@ -34,9 +34,7 @@ use crate::model_profile::ModelTier;
 use crate::plan::{OrchestratorPlan, Subtask};
 use crate::retry::{is_non_retryable, is_self_check_rejection};
 use crate::screen_groups::ScreenGroup;
-use crate::subagent::{
-    reveal_now_millis, run_subtask_with_reveal_at_and_outcomes, IntentCheckMode,
-};
+use crate::subagent::{reveal_now_millis, run_subtask_with_reveal_at_and_outcomes};
 use crate::types::{
     AbortFlag, DesignRequest, DocSink, GeometryEchoBudget, LlmClient, Progress, SubtaskOutcome,
 };
@@ -49,16 +47,6 @@ use tokio::sync::{mpsc, Semaphore};
 #[path = "concurrent_replay.rs"]
 mod replay;
 use replay::{apply_worker_event, run_screen_group_worker, WorkerSignal};
-
-// The `geometry_echo` in-loop self-correction tail of the retry ladder —
-// extracted to a sibling file to keep this module under the 800-line budget.
-#[path = "concurrent_echo.rs"]
-mod echo;
-use echo::maybe_geometry_echo_with_outcomes;
-
-#[path = "concurrent_script_feedback.rs"]
-mod script_feedback;
-use script_feedback::combine_retry_feedback;
 
 /// Clamps a raw concurrency value to the valid range `[1, 6]`.
 ///
@@ -169,6 +157,35 @@ impl DocSink for BufferDocSink {
 /// ([`maybe_geometry_echo`]) — see that function's doc for the full
 /// contract (budget, buffered-sink no-op, replace-on-success semantics).
 #[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_subtask_retry_ladder(
+    subtask: &Subtask,
+    plan: &OrchestratorPlan,
+    request: &DesignRequest,
+    llm: &dyn LlmClient,
+    sink: &mut dyn DocSink,
+    abort: &AbortFlag,
+    tier: ModelTier,
+    agent_indicator_epoch: Option<u64>,
+    geometry_echo_budget: &GeometryEchoBudget,
+    on_progress: &mut dyn FnMut(Progress),
+) -> SubtaskOutcome {
+    run_subtask_retry_ladder_with_outcomes(
+        subtask,
+        plan,
+        request,
+        llm,
+        sink,
+        abort,
+        tier,
+        agent_indicator_epoch,
+        geometry_echo_budget,
+        on_progress,
+        &[],
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
     subtask: &Subtask,
     plan: &OrchestratorPlan,
@@ -202,7 +219,6 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
         reveal_now_millis(),
         Some(&mut *on_progress),
         prior_outcomes,
-        IntentCheckMode::Reject,
     )
     .await;
     let (completeness1, language1) = if abort.is_set() {
@@ -214,12 +230,17 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
         crate::subtask_completeness::rollback_inserted_roots(sink, &outcome1.inserted_root_ids);
     }
 
-    // The latest attempt may reveal a terminal failure after a transient one.
-    // Re-evaluate it before each rung, including completeness/language retries.
+    // Evaluate the non-retryable predicate once from attempt-1's error
+    // (faithful to the sequential path: computed before the retry chain and
+    // reused for both the attempt-2 and attempt-3 guards).
+    let non_retryable = outcome1
+        .error
+        .as_deref()
+        .map(is_non_retryable)
+        .unwrap_or(false);
+
     let retryable = |o: &SubtaskOutcome, gate: bool| {
-        !abort.is_set()
-            && !o.error.as_deref().is_some_and(is_non_retryable)
-            && (gate || (o.error.is_some() && o.node_count == 0))
+        (gate || (o.error.is_some() && o.node_count == 0 && !non_retryable)) && !abort.is_set()
     };
 
     // A self-check quality rejection (`orchestration_self_check` fatally
@@ -238,17 +259,13 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
         .as_deref()
         .is_some_and(is_self_check_rejection);
     let attempt2_subtask = Subtask {
-        retry_feedback: combine_retry_feedback(
-            crate::output_language::retry_feedback_for_gates(
-                completeness1.as_ref(),
-                language1.as_ref(),
-                outcome1
-                    .error
-                    .clone()
-                    .filter(|_| attempt1_self_check_rejection),
-            ),
-            subtask.retry_feedback.as_ref(),
-            outcome1.error.as_deref(),
+        retry_feedback: crate::output_language::retry_feedback_for_gates(
+            completeness1.as_ref(),
+            language1.as_ref(),
+            outcome1
+                .error
+                .clone()
+                .filter(|_| attempt1_self_check_rejection),
         ),
         ..subtask.clone()
     };
@@ -286,7 +303,6 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
                 reveal_now_millis(),
                 None,
                 prior_outcomes,
-                IntentCheckMode::Reject,
             )
             .await,
         )
@@ -311,21 +327,25 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
     }
 
     let outcome_after2 = outcome2.as_ref().unwrap_or(&outcome1);
-    let attempt3_feedback = combine_retry_feedback(
-        crate::output_language::retry_feedback_for_gates(
-            completeness2.as_ref(),
-            language2.as_ref().filter(|_| language_retry2),
-            outcome_after2
-                .error
-                .clone()
-                .filter(|error| is_self_check_rejection(error)),
-        ),
-        attempt2_subtask.retry_feedback.as_ref(),
-        outcome_after2.error.as_deref(),
+    let attempt3_feedback = crate::output_language::retry_feedback_for_gates(
+        completeness2.as_ref(),
+        language2.as_ref().filter(|_| language_retry2),
+        outcome_after2
+            .error
+            .clone()
+            .filter(|error| is_self_check_rejection(error)),
     );
-    let attempt3_subtask = Subtask {
-        retry_feedback: attempt3_feedback,
-        ..subtask.clone()
+    let attempt3_subtask = if attempt3_feedback.is_some() {
+        Subtask {
+            retry_feedback: attempt3_feedback,
+            ..subtask.clone()
+        }
+    } else if attempt2_subtask.retry_feedback.is_some() {
+        // A transient attempt-2 parse/transport failure must not erase the
+        // actionable self-check feedback learned on attempt 1.
+        attempt2_subtask.clone()
+    } else {
+        subtask.clone()
     };
 
     // Attempt 3 — minimal skills (last-ditch fallback). Language only
@@ -365,8 +385,6 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
                 reveal_now_millis(),
                 None,
                 prior_outcomes,
-                // The last rung: an intent finding must not drop the section.
-                IntentCheckMode::Advisory,
             )
             .await,
         )
@@ -427,8 +445,7 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
         return outcome;
     }
 
-    // Repair snapshots must not inflate every enclosing retry/worker future.
-    Box::pin(maybe_geometry_echo_with_outcomes(
+    maybe_geometry_echo_with_outcomes(
         subtask,
         plan,
         request,
@@ -442,8 +459,132 @@ pub(crate) async fn run_subtask_retry_ladder_with_outcomes(
         on_progress,
         prior_outcomes,
         outcome,
-    ))
+    )
     .await
+}
+
+/// One in-loop self-correction round for real resolved-layout violations.
+///
+/// A no-op (zero extra LLM calls) whenever:
+/// - `outcome.node_count == 0` — nothing landed, nothing to check;
+/// - `outcome.inserted_root_ids` is empty — a sink that cannot surface
+///   post-insert ids has nothing live to lay out or address for a replace.
+/// - the diagnostics come back empty — the common case, zero cost;
+/// - the run-wide [`GeometryEchoBudget`] is exhausted.
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+async fn maybe_geometry_echo(
+    subtask: &Subtask,
+    plan: &OrchestratorPlan,
+    request: &DesignRequest,
+    llm: &dyn LlmClient,
+    sink: &mut dyn DocSink,
+    abort: &AbortFlag,
+    reduced_complexity: bool,
+    minimal_skills: bool,
+    agent_indicator_epoch: Option<u64>,
+    budget: &GeometryEchoBudget,
+    on_progress: &mut dyn FnMut(Progress),
+    outcome: SubtaskOutcome,
+) -> SubtaskOutcome {
+    maybe_geometry_echo_with_outcomes(
+        subtask,
+        plan,
+        request,
+        llm,
+        sink,
+        abort,
+        reduced_complexity,
+        minimal_skills,
+        agent_indicator_epoch,
+        budget,
+        on_progress,
+        &[],
+        outcome,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn maybe_geometry_echo_with_outcomes(
+    subtask: &Subtask,
+    plan: &OrchestratorPlan,
+    request: &DesignRequest,
+    llm: &dyn LlmClient,
+    sink: &mut dyn DocSink,
+    abort: &AbortFlag,
+    reduced_complexity: bool,
+    minimal_skills: bool,
+    agent_indicator_epoch: Option<u64>,
+    budget: &GeometryEchoBudget,
+    on_progress: &mut dyn FnMut(Progress),
+    prior_outcomes: &[SubtaskOutcome],
+    outcome: SubtaskOutcome,
+) -> SubtaskOutcome {
+    if outcome.node_count == 0
+        || outcome.inserted_root_ids.is_empty()
+        || abort.is_set()
+        || sink.is_buffered()
+    {
+        return outcome;
+    }
+    let issues = crate::geometry_validation::geometry_diagnostics_for_roots(
+        sink.state(),
+        &outcome.inserted_root_ids,
+    );
+    if issues.is_empty() {
+        return outcome;
+    }
+    if !budget.try_consume() {
+        return outcome;
+    }
+
+    on_progress(Progress::GeometryEcho {
+        id: subtask.id.clone(),
+        issue_count: issues.len(),
+    });
+    tracing::info!(
+        subtask = %subtask.id,
+        issue_count = issues.len(),
+        "geometry echo: resolved-layout violation(s) found, retrying in-loop"
+    );
+
+    let echo_subtask = Subtask {
+        retry_feedback: Some(crate::plan::RetryFeedback::Geometry(issues.join("\n"))),
+        ..subtask.clone()
+    };
+    let retried = run_subtask_with_reveal_at_and_outcomes(
+        &echo_subtask,
+        plan,
+        request,
+        llm,
+        sink,
+        abort,
+        reduced_complexity,
+        minimal_skills,
+        agent_indicator_epoch,
+        reveal_now_millis(),
+        None,
+        prior_outcomes,
+    )
+    .await;
+
+    if retried.node_count == 0 {
+        // The echo retry itself failed (LLM error, parse failure, or a
+        // fresh self-check rejection) — keep the ORIGINAL, still-real
+        // content rather than lose it; the deterministic net in
+        // `cleanup.rs` picks up whatever geometry issues remain.
+        return outcome;
+    }
+
+    // Adopt the corrected content: drop the original insert now that a
+    // real replacement has landed. Delete-then-keep-the-new-insert rather
+    // than a literal `EditorCommand::ReplaceSubtree` (which is 1-old-root-
+    // to-1-new-node only) because a subtask can produce N top-level roots
+    // on either side — this generalizes to N-old/M-new without assuming a
+    // 1:1 shape.
+    crate::subtask_completeness::rollback_inserted_roots(sink, &outcome.inserted_root_ids);
+    retried
 }
 
 // ── Screen-group concurrent executor ────────────────────────────────────────
@@ -578,20 +719,13 @@ pub(crate) async fn run_screen_groups_concurrent(
     let mut per_subtask: Vec<Option<(SubtaskOutcome, bool)>> = vec![None; plan.subtasks.len()];
     let mut aborted_mid = abort.is_set();
     let mut remaining = groups.len();
-    // Provider-limit circuit breaker (motion50 fix 1), concurrent analogue of
-    // the sequential loop's counter: two consecutive SETTLED subtasks that
-    // failed on the provider's session/usage quota (in completion order, the
-    // parallel reading of "consecutive") set the shared `AbortFlag` — every
-    // worker checks it before starting its next subtask, so no further model
-    // calls are spent on an exhausted account.
-    let mut consecutive_provider_limit_failures = 0usize;
     // Poll the event channel and worker set TOGETHER. This loop is the ONE
     // real-document writer: it drains one successful subtask atomically,
     // then acks that worker so the same group may proceed to its next subtask.
     while remaining > 0 {
         tokio::select! {
             Some(event) = event_rx.recv() => {
-                match apply_worker_event(
+                apply_worker_event(
                     event,
                     groups,
                     group_identities,
@@ -600,21 +734,7 @@ pub(crate) async fn run_screen_groups_concurrent(
                     agent_indicator_epoch,
                     &mut per_subtask,
                     on_progress,
-                ) {
-                    Some(true) => {
-                        consecutive_provider_limit_failures += 1;
-                        if consecutive_provider_limit_failures >= 2 && !abort.is_set() {
-                            abort.set();
-                            on_progress(Progress::RunAborted {
-                                reason: "provider session/usage limit hit on two consecutive \
-                                         subtasks"
-                                    .into(),
-                            });
-                        }
-                    }
-                    Some(false) => consecutive_provider_limit_failures = 0,
-                    None => {}
-                }
+                );
             }
             Some((_g_idx, result)) = worker_futures.next() => {
                 remaining -= 1;
@@ -666,12 +786,5 @@ pub(crate) async fn run_screen_groups_concurrent(
 }
 
 #[cfg(test)]
-use echo::maybe_geometry_echo;
-
-#[cfg(test)]
 #[path = "concurrent_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "concurrent_script_retry_tests.rs"]
-mod script_retry_tests;

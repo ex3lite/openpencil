@@ -47,35 +47,10 @@ fn json(outcome: ToolOutcome) -> Value {
 }
 
 #[test]
-fn defaults_to_react_tailwind_with_theme_files_and_cross_page_masters() {
-    let out = json(call(&state(), &[("nodeIds", "card")]));
-    assert_eq!(out["framework"], "react-tailwind");
-    assert_eq!(out["nodeCount"], 1);
-    let component = out["files"]["component.tsx"].as_str().expect("component");
-    assert!(component.contains("export default function PromoCard()"));
-    assert!(component.contains("bg-card"), "{component}");
-    // The master lives on another page and was not selected.
-    assert!(
-        component.contains("<Button variant=\"secondary\">Buy</Button>"),
-        "{component}"
-    );
-    let css = out["files"]["app/globals.css"].as_str().expect("css");
-    let dark = &css[css.find(".dark {").expect("dark block")..];
-    assert!(
-        dark[..dark.find('}').unwrap()].contains("  --card: #18181b;"),
-        "{css}"
-    );
-    assert!(out["files"]["tailwind.config.ts"].is_string());
-    assert!(out["code"].as_str().unwrap().starts_with(component));
-}
-
-#[test]
 fn output_is_byte_stable_and_other_targets_are_selectable() {
-    for target in ["react", "react-tailwind"] {
-        let first = json(call(&state(), &[("framework", target)]));
-        let second = json(call(&state(), &[("framework", target)]));
-        assert_eq!(first, second, "{target}");
-    }
+    let first = json(call(&state(), &[("framework", "react")]));
+    let second = json(call(&state(), &[("framework", "react")]));
+    assert_eq!(first, second);
     let vue = json(call(&state(), &[("framework", "vue"), ("pageId", "p1")]));
     assert_eq!(vue["nodeCount"], 2);
     assert!(vue["files"]["component.vue"]
@@ -88,7 +63,6 @@ fn output_is_byte_stable_and_other_targets_are_selectable() {
         .unwrap()
         .contains("--card"));
     assert!(codegen_export_targets().contains(&"react"));
-    assert!(codegen_export_targets().contains(&"react-tailwind"));
     assert!(codegen_export_targets().contains(&"css-variables"));
 }
 
@@ -99,15 +73,6 @@ fn selection_scopes_the_export_when_no_ids_are_given() {
     let out = json(call(&state, &[]));
     assert_eq!(out["nodeCount"], 1);
     let code = out["code"].as_str().unwrap();
-    assert!(code.contains("function Other()"));
-    assert!(
-        !code.contains("Buy"),
-        "unselected component content leaked: {code}"
-    );
-
-    let react = json(call(&state, &[("framework", "react")]));
-    assert_eq!(react["nodeCount"], 1);
-    let code = react["code"].as_str().unwrap();
     assert!(code.contains("width: 100"), "{code}");
     assert!(
         !code.contains("Buy"),
@@ -119,7 +84,7 @@ fn selection_scopes_the_export_when_no_ids_are_given() {
 fn bad_arguments_return_typed_errors() {
     match call(&state(), &[("framework", "angular")]) {
         ToolOutcome::Err(ToolErrorCode::InvalidArgument, message) => {
-            assert!(message.contains("react-tailwind"), "{message}");
+            assert!(message.contains("react"), "{message}");
         }
         other => panic!("{other:?}"),
     }

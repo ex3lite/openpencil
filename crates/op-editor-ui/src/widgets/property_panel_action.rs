@@ -431,12 +431,6 @@ pub enum PropertyPanelAction {
     RemoveInteraction,
     /// Code panel action — see `CodegenAction`.
     Codegen(CodegenAction),
-    /// Generator section: flip boolean parameter `index` and regenerate.
-    ToggleGeneratorParam(usize),
-    /// Generator section: re-run the program with the current params.
-    RegenerateGenerator,
-    /// Generator section: drop the program, keep the children.
-    DetachGenerator,
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@
 use super::WidgetHostNative;
 use crate::backend::NativeFrameBackend;
 use op_editor_ui::widgets::ai_chat_model_picker::{
-    fit_picker_to_bounds, model_picker_hit, paint_model_picker, search_clear_hit, SelectHit,
+    max_picker_scroll, model_picker_hit, paint_model_picker, search_clear_hit, SelectHit,
 };
 use op_editor_ui::widgets::home_surface::home_model_picker_rects;
 use op_editor_ui::widgets::{HomeSurface, PaintCx, Widget};
@@ -27,7 +27,6 @@ impl WidgetHostNative {
         y: f32,
         viewport_width: f32,
         viewport_height: f32,
-        allow_touch_panel_defer: bool,
     ) -> Option<bool> {
         if !self.home_visible() {
             return None;
@@ -44,13 +43,9 @@ impl WidgetHostNative {
         // Same z-order as the normal path: the settings modal (tier 1),
         // then the sign-in modal (tier 2), then the model picker.
         if settings_open {
-            // Home returns before the ordinary modal ladder can arm this
-            // gesture. Reuse its delayed tap / one-finger scroll owner here.
-            if self.begin_agent_settings_touch_gesture(x, y, viewport_width, viewport_height) {
-                return Some(true);
-            }
-            self.dispatch_agent_settings_press(x, y, viewport_width, viewport_height);
-            return Some(true);
+            return self
+                .dispatch_agent_settings_press(x, y, viewport_width, viewport_height)
+                .then_some(true);
         }
         if login_open {
             self.dispatch_login_modal_press(x, y, viewport_width, viewport_height);
@@ -64,18 +59,15 @@ impl WidgetHostNative {
             return Some(true);
         }
         if account_ui {
-            if allow_touch_panel_defer
-                && self.begin_model_picker_touch_gesture(x, y, viewport_width, viewport_height)
-            {
-                return Some(true);
-            }
             return self.press_home_model_picker(x, y, viewport_width, viewport_height);
         }
         None
     }
 
-    /// Paint bottom to top, reversing the press / hover order: model
-    /// picker, account menu, sign-in, then the settings modal.
+    /// Paint the Home-opened overlays above the takeover: the agent-
+    /// settings modal, the sign-in modal, the signed-in account menu,
+    /// then the Home-anchored model picker with its trailing
+    /// connect-more row.
     pub(in crate::widget_host) fn paint_home_overlays(
         &mut self,
         frame: &mut NativeFrameBackend<'_>,
@@ -85,10 +77,10 @@ impl WidgetHostNative {
         if !self.home_visible() {
             return;
         }
-        self.paint_home_model_picker(frame, viewport_width, viewport_height);
-        self.paint_account_menu_overlay(frame, viewport_width, viewport_height);
-        self.paint_login_modal_overlay(frame, viewport_width, viewport_height);
         self.paint_agent_settings_modal_overlay(frame, viewport_width, viewport_height);
+        self.paint_login_modal_overlay(frame, viewport_width, viewport_height);
+        self.paint_account_menu_overlay(frame, viewport_width, viewport_height);
+        self.paint_home_model_picker(frame, viewport_width, viewport_height);
     }
 
     /// The signed-in account dropdown. Home paints it for the same
@@ -224,25 +216,12 @@ impl WidgetHostNative {
             .chat_model_picker_input
             .text()
             .to_string();
-        let card = home_model_picker_rects(
+        home_model_picker_rects(
             &layout,
             viewport_width,
             &self.editor_state.chat.available_models,
             &search,
-        )?;
-        Some(if self.editor_state.editor_ui.touch_chrome() {
-            fit_picker_to_bounds(
-                card,
-                Rect::xywh(
-                    8.0,
-                    8.0,
-                    (viewport_width - 16.0).max(0.0),
-                    (self.keyboard_visible_bottom(viewport_height) - 16.0).max(0.0),
-                ),
-            )
-        } else {
-            card
-        })
+        )
     }
 
     /// Press routing for the Home-anchored picker: rows select, the
@@ -274,17 +253,6 @@ impl WidgetHostNative {
             self.mark_dirty();
             return Some(true);
         }
-        // The footer action, before the row question: `model_picker_hit`
-        // folds every piece of chrome into `Inside`, so asking it alone
-        // left the blue 接入更多模型 row painted and inert.
-        if op_editor_ui::widgets::ai_chat_model_picker::footer_action_hit(card, point) {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.close_chat_model_picker();
-            ui.agent_settings_open = true;
-            ui.agent_settings.tab = op_editor_core::AgentSettingsTab::Agents;
-            self.mark_dirty();
-            return Some(true);
-        }
         let models = self.editor_state.chat.available_models.clone();
         let hit = model_picker_hit(
             &self.editor_state.editor_ui.chat_model_picker,
@@ -313,8 +281,8 @@ impl WidgetHostNative {
         Some(true)
     }
 
-    /// Modals own every hover above Home, including their scrims. The
-    /// Home-anchored picker only runs when no higher overlay is open.
+    /// Hover bookkeeping for the Home-anchored picker: rows highlight,
+    /// leaving the popover closes it (the chat picker's behavior).
     pub(in crate::widget_host) fn cursor_move_home_overlays(
         &mut self,
         x: f32,
@@ -322,19 +290,7 @@ impl WidgetHostNative {
         viewport_width: f32,
         viewport_height: f32,
     ) -> Option<bool> {
-        if !self.home_visible() {
-            return None;
-        }
-        let ui = &self.editor_state.editor_ui;
-        if ui.agent_settings_open {
-            return Some(self.update_agent_settings_hover(x, y));
-        }
-        if ((ui.account_ui_available || ui.touch_chrome()) && ui.login_modal_open)
-            || (ui.account_ui_available && ui.account_menu_open)
-        {
-            return Some(self.cursor_move_modal_tiers(x, y).unwrap_or(false));
-        }
-        if !ui.chat_model_picker.open {
+        if !self.home_visible() || !self.editor_state.editor_ui.chat_model_picker.open {
             return None;
         }
         let point = Point2D::new(x, y);
@@ -382,8 +338,26 @@ impl WidgetHostNative {
         if !self.home_visible() || !self.editor_state.editor_ui.chat_model_picker.open {
             return None;
         }
-        self.try_scroll_model_picker(x, y, delta_y, viewport_width, viewport_height)
-            .then_some(true)
+        let point = Point2D::new(x, y);
+        let card = self.home_model_picker_geometry(viewport_width, viewport_height)?;
+        if !card.contains(point) {
+            return None;
+        }
+        let search = self
+            .editor_state
+            .editor_ui
+            .chat_model_picker_input
+            .text()
+            .to_string();
+        let models = self.editor_state.chat.available_models.clone();
+        let max = max_picker_scroll(&models, &search);
+        let picker = &mut self.editor_state.editor_ui.chat_model_picker;
+        let next = (picker.scroll.offset - delta_y).clamp(0.0, max);
+        if next != picker.scroll.offset {
+            picker.scroll.offset = next;
+            self.mark_dirty();
+        }
+        Some(true)
     }
 }
 

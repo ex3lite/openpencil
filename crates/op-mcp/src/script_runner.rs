@@ -20,19 +20,10 @@ mod error;
 #[path = "script_runner_dotted_keys.rs"]
 mod dotted_keys;
 
-#[path = "script_runner_fences.rs"]
-mod fences;
-#[path = "script_runner_generation.rs"]
-mod generation;
-#[path = "script_runner_overlay.rs"]
-mod overlay;
 #[path = "script_runner_prelude.rs"]
 mod prelude;
 
-#[path = "script_runner_recovery.rs"]
-mod recovery;
 use prelude::PRELUDE;
-use recovery::eval_after_initial_failure;
 
 pub use error::ScriptError;
 
@@ -53,33 +44,7 @@ const EVAL_BUDGET: Duration = Duration::from_secs(2);
 /// so a model-truncated script salvages its complete-statement prefix
 /// instead of losing the whole section to a trailing SyntaxError.
 pub fn run_script_to_program(text: &str) -> Result<String, ScriptError> {
-    run_script_to_program_with_preamble(text, None)
-}
-
-/// Generation callers repair foregrounds after assembling and repairing the
-/// complete tree. Insertion-time ancestry can still be an orphan label's
-/// incorrect parent. Fresh generation also rejects unresolved insertion
-/// parents; K retains its existing support for earlier authored-id aliases.
-/// All other recorder defaults and limits remain active.
-pub fn run_generation_script_to_program(text: &str) -> Result<String, ScriptError> {
-    run_script_to_program_with_preamble(text, Some(generation::PREAMBLE))
-}
-
-/// Existing-node edits must not receive generation defaults, contrast repairs,
-/// divider reparenting, or text-height rewrites. Keep the same sandbox limits
-/// and syntax-recovery ladder, but record the supplied I() node verbatim.
-pub fn run_modification_script_to_program(text: &str) -> Result<String, ScriptError> {
-    const PRESERVE_NODES: &str = r#"globalThis.I = function(parent, obj) {
-        return __record(__parentBinding(parent), JSON.stringify(obj), "", "");
-    };"#;
-    run_script_to_program_with_preamble(text, Some(PRESERVE_NODES))
-}
-
-fn run_script_to_program_with_preamble(
-    text: &str,
-    preamble: Option<&str>,
-) -> Result<String, ScriptError> {
-    let script = strip_fences(text)?;
+    let script = strip_fences(text);
     if script.trim().is_empty() {
         return Err(ScriptError::EmptySource);
     }
@@ -89,9 +54,9 @@ fn run_script_to_program_with_preamble(
             max: MAX_SCRIPT_BYTES,
         });
     }
-    let program = match eval_to_program(&script, preamble) {
+    let program = match eval_to_program(&script) {
         Ok(p) => p,
-        Err(first_err) => eval_after_initial_failure(&script, first_err, preamble)?,
+        Err(first_err) => eval_after_initial_failure(&script, first_err)?,
     };
     if program.trim().is_empty() {
         return Err(ScriptError::NoOperations);
@@ -123,6 +88,89 @@ fn truncate_duplicate_script(script: &str) -> Option<String> {
     let after = first + needle.len();
     let second_rel = script[after..].find(needle)?;
     Some(script[..after + second_rel].to_string())
+}
+
+fn eval_after_initial_failure(script: &str, first_err: ScriptError) -> Result<String, ScriptError> {
+    // gemini-3.6-flash writes schema property names with the separator it
+    // reads in the docs — `justify.content:` instead of `justifyContent:`.
+    // A bare dotted key is a SyntaxError at the first `.`, so QuickJS
+    // rejected an otherwise-correct slide before recording one `I(...)`.
+    // Normalize FIRST, then let the rest of the ladder work on the repaired
+    // source: a script can be both mis-keyed and truncated.
+    let script = match dotted_keys::repair_dotted_object_keys(script) {
+        Some(repaired) => match eval_to_program(&repaired) {
+            Ok(p) => {
+                tracing::warn!(
+                    original_len = script.len(),
+                    repaired_len = repaired.len(),
+                    "script failed as-is; dotted-property-key repair recovered a runnable source"
+                );
+                return Ok(p);
+            }
+            Err(_) => repaired,
+        },
+        None => script.to_string(),
+    };
+    let script = match escape_raw_newlines_in_quoted_strings(&script) {
+        Some(repaired) => match eval_to_program(&repaired) {
+            Ok(p) => {
+                tracing::warn!(
+                    original_len = script.len(),
+                    repaired_len = repaired.len(),
+                    "script failed as-is; raw newline repair recovered a quoted string"
+                );
+                return Ok(p);
+            }
+            Err(_) => repaired,
+        },
+        None => script,
+    };
+    let script = script.as_str();
+
+    // GLM-5.2 commonly drops the outer `}` when `stroke:{...}` is the final
+    // property of an I() object, so QuickJS reaches `)` with `{` still open.
+    let balanced = balance_brackets(script);
+    if balanced != script {
+        if let Ok(p) = eval_to_program(&balanced) {
+            tracing::warn!(
+                original_len = script.len(),
+                repaired_len = balanced.len(),
+                "script failed as-is; bracket balance repair recovered a runnable source"
+            );
+            return Ok(p);
+        }
+    }
+
+    // DeepSeek V4 sometimes ECHOES the whole script a second time, glued
+    // straight onto the first copy (often mid-line after a trailing
+    // comment) - the re-declared `const` bindings then throw "invalid
+    // redefinition of lexical identifier" and the whole section is lost.
+    // Detect the first declaration recurring and run the first copy alone.
+    if let Some(deduped) = truncate_duplicate_script(script) {
+        if let Ok(p) = eval_to_program(&deduped) {
+            tracing::warn!(
+                original_len = script.len(),
+                deduped_len = deduped.len(),
+                "script failed as-is; duplicate-echo truncation recovered the first copy"
+            );
+            return Ok(p);
+        }
+    }
+
+    match repair_truncated_script(script) {
+        Some(repaired) => match eval_to_program(&repaired) {
+            Ok(p) => {
+                tracing::warn!(
+                    original_len = script.len(),
+                    repaired_len = repaired.len(),
+                    "script failed as-is; truncation repair salvaged a runnable prefix"
+                );
+                Ok(p)
+            }
+            Err(_) => Err(first_err),
+        },
+        None => Err(first_err),
+    }
 }
 
 /// A normal JavaScript string cannot contain a literal line break. This shape
@@ -223,40 +271,16 @@ fn escape_raw_newlines_in_quoted_strings(src: &str) -> Option<String> {
 /// the returned program transactionally, so returning a prefix here would
 /// turn an incomplete JavaScript transaction into a misleading success.
 /// Syntax-level truncation recovery remains in `eval_after_initial_failure`.
-fn eval_to_program(script: &str, preamble: Option<&str>) -> Result<String, ScriptError> {
-    eval_recorded(script, preamble, EVAL_BUDGET).map(|recorded| recorded.program)
-}
-
-/// What one sandboxed eval recorded. `capped` is true when the line or
-/// byte cap dropped operations — callers that must not accept a silently
-/// truncated program (generators) refuse on it.
-pub(crate) struct Recorded {
-    pub(crate) program: String,
-    pub(crate) capped: bool,
-}
-
-/// [`eval_to_program`] with an optional `preamble` evaluated after the
-/// shared prelude (it may rebind `I` / `U` or add globals) and an explicit
-/// wall-clock `budget`.
-pub(crate) fn eval_recorded(
-    script: &str,
-    preamble: Option<&str>,
-    budget: Duration,
-) -> Result<Recorded, ScriptError> {
+fn eval_to_program(script: &str) -> Result<String, ScriptError> {
     let rt = Runtime::new().map_err(|e| ScriptError::RuntimeInit(e.to_string()))?;
     rt.set_memory_limit(MEMORY_LIMIT_BYTES);
-    let deadline = Instant::now() + budget;
+    let deadline = Instant::now() + EVAL_BUDGET;
     rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
     let ctx = Context::full(&rt).map_err(|e| ScriptError::ContextInit(e.to_string()))?;
     let lines: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let counter: Rc<Cell<usize>> = Rc::new(Cell::new(0));
     let bytes_used: Rc<Cell<usize>> = Rc::new(Cell::new(0));
-    let inserts = Rc::new(RefCell::new(Vec::new()));
-    let inserts_rec = inserts.clone();
-    let non_insert_ops = Rc::new(Cell::new(false));
-    let non_insert_k = non_insert_ops.clone();
-    let non_insert_u = non_insert_ops.clone();
     let lines_rec = lines.clone();
     let counter_rec = counter.clone();
     let bytes_rec = bytes_used.clone();
@@ -267,30 +291,11 @@ pub(crate) fn eval_recorded(
     let bytes_rec_u = bytes_used.clone();
 
     let outcome: Result<(), ScriptError> = ctx.with(|ctx| {
-        let record = Function::new(
-            ctx.clone(),
-            move |parent: String,
-                  json: String,
-                  original: rquickjs::function::Opt<String>,
-                  background: rquickjs::function::Opt<String>|
-                  -> String {
-                let at = lines_rec.borrow().len();
-                let binding = push_recorded_line(&lines_rec, &counter_rec, &bytes_rec, |bind| {
-                    format!("{bind}=I({parent}, {json})")
-                });
-                if lines_rec.borrow().len() == at + 1 {
-                    inserts_rec.borrow_mut().push(overlay::capture(
-                        binding.clone(),
-                        parent,
-                        &json,
-                        &original.0.unwrap_or_default(),
-                        background.0.unwrap_or_default(),
-                        at,
-                    ));
-                }
-                binding
-            },
-        )
+        let record = Function::new(ctx.clone(), move |parent: String, json: String| -> String {
+            push_recorded_line(&lines_rec, &counter_rec, &bytes_rec, |bind| {
+                format!("{bind}=I({parent}, {json})")
+            })
+        })
         .map_err(|e| ScriptError::BindHostFn {
             name: "__record",
             detail: e.to_string(),
@@ -298,7 +303,6 @@ pub(crate) fn eval_recorded(
         let record_k = Function::new(
             ctx.clone(),
             move |kit: String, parent: String, json: String| -> String {
-                non_insert_k.set(true);
                 push_recorded_line(&lines_rec_k, &counter_rec_k, &bytes_rec_k, |bind| {
                     format!("{bind}=K({kit}, {parent}, {json})")
                 })
@@ -311,7 +315,6 @@ pub(crate) fn eval_recorded(
         let record_u = Function::new(
             ctx.clone(),
             move |node_id: String, json: String| -> String {
-                non_insert_u.set(true);
                 push_recorded_operation(
                     &lines_rec_u,
                     &bytes_rec_u,
@@ -344,23 +347,10 @@ pub(crate) fn eval_recorded(
             })?;
         ctx.eval::<(), _>(PRELUDE)
             .map_err(|e| ScriptError::Prelude(e.to_string()))?;
-        if let Some(preamble) = preamble {
-            ctx.eval::<(), _>(preamble)
-                .map_err(|e| ScriptError::Prelude(e.to_string()))?;
-        }
         ctx.eval::<(), _>(script)
             .map_err(|e| describe_js_error(&ctx, e))
     });
-    if outcome.is_ok()
-        && preamble.is_none()
-        && !non_insert_ops.get()
-        && bytes_used.get() < MAX_RECORDED_BYTES
-        && counter.get() <= MAX_RECORDED_LINES
-    {
-        overlay::restore(&mut lines.borrow_mut(), &inserts.borrow());
-    }
     let program = lines.borrow().join("\n");
-    let capped = bytes_used.get() >= MAX_RECORDED_BYTES || counter.get() > MAX_RECORDED_LINES;
     if bytes_used.get() >= MAX_RECORDED_BYTES && !program.trim().is_empty() {
         tracing::warn!(
             recorded_bytes = bytes_used.get(),
@@ -369,7 +359,7 @@ pub(crate) fn eval_recorded(
         );
     }
     match outcome {
-        Ok(()) => Ok(Recorded { program, capped }),
+        Ok(()) => Ok(program),
         // Matched on the rendered message (not the variant) so the guard
         // keeps the exact reach the `String` version had: the sentinel is
         // raised by the prelude's `__unsupported` thrower, so it can only
@@ -614,14 +604,13 @@ pub(crate) fn repair_truncated_script(script: &str) -> Option<String> {
     Some(repaired)
 }
 
-/// Preview scopes/builtins can indicate an unquoted expression. Other variables
-/// may be node handles from an earlier sandbox and need fresh local handles
-/// or persistent node-id strings instead.
+/// A bare "x is not defined" tells the model nothing about WHY. Every script
+/// runs in a FRESH sandbox, so a variable that held a node in an earlier batch
+/// is gone — the model must reference that node by its id STRING. Say so
+/// (measured 2026-07-12: a batch died on `header is not defined`, where
+/// `header` was a `const` from the previous batch's script).
 fn explain_reference_error(msg: &str) -> Option<ScriptError> {
     let name = msg.strip_suffix(" is not defined")?;
-    if let Some(error) = ScriptError::runtime_reference(name) {
-        return Some(error);
-    }
     Some(ScriptError::StaleReference {
         message: msg.to_string(),
         name: name.to_string(),
@@ -685,17 +674,24 @@ fn strip_reasoning(text: &str) -> &str {
 ///    prose preamble ("Here's the design:") before the fence, so a
 ///    start-anchored strip missed it and passed the prose to the runtime.
 /// 3. No fence → the reasoning-stripped text is the script (bare-script case).
-fn strip_fences(text: &str) -> Result<String, ScriptError> {
-    fences::extract(strip_reasoning(text).trim())
+fn strip_fences(text: &str) -> String {
+    let text = strip_reasoning(text).trim();
+    if let Some(open) = text.find("```") {
+        // Drop the ``` and any language tag on the fence line (```js).
+        let after_open = &text[open + 3..];
+        let body = after_open.split_once('\n').map(|x| x.1).unwrap_or("");
+        // Body ends at the next closing fence; if the response was truncated
+        // mid-block there is no closing fence, so keep the runnable prefix and
+        // let `repair_truncated_script` salvage it.
+        let body = body.rsplit_once("```").map(|x| x.0).unwrap_or(body);
+        return body.trim().to_string();
+    }
+    text.to_string()
 }
 
 #[cfg(test)]
 #[path = "script_runner_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "script_runner_reference_tests.rs"]
-mod reference_tests;
 
 #[cfg(test)]
 mod duplicate_echo_tests {

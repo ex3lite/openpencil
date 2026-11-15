@@ -31,13 +31,7 @@ mod collab_ticket_error;
 mod collab_union_policy;
 mod collab_verifier;
 mod collab_verifier_error;
-mod hosted_access;
-mod hosted_access_error;
-mod hosted_access_wire;
 mod status;
-
-#[cfg(any(op_auth_hosted_access_prebuilt, test))]
-mod real_hosted_access;
 
 #[cfg(op_auth_prebuilt)]
 #[path = "real.rs"]
@@ -101,18 +95,13 @@ pub use collab_verifier_error::{
     CollabJwkErrorKind, CollabJwksError, CollabJwksFetchError, CollabUnionPolicyError,
     CollabVerifierConfigError, CollabVerifyError,
 };
-pub use hosted_access::{
-    HostedAccess, HostedAccessPoll, HostedAccessProvider, HostedAccessRequestId,
-    UnavailableHostedAccessProvider, MAX_HOSTED_ACCESS_BYTES,
-};
-pub use hosted_access_error::HostedAccessError;
 pub use status::AuthStatus;
 
 /// Oldest supported base authentication ABI.
 pub const REQUIRED_ABI_VERSION: u32 = 1;
 
 /// Newest supported base authentication ABI.
-pub const MAX_SUPPORTED_ABI_VERSION: u32 = 4;
+pub const MAX_SUPPORTED_ABI_VERSION: u32 = 3;
 
 /// Optional ABI revision that adds the collaboration-ticket capability.
 ///
@@ -130,10 +119,6 @@ pub const COLLAB_TICKET_ABI_VERSION: u32 = 2;
 /// full ticket as its relay bearer, which the relay still dual-accepts.
 /// The private `op-auth-ffi` `ABI_VERSION` must move in step.
 pub const COLLAB_RELAY_TOKEN_ABI_VERSION: u32 = 3;
-
-/// Optional ABI revision with ephemeral Hosted access and session epochs.
-/// Production use requires an explicitly adopted, signed ABI-v4 release matrix.
-pub const HOSTED_ACCESS_ABI_VERSION: u32 = 4;
 
 /// `poll` handle that reports the signed-in session instead of a flow.
 pub const SESSION_HANDLE: u64 = 0;
@@ -212,8 +197,6 @@ pub fn available() -> bool {
 
 static UNAVAILABLE_COLLAB_TICKET_PROVIDER: UnavailableCollabTicketProvider =
     UnavailableCollabTicketProvider;
-static UNAVAILABLE_HOSTED_ACCESS_PROVIDER: UnavailableHostedAccessProvider =
-    UnavailableHostedAccessProvider;
 
 #[cfg(any(op_auth_prebuilt, test))]
 const fn supports_base_abi(version: u32) -> bool {
@@ -231,11 +214,6 @@ pub fn collab_ticket_available() -> bool {
 /// Provider for short-lived collaboration admission tickets.
 pub fn collab_ticket_provider() -> &'static dyn CollabTicketProvider {
     backend::collab_ticket_provider()
-}
-
-/// Ephemeral Hosted access is negotiated independently of login/collaboration.
-pub fn hosted_access_provider() -> &'static dyn HostedAccessProvider {
-    backend::hosted_access_provider()
 }
 
 /// Initialize the runtime once per process; returns false when the
@@ -467,13 +445,12 @@ mod abi_tests {
     use super::*;
 
     #[test]
-    fn base_account_api_accepts_v1_through_v4_only() {
+    fn base_account_api_accepts_v1_through_v3_only() {
         assert!(!supports_base_abi(0));
         assert!(supports_base_abi(1));
         assert!(supports_base_abi(2));
         assert!(supports_base_abi(3));
-        assert!(supports_base_abi(4));
-        assert!(!supports_base_abi(5));
+        assert!(!supports_base_abi(4));
     }
 
     #[test]
@@ -503,7 +480,7 @@ mod abi_tests {
     #[test]
     fn relay_token_capability_is_negotiated_above_the_ticket_capability() {
         const { assert!(COLLAB_RELAY_TOKEN_ABI_VERSION > COLLAB_TICKET_ABI_VERSION) };
-        assert_eq!(HOSTED_ACCESS_ABI_VERSION, MAX_SUPPORTED_ABI_VERSION);
+        assert_eq!(COLLAB_RELAY_TOKEN_ABI_VERSION, MAX_SUPPORTED_ABI_VERSION);
         assert!(supports_base_abi(COLLAB_RELAY_TOKEN_ABI_VERSION));
     }
 

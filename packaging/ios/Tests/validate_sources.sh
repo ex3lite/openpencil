@@ -15,23 +15,12 @@ required=(
   "$player_dir/Assets.xcassets/AppIcon.appiconset/Contents.json"
   "$player_dir/Resources/ppt-demo.op"
   "$player_dir/Resources/sample.op"
-  "$repo_dir/crates/op-host-desktop/assets/fonts/Inter-VF.ttf"
-  "$repo_dir/packaging/shared/fonts/NotoSansSC-VF.ttf"
-  "$repo_dir/packaging/shared/fonts/OFL-Inter.txt"
-  "$repo_dir/packaging/shared/fonts/OFL-NotoSansSC.txt"
-  "$repo_dir/packaging/shared/fonts/PlusJakartaSans-VF.ttf"
-  "$repo_dir/packaging/shared/fonts/OFL-PlusJakartaSans.txt"
-  "$repo_dir/packaging/shared/fonts/Archivo-VF.ttf"
-  "$repo_dir/packaging/shared/fonts/LibreCaslonText-VF.ttf"
-  "$repo_dir/packaging/shared/fonts/NotoSerifSC-VF.ttf"
   "$player_dir/Resources/en.lproj/InfoPlist.strings"
   "$player_dir/Resources/zh-Hans.lproj/InfoPlist.strings"
   "$player_dir/Sources/OpPlayerApp.swift"
   "$player_dir/Sources/OpPlayerView.swift"
   "$player_dir/Sources/OpEngineHost.swift"
   "$player_dir/Sources/ImageImportCoordinator.swift"
-  "$player_dir/Sources/ChatAttachmentCoordinator.swift"
-  "$player_dir/Sources/ChatAttachmentImage.swift"
   "$player_dir/Sources/GenerationBackgroundCoordinator.swift"
   "$player_dir/Sources/GenerationBackgroundRegistration.swift"
   "$player_dir/Sources/GenerationBackgroundState.swift"
@@ -46,12 +35,6 @@ required=(
   "$player_dir/Sources/RegisterViewController.swift"
   "$player_dir/Sources/AuthTheme.swift"
   "$player_dir/Sources/AccountCenterViewController.swift"
-  "$player_dir/Sources/AccountDeletionState.swift"
-  "$player_dir/Sources/AccountDeletionCoordinator.swift"
-  "$player_dir/Sources/AccountDeletionViewController.swift"
-  "$player_dir/Sources/AccountDeletionRecoveryView.swift"
-  "$player_dir/Sources/AccountDeletionText.swift"
-  "$player_dir/Sources/OpPlayerView+AccountDeletion.swift"
   "$player_dir/Sources/SsoAuthClient.swift"
   "$player_dir/Sources/SsoProviderList.swift"
   "$player_dir/Sources/SsoRegion.swift"
@@ -59,7 +42,6 @@ required=(
   "$player_dir/Sources/UniversalLink.swift"
   "$player_dir/Tests/GenerationBackgroundRegistrationTests.swift"
   "$player_dir/Tests/GenerationBackgroundStateTests.swift"
-  "$player_dir/Tests/ChatAttachmentImageTests.swift"
 )
 
 for path in "${required[@]}"; do
@@ -128,14 +110,6 @@ grep -Fq '"imageImport.error.title"' "$player_dir/Resources/zh-Hans.lproj/Locali
 grep -Fq '"imageImport.error.body"' "$player_dir/Resources/en.lproj/Localizable.strings"
 grep -Fq '"imageImport.error.body"' "$player_dir/Resources/zh-Hans.lproj/Localizable.strings"
 
-# Studio Home "Add screenshot" and the chat attach button raise action 13;
-# the photo picker result must come back through the attachment ABI.
-grep -Fq 'OpShellAction_PickChatAttachment = 13,' "$header_dir/op_engine.h"
-grep -Fq 'OpShellAction_PickChatAttachment.rawValue' "$player_dir/Sources/OpEngineHost.swift"
-grep -Fq 'op_editor_attach_chat_image' "$player_dir/Sources/ChatAttachmentCoordinator.swift"
-grep -Fq 'PHPickerViewController' "$player_dir/Sources/ChatAttachmentCoordinator.swift"
-grep -Fq 'ChatAttachmentImage.prepare' "$player_dir/Sources/ChatAttachmentCoordinator.swift"
-
 while IFS= read -r source; do
   lines="$(wc -l < "$source" | tr -d ' ')"
   if (( lines > 800 )); then
@@ -148,15 +122,6 @@ ruby - "$player_dir/project.yml" <<'RUBY'
 require "yaml"
 project = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
 target = project.fetch("targets").fetch("OpenPencilPlayer")
-font_sources = target.fetch("sources")
-raise "Inter must reuse the canonical desktop asset" unless font_sources.any? { |source| source["path"] == "../../crates/op-host-desktop/assets/fonts/Inter-VF.ttf" && source["buildPhase"] == "resources" }
-raise "shared design fonts must preserve their fonts folder" unless font_sources.any? { |source| source["path"] == "../shared/fonts" && source["type"] == "folder" && source["buildPhase"] == "resources" }
-desktop_font_dir = File.expand_path("../../crates/op-host-desktop/assets/fonts", File.dirname(ARGV.fetch(0)))
-raise "desktop font resource directory missing" unless File.directory?(desktop_font_dir)
-Dir.glob(File.join(desktop_font_dir, "*.ttf")).each do |font|
-  expected = "../../crates/op-host-desktop/assets/fonts/#{File.basename(font)}"
-  raise "missing desktop font resource #{expected}" unless font_sources.any? { |source| source["path"] == expected && source["buildPhase"] == "resources" }
-end
 raise "OpenPencilPlayer must be an iOS application" unless target["platform"] == "iOS" && target["type"] == "application"
 raise "bundle-id prefix must be tech.zseven" unless project.fetch("options").fetch("bundleIdPrefix") == "tech.zseven"
 settings = target.fetch("settings").fetch("base")
@@ -450,7 +415,7 @@ RUBY
 
 ruby - "$player_dir/Sources/OpEngineHost.swift" <<'RUBY'
 source = File.read(ARGV.fetch(0))
-create = source[/private func createAndAttach\b.*?(?=\n    private func registerBundledFonts)/m]
+create = source[/private func createAndAttach\b.*?(?=\n    \/\/\/ Registers every bundled)/m]
 raise "iOS engine create path missing" unless create
 prepare = create.index("let storageURL = AuthStorage.prepare()")
 root = create.index("desc.storage_root_ptr")
@@ -460,11 +425,6 @@ documents_prepare = create.index("DocumentStorage.prepare()")
 documents_root = create.index("desc.documents_root_ptr")
 raise "the visible documents root must be prepared and bound before op_create" unless documents_prepare && documents_root && documents_prepare < documents_root && documents_root < call
 raise "auth must reuse the create-time storage root" unless create.include?("configureMobileAuth(engine: created, storageURL: storageURL)")
-font_register = create.index("registerBundledFonts(engine: created)")
-attach = create.index("op_attach_surface(created, &surfaceDesc)")
-raise "fonts must register before the first render" unless font_register && attach && font_register < attach
-font_loader = source[/private func registerBundledFonts\b.*?(?=\n    \/\/ MARK:)/m]
-raise "font loading must cover flat and folder Xcode resources" unless font_loader && font_loader.include?('[resources, resources.appendingPathComponent("fonts")]')
 RUBY
 
 ruby - "$player_dir/Sources/OpEngineHost.swift" \
@@ -558,38 +518,6 @@ raise "image-import teardown must detach and dismiss the picker" unless teardown
 raise "collaboration rejection must rely on the engine notice" unless coordinator.include?("status != OpStatus_Busy")
 RUBY
 
-ruby - "$player_dir/Sources/OpEngineHost.swift" \
-  "$player_dir/Sources/ChatAttachmentCoordinator.swift" <<'RUBY'
-host = File.read(ARGV.fetch(0))
-coordinator = File.read(ARGV.fetch(1))
-
-drain = host[/func drainShellActions\b.*?(?=\n    \/\/\/ Polls the engine)/m]
-raise "iOS chat-attachment shell-action branch missing" unless drain
-action = drain.index("OpShellAction_PickChatAttachment.rawValue")
-defer_to_uikit = drain.index("DispatchQueue.main.async", action || 0)
-begin_pick = drain.index("chatAttachmentCoordinator.beginPick()", action || 0)
-unless action && defer_to_uikit && begin_pick && action < defer_to_uikit && defer_to_uikit < begin_pick
-  raise "photo picker presentation must leave the editor ABI stack"
-end
-raise "chat-attachment teardown missing" unless host.include?("chatAttachmentCoordinator.cancelForTeardown()")
-
-begin_method = coordinator[/func beginPick\(\).*?(?=\n    \/\/\/ Teardown)/m]
-raise "chat-attachment picker missing" unless begin_method
-raise "photo picker must offer images only" unless begin_method.include?("configuration.filter = .images")
-raise "photo picker must return one image" unless begin_method.include?("configuration.selectionLimit = 1")
-
-prepare = coordinator.index("ChatAttachmentImage.prepare")
-return_bytes = coordinator.index("op_editor_attach_chat_image(")
-raise "normalisation must finish before bytes cross the ABI" unless prepare && return_bytes && prepare < return_bytes
-raise "photo normalisation must run off the main thread" unless coordinator.include?("loadQueue.async")
-finish = coordinator[/func picker\(_ picker: PHPickerViewController.*?\n    \}/m]
-raise "picker dismissal must retire UIKit ownership" unless finish&.include?("finishPicker()")
-raise "an empty picker result must be a silent cancel" unless finish.include?("guard let provider = results.first?.itemProvider else { return }")
-teardown = coordinator[/func cancelForTeardown\(\).*?(?=\n    private func finishPicker)/m]
-raise "chat-attachment teardown must invalidate worker completion" unless teardown&.include?("activeLoadToken = nil")
-raise "chat-attachment teardown must detach and dismiss the picker" unless teardown.include?("picker.delegate = nil") && teardown.include?("picker.dismiss(animated: false)")
-RUBY
-
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 target="arm64-apple-ios15.0-simulator"
 module_cache="${TMPDIR:-/tmp}/op-ios-module-cache"
@@ -628,19 +556,6 @@ xcrun swiftc \
 "$reader_test"
 
 keyboard_test="$reader_test_dir/keyboard-occlusion-runner"
-deletion_test="$reader_test_dir/account-deletion-state-runner"
-xcrun swiftc -warnings-as-errors -parse-as-library \
-  "$player_dir/Sources/AccountDeletionState.swift" \
-  "$player_dir/Tests/AccountDeletionStateTests.swift" \
-  -o "$deletion_test"
-"$deletion_test"
-save_queue_test="$reader_test_dir/document-save-work-queue-runner"
-xcrun swiftc -warnings-as-errors -parse-as-library \
-  "$player_dir/Sources/DocumentSaveWorkQueue.swift" \
-  "$player_dir/Tests/DocumentSaveWorkQueueTests.swift" \
-  -o "$save_queue_test"
-"$save_queue_test"
-
 xcrun swiftc \
   -warnings-as-errors \
   -parse-as-library \
@@ -704,15 +619,6 @@ xcrun swiftc \
   "$player_dir/Tests/DocumentSaveBindingTests.swift" \
   -o "$save_binding_test"
 "$save_binding_test"
-
-chat_attachment_test="$reader_test_dir/chat-attachment-image-runner"
-xcrun swiftc \
-  -warnings-as-errors \
-  -parse-as-library \
-  "$player_dir/Sources/ChatAttachmentImage.swift" \
-  "$player_dir/Tests/ChatAttachmentImageTests.swift" \
-  -o "$chat_attachment_test"
-"$chat_attachment_test"
 
 universal_link_test="$reader_test_dir/universal-link-runner"
 xcrun swiftc \

@@ -30,22 +30,17 @@ final class AccountCenterViewController: UITableViewController {
     private enum Row {
         case region
         case manageInBrowser
-        case privacyPolicy
         case signOut
-        case deleteAccount
     }
 
     private let snapshot: AccountSnapshot
-    private let region: SsoRegion
     private let onSignOut: () -> Void
-    private let rows: [Row] = [.region, .manageInBrowser, .privacyPolicy, .signOut, .deleteAccount]
+    private let rows: [Row] = [.region, .manageInBrowser, .signOut]
     private var avatarTask: URLSessionDataTask?
-    private let avatarSession = AppPrivateNetworking.makeSession()
     private let avatarView = UIImageView()
 
-    init(snapshot: AccountSnapshot, region: SsoRegion, onSignOut: @escaping () -> Void) {
+    init(snapshot: AccountSnapshot, onSignOut: @escaping () -> Void) {
         self.snapshot = snapshot
-        self.region = region
         self.onSignOut = onSignOut
         super.init(style: .insetGrouped)
     }
@@ -57,13 +52,6 @@ final class AccountCenterViewController: UITableViewController {
 
     deinit {
         avatarTask?.cancel()
-        avatarSession.invalidateAndCancel()
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        avatarTask?.cancel()
-        avatarSession.invalidateAndCancel()
     }
 
     override func viewDidLoad() {
@@ -134,7 +122,7 @@ final class AccountCenterViewController: UITableViewController {
             let url = URL(string: raw),
             url.scheme?.lowercased() == "https"
         else { return }
-        let task = avatarSession.dataTask(with: url) { [weak self] data, _, _ in
+        let task = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data, let image = UIImage(data: data) else { return }
             DispatchQueue.main.async { self?.avatarView.image = image }
         }
@@ -176,15 +164,6 @@ final class AccountCenterViewController: UITableViewController {
                 comment: "Sign-out row"
             )
             cell.textLabel?.textColor = .systemRed
-        case .privacyPolicy:
-            cell.textLabel?.text = AppPrivacy.title
-            cell.accessoryType = .disclosureIndicator
-        case .deleteAccount:
-            cell.textLabel?.text = AccountDeletionText.title
-            cell.textLabel?.textColor = .systemRed
-            cell.textLabel?.numberOfLines = 0
-            cell.accessoryType = .disclosureIndicator
-            cell.accessibilityIdentifier = "deleteOpenPencilAccount"
         }
         return cell
     }
@@ -196,18 +175,11 @@ final class AccountCenterViewController: UITableViewController {
             presentRegionPicker()
         case .manageInBrowser:
             UIApplication.shared.open(
-                region.origin.appendingPathComponent("account"),
+                SsoRegionStore.resolved().origin.appendingPathComponent("account"),
                 options: [:]
             )
         case .signOut:
             confirmSignOut()
-        case .privacyPolicy:
-            AppPrivacy.present(from: self, ssoOrigin: region.origin)
-        case .deleteAccount:
-            navigationController?.pushViewController(
-                AccountDeletionViewController(region: region, deviceID: snapshot.deviceId ?? ""),
-                animated: true
-            )
         }
     }
 
@@ -279,10 +251,9 @@ final class AccountCenterViewController: UITableViewController {
 /// App-owned navigation wrapper mirroring the login presentation.
 func makeAccountCenterPresentation(
     snapshot: AccountSnapshot,
-    region: SsoRegion,
     onSignOut: @escaping () -> Void
 ) -> UINavigationController {
-    let controller = AccountCenterViewController(snapshot: snapshot, region: region, onSignOut: onSignOut)
+    let controller = AccountCenterViewController(snapshot: snapshot, onSignOut: onSignOut)
     let navigation = UINavigationController(rootViewController: controller)
     navigation.modalPresentationStyle = .formSheet
     return navigation

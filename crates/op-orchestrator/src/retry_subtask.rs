@@ -11,7 +11,7 @@
 //! automatic retry ladder underneath a manual click would silently
 //! multiply LLM calls the user never asked for.
 //!
-//! Reuses [`crate::subagent::run_subtask_with_reveal_at_and_outcomes`] — the SAME
+//! Reuses [`crate::subagent::run_subtask_with_reveal_at`] — the SAME
 //! generation unit every subtask (orchestrator-planned or
 //! `spawn_agents`-spawned) runs through — so a retried subtask's Class-A
 //! passes (theme detection, canvas-width role resolution, self-check)
@@ -19,9 +19,7 @@
 
 use crate::plan::{OrchestratorPlan, PlanFill, RootFrameSpec, Subtask};
 use crate::run_salvage_feedback::{move_roots_to_index, parent_and_siblings};
-use crate::subagent::{
-    reveal_now_millis, run_subtask_with_reveal_at_and_outcomes, IntentCheckMode,
-};
+use crate::subagent::{reveal_now_millis, run_subtask_with_reveal_at};
 use crate::types::{AbortFlag, DesignRequest, DocSink, LlmClient, Progress, SubtaskOutcome};
 use op_editor_core::PenNodeExt;
 
@@ -55,7 +53,6 @@ fn plan_for_retry(sink: &dyn DocSink, subtask: &Subtask) -> OrchestratorPlan {
         .unwrap_or((1200.0, 800.0, None));
 
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "retry-root".into(),
             name: "Page".into(),
@@ -71,7 +68,6 @@ fn plan_for_retry(sink: &dyn DocSink, subtask: &Subtask) -> OrchestratorPlan {
         // id_prefix ride through unchanged.
         subtasks: vec![subtask.clone()],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -132,10 +128,7 @@ pub async fn retry_subtask(
     }
     let subtask = &subtask;
     let plan = plan_for_retry(sink, subtask);
-    // A manual retry has no automatic rung behind it, so an intent-class
-    // self-check finding (structure drift) is advisory here: re-rejecting it
-    // would leave the user a Retry button that can never succeed.
-    let outcome = run_subtask_with_reveal_at_and_outcomes(
+    let outcome = run_subtask_with_reveal_at(
         &plan.subtasks[0],
         &plan,
         request,
@@ -147,8 +140,6 @@ pub async fn retry_subtask(
         indicator_epoch,
         reveal_now_millis(),
         on_progress,
-        &[],
-        IntentCheckMode::Advisory,
     )
     .await;
 

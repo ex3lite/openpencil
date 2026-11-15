@@ -32,7 +32,7 @@ pub(crate) fn available() -> bool {
     static ABI_OK: OnceLock<bool> = OnceLock::new();
     *ABI_OK.get_or_init(|| {
         let version = linked_abi_version();
-        let supported = supports_linked_abi(version);
+        let supported = supports_base_abi(version);
         if !supported {
             eprintln!(
                 "op-auth-bridge: prebuilt library ABI {version} is outside \
@@ -42,16 +42,6 @@ pub(crate) fn available() -> bool {
         }
         supported
     })
-}
-
-fn supports_linked_abi(version: u32) -> bool {
-    // Both signed and development archives must match their validated declaration.
-    if option_env!("OP_AUTH_PREBUILT_ABI_VERSION").and_then(|declared| declared.parse::<u32>().ok())
-        != Some(version)
-    {
-        return false;
-    }
-    supports_base_abi(version)
 }
 
 fn linked_abi_version() -> u32 {
@@ -84,14 +74,6 @@ pub(crate) fn collab_ticket_provider() -> &'static dyn CollabTicketProvider {
     }
 }
 
-pub(crate) fn hosted_access_provider() -> &'static dyn crate::HostedAccessProvider {
-    #[cfg(op_auth_hosted_access_prebuilt)]
-    if available() && linked_abi_version() == crate::HOSTED_ACCESS_ABI_VERSION {
-        return crate::real_hosted_access::provider();
-    }
-    &crate::UNAVAILABLE_HOSTED_ACCESS_PROVIDER
-}
-
 pub(crate) fn init(config: &AuthInitConfig) -> bool {
     if !available() {
         return false;
@@ -102,7 +84,6 @@ pub(crate) fn init(config: &AuthInitConfig) -> bool {
         "device_name": config.device_name,
         "platform": crate::platform_id(),
         "app_version": config.app_version,
-        "hosted_product": "openpencil",
     })
     .to_string();
     // SAFETY: pointer/length describe the live `json` buffer.
@@ -160,20 +141,5 @@ pub(crate) fn sign_out() {
     if available() {
         // SAFETY: no pointer arguments.
         unsafe { op_auth_sign_out() };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::supports_linked_abi;
-
-    #[test]
-    fn runtime_abi_handshake_rejects_unknown_and_misdeclared_archives() {
-        assert!(!supports_linked_abi(0));
-        assert!(!supports_linked_abi(5));
-        let declared = env!("OP_AUTH_PREBUILT_ABI_VERSION").parse::<u32>().unwrap();
-        for version in 1..=4 {
-            assert_eq!(supports_linked_abi(version), version == declared);
-        }
     }
 }

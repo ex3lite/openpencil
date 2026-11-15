@@ -46,7 +46,6 @@ fn req() -> DesignRequest {
 
 fn plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "root".into(),
             name: "P".into(),
@@ -59,7 +58,6 @@ fn plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -79,7 +77,6 @@ fn subtask() -> crate::plan::Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -88,26 +85,16 @@ fn subtask() -> crate::plan::Subtask {
 // mounts with `use super::*` so it sees both them and `crate::prompt`.
 #[path = "prompt_components_tests.rs"]
 mod components_tests;
-#[path = "prompt_copy_language_tests.rs"]
-mod copy_language_tests;
 #[path = "prompt_deck_skill_tests.rs"]
 mod deck_skill_tests;
-#[path = "prompt_food_skill_tests.rs"]
-mod food_skill_tests;
-#[path = "prompt_mobile_overlay_tests.rs"]
-mod mobile_overlay_tests;
 #[path = "prompt_overlay_skill_tests.rs"]
 mod overlay_skill_tests;
-#[path = "prompt_palette_tests.rs"]
-mod palette_tests;
 #[path = "prompt_planning_tests.rs"]
 mod planning_tests;
 #[path = "prompt_scroll_skill_tests.rs"]
 mod scroll_skill_tests;
 #[path = "prompt_skill_budget_tests.rs"]
 mod skill_budget_tests;
-#[path = "prompt_source_facts_tests.rs"]
-mod source_facts_tests;
 #[path = "prompt_subagent_content_tests.rs"]
 mod subagent_content_tests;
 #[path = "prompt_timeout_feedback_tests.rs"]

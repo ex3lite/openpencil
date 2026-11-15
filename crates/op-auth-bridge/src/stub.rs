@@ -13,10 +13,6 @@ pub(crate) fn collab_ticket_provider() -> &'static dyn CollabTicketProvider {
     &UNAVAILABLE_COLLAB_TICKET_PROVIDER
 }
 
-pub(crate) fn hosted_access_provider() -> &'static dyn crate::HostedAccessProvider {
-    &crate::UNAVAILABLE_HOSTED_ACCESS_PROVIDER
-}
-
 pub(crate) fn init(_config: &AuthInitConfig) -> bool {
     false
 }

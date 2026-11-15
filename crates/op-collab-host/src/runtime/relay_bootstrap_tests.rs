@@ -7,7 +7,27 @@ use ed25519_dalek::{Signer as _, SigningKey};
 
 use super::*;
 
-pub(super) const NOW: u64 = 1_900_000_000;
+const NOW: u64 = 1_900_000_000;
+
+#[test]
+fn go_signer_golden_envelope_verifies_byte_exactly() {
+    const ENVELOPE: &str = include_str!("relay_bootstrap_testdata/golden-envelope.json");
+    const PAYLOAD: &str = include_str!("relay_bootstrap_testdata/golden-payload.json");
+    const GOLDEN_ROOT_X: &str = "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg";
+    let root = VerifyingKey::from_bytes(&decode_fixed::<32>(GOLDEN_ROOT_X).unwrap()).unwrap();
+    let roots = HashMap::from([("test-collab-root-v1".to_owned(), root)]);
+    let envelope = ENVELOPE.trim_end_matches('\n');
+    let verified =
+        verify_bootstrap(envelope.as_bytes(), &roots, 1_893_456_060, false, true).unwrap();
+    let wire: BootstrapEnvelope = serde_json::from_str(envelope).unwrap();
+    assert_eq!(
+        decode_bounded(&wire.payload, MAX_PAYLOAD_BYTES).unwrap(),
+        PAYLOAD.trim_end_matches('\n').as_bytes()
+    );
+    assert_eq!(verified.generation, 42);
+    assert!(verified.region(RelayRegion::Cn).is_ok());
+    assert!(verified.region(RelayRegion::Global).is_ok());
+}
 
 fn key(kid: &str, bytes: [u8; 32]) -> BootstrapKey {
     BootstrapKey {
@@ -30,7 +50,7 @@ fn noncanonical_ed25519_encoding() -> [u8; 32] {
     panic!("dalek accepted no non-canonical non-weak Ed25519 encoding")
 }
 
-pub(super) fn valid_payload() -> BootstrapPayload {
+fn valid_payload() -> BootstrapPayload {
     let locator_cn = SigningKey::from_bytes(&[11; 32]);
     let locator_global = SigningKey::from_bytes(&[12; 32]);
     let relay_cn = DeviceStaticKey::from_private([21; 32]).unwrap();
@@ -62,11 +82,7 @@ pub(super) fn valid_payload() -> BootstrapPayload {
     }
 }
 
-pub(super) fn signed_envelope(
-    signing: &SigningKey,
-    kid: &str,
-    payload: &BootstrapPayload,
-) -> Vec<u8> {
+fn signed_envelope(signing: &SigningKey, kid: &str, payload: &BootstrapPayload) -> Vec<u8> {
     let payload = serde_json::to_vec(payload).unwrap();
     let mut signing_bytes = BOOTSTRAP_CONTEXT.to_vec();
     signing_bytes.extend_from_slice(&payload);
@@ -79,7 +95,7 @@ pub(super) fn signed_envelope(
     serde_json::to_vec(&envelope).unwrap()
 }
 
-pub(super) fn roots(signing: &SigningKey, kid: &str) -> HashMap<String, VerifyingKey> {
+fn roots(signing: &SigningKey, kid: &str) -> HashMap<String, VerifyingKey> {
     HashMap::from([(kid.to_owned(), signing.verifying_key())])
 }
 

@@ -87,11 +87,6 @@ pub(super) fn progress_label(p: &Progress) -> String {
             "• Plan missed section(s): {} — re-planning",
             missing.join(", ")
         ),
-        // Run-level circuit breaker (motion50 fix 1): the quota message IS the
-        // user-facing reason.
-        Progress::RunAborted { reason } => {
-            format!("• Run aborted: {reason}")
-        }
         Progress::SubtaskSkills {
             id,
             included,
@@ -138,7 +133,6 @@ pub(super) fn progress_label(p: &Progress) -> String {
             repairs,
             records,
             notes,
-            ..
         } => {
             // `_with_records`: this label is the web host's ONLY channel to
             // the user, and it lands in the thinking stream where `▸`
@@ -187,8 +181,6 @@ pub(super) fn progress_label(p: &Progress) -> String {
         }
         Progress::VisualRefFallback { reason } => format!("• Visual-ref fallback: {reason}"),
         Progress::ReferenceUnavailable { reason } => format!("• {reason}"),
-        Progress::VariantReady(variant) => format!("• {} ready", variant.label()),
-        Progress::VariantFailed { name, error, .. } => format!("• {name} failed: {error}"),
         Progress::UnfilledScreens { names } => {
             format!(
                 "• {} screen(s) left unfilled: {}",

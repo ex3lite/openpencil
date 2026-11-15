@@ -37,8 +37,6 @@ pub enum AgentProvider {
     GrokBuild,
     /// DeepSeek Harness (`dsh`) — one-shot subprocess CLI, no ACP.
     DeepSeekHarness,
-    /// Kimi Code CLI (`kimi`) — tool-free generation subprocess.
-    Kimi,
 }
 
 impl AgentProvider {
@@ -46,7 +44,7 @@ impl AgentProvider {
     /// persisted `connected` flags are indexed positionally, so the
     /// DeepSeek Harness slot was appended at the tail and positioned in
     /// the card list via [`AgentProvider::DISPLAY`].
-    pub const ALL: [AgentProvider; 8] = [
+    pub const ALL: [AgentProvider; 7] = [
         AgentProvider::ClaudeCode,
         AgentProvider::CodexCli,
         AgentProvider::OpenCode,
@@ -54,17 +52,15 @@ impl AgentProvider {
         AgentProvider::Antigravity,
         AgentProvider::GrokBuild,
         AgentProvider::DeepSeekHarness,
-        AgentProvider::Kimi,
     ];
 
     /// Card order on the Agents tab — a permutation of `ALL`, NOT the
     /// persistence order. DeepSeek Harness renders after Codex, before
     /// OpenCode (above the generic ACP block).
-    pub const DISPLAY: [AgentProvider; 8] = [
+    pub const DISPLAY: [AgentProvider; 7] = [
         AgentProvider::ClaudeCode,
         AgentProvider::CodexCli,
         AgentProvider::DeepSeekHarness,
-        AgentProvider::Kimi,
         AgentProvider::OpenCode,
         AgentProvider::GithubCopilot,
         AgentProvider::Antigravity,
@@ -89,7 +85,6 @@ impl AgentProvider {
             AgentProvider::Antigravity => "Antigravity",
             AgentProvider::GrokBuild => "Grok Build",
             AgentProvider::DeepSeekHarness => "DeepSeek Harness",
-            AgentProvider::Kimi => "Kimi Code",
         }
     }
     /// i18n key for the provider's subtitle. Paint code resolves
@@ -106,7 +101,6 @@ impl AgentProvider {
             AgentProvider::Antigravity => "settings.provider.antigravity",
             AgentProvider::GrokBuild => "settings.provider.grokBuild",
             AgentProvider::DeepSeekHarness => "settings.provider.deepSeekHarness",
-            AgentProvider::Kimi => "settings.provider.kimi",
         }
     }
 }

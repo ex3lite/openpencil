@@ -126,7 +126,7 @@ mod tests {
         let archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("valid zip");
         archive
             .file_names()
-            .map(|name| name.expect("valid entry name").into_owned())
+            .map(|name| name.expect("name").into_owned())
             .collect()
     }
 
@@ -160,7 +160,6 @@ mod tests {
             model: None,
             cancel: Arc::new(AtomicBool::new(false)),
             run_epoch: 1,
-            hosted_session_epoch: None,
         })
     }
 

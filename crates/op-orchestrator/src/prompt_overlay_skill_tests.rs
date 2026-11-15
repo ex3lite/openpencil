@@ -21,7 +21,6 @@ const WORKED_EXAMPLE_MARKER: &str = "CARD ITEM TEMPLATE — WORKED EXAMPLE";
 /// one "法则" subtask.
 fn card_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -34,7 +33,6 @@ fn card_plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -54,7 +52,6 @@ fn card_subtask() -> crate::plan::Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -70,7 +67,6 @@ fn card_request(model: &str) -> DesignRequest {
 /// A deck subtask for the non-card-intent negative arm.
 fn deck_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "deck".into(),
             name: "Deck".into(),
@@ -83,7 +79,6 @@ fn deck_plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 

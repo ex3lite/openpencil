@@ -47,21 +47,9 @@ mod batch_layered_guidelines;
 #[cfg(test)]
 mod batch_layered_tests;
 mod batch_page;
-mod image_annotation;
-pub use image_annotation::annotate_image_snapshot;
 mod batch_program;
-mod batch_program_dialect;
-#[cfg(test)]
-mod batch_program_dialect_corpus;
-mod batch_program_dialect_fields;
-#[cfg(test)]
-mod batch_program_dialect_tests;
 mod batch_program_error;
 mod batch_program_exec_ops;
-mod batch_program_handle_refs;
-#[cfg(test)]
-mod batch_program_handle_refs_tests;
-mod batch_program_node_parse;
 pub mod batch_program_objects;
 mod batch_program_parse;
 #[cfg(test)]
@@ -113,9 +101,6 @@ pub mod element_tools;
 pub mod extra_read_tools;
 #[cfg(test)]
 mod extra_read_tools_tests;
-#[cfg(feature = "script")]
-pub mod generator_runtime;
-pub mod generator_tools;
 pub mod guidelines_tools;
 pub mod import_common;
 pub mod import_html_tool;
@@ -126,7 +111,6 @@ pub mod import_snapshot_tool;
 mod import_snapshot_tool_tests;
 mod insert_node_args;
 mod insert_node_data;
-pub use insert_node_data::validate_replacement_node_data;
 pub mod json_serializer;
 pub mod lint_tools;
 #[cfg(test)]
@@ -209,7 +193,6 @@ pub use bulk_vars::{
     apply_design_system_snapshot, get_variables_snapshot, set_themes_snapshot,
     set_variables_snapshot, GetVariables, SetThemes, SetVariables,
 };
-pub use codegen_export_tool::{codegen_export_snapshot, codegen_export_targets, CodegenExport};
 pub use codegen_tools::{
     codegen_assemble_snapshot, codegen_clean_snapshot, codegen_plan_snapshot,
     codegen_submit_chunk_snapshot, CodegenAssemble, CodegenClean, CodegenPlan, CodegenSubmitChunk,
@@ -637,3 +620,5 @@ where
         writer.flush()?;
     }
 }
+
+pub use codegen_export_tool::{codegen_export_snapshot, codegen_export_targets, CodegenExport};

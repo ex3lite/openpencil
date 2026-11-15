@@ -24,9 +24,6 @@ harness = false
 
 [features]
 default = []
-# Debug-only Hosted integration with the private ABI-v4 archive.
-# Production continues to require the signed release matrix.
-dev-op-auth-hosted = ["op-auth-bridge/dev-hosted"]
 mcp-debug-tools = ["op-mcp/debug-tools"]
 # Production release lane: a missing reviewed binary cache must fail instead
 # of silently compiling or downloading an unreviewed Skia build.
@@ -83,7 +80,7 @@ role = "Editor"
 # Phase 7.3 reorg: openpencil-shell-core dissolved — widget facade /
 # render-backend / layout scene paths resolve through op-editor-ui.
 op-editor-ui = { path = "../op-editor-ui" }
-op-host-native = { path = "../op-host-native", features = ["gl-host", "bundled-design-fonts"] }
+op-host-native = { path = "../op-host-native", features = ["gl-host"] }
 # Phase 2: the headless daemon crate. The `--serve-web` closure migrates here
 # over Phases 2-5; op-host-desktop's serve-web dispatch + GUI residuals call into
 # it via `op_host_services::*`.
@@ -132,7 +129,7 @@ op-i18n = { path = "../op-i18n" }
 # Phase 7 strangler reorg: the MCP tool registry + JSON-RPC stdio layer
 # (`mcp.rs` + `mcp/*`) was extracted out of the dissolved shell-core into the
 # op-mcp crate; `mcp_serve.rs` registers tools through `op_mcp::*`.
-op-mcp = { path = "../op-mcp", features = ["script"] }
+op-mcp = { path = "../op-mcp" }
 # S3a design orchestrator — driven by `chat_orchestrator.rs` when a chat
 # message classifies as a design request.
 op-orchestrator = { path = "../op-orchestrator" }
@@ -319,10 +316,6 @@ objc2-app-kit = { version = "0.2", default-features = false, features = [
   "NSResponder",
   "NSView",
   "NSWindow",
-  # `NSWorkspace::accessibilityDisplayShouldReduceMotion` — the system
-  # Reduce Motion setting the Studio chrome honours (`src/reduced_motion.rs`).
-  "NSAccessibility",
-  "NSWorkspace",
 ] }
 objc2-foundation = { version = "0.2", default-features = false, features = [
   "std",

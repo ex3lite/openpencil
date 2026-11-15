@@ -30,33 +30,9 @@ pub use model::{
 #[path = "home_surface_connect.rs"]
 mod connect;
 
-#[path = "home_surface_focus.rs"]
-mod focus;
-#[path = "home_surface_variants.rs"]
-mod variants_toggle;
-
-#[path = "home_surface_brand.rs"]
-mod brand_chip;
-
-#[path = "home_surface_input.rs"]
-mod input;
-#[path = "home_surface_reference_manager.rs"]
-mod reference_manager;
-#[path = "home_surface_references.rs"]
-pub(crate) mod references;
-pub use input::HomeInputGeometry;
-
 #[path = "home_surface_layout.rs"]
 pub(crate) mod layout;
-
-#[path = "home_surface_tablet.rs"]
-pub mod tablet;
-#[path = "home_works_list.rs"]
-pub(crate) mod works;
-pub use layout::compact::BOTTOM_NAV_H as HOME_BOTTOM_NAV_H;
-pub use layout::max_scroll_for_mode;
 pub use layout::{HomeLayout, EXPLORE_FAMILIES};
-pub use works::{works_list_layout, CurrentWork, WorksListLayout, WORKS_RECENT_CAP};
 
 /// Top bar height; the page content scrolls under it.
 pub const HOME_TOPBAR_H: f32 = 56.0;
@@ -131,14 +107,9 @@ pub struct HomeSurface<'a> {
     /// Names of the chat composer's staged attachments (the shared
     /// `chat.pending_attachments` list is the single source of truth).
     pub attachment_names: Vec<String>,
-    /// Recent work labels, disambiguated by folder and capped to five
+    /// Recent `.op` files (basename only), capped to the row's five
     /// chips.
     pub recent_files: Vec<String>,
-    /// The 作品 page's recent labels, in `recent_files`
-    /// order so a row index is a `recent_files` index.
-    pub works_recent: Vec<String>,
-    /// The live document as the 作品 page's current-work card.
-    pub current_work: Option<CurrentWork>,
 }
 
 impl<'a> HomeSurface<'a> {
@@ -147,32 +118,33 @@ impl<'a> HomeSurface<'a> {
     }
 
     pub fn for_editor_at(state: &'a EditorState, now_ms: u64) -> Option<Self> {
-        state.editor_ui.home.visible.then(|| {
-            let paths: Vec<_> = state
+        state.editor_ui.home.visible.then(|| Self {
+            id: WidgetId::new(7600),
+            theme: theme_for(&state.editor_ui),
+            state: &state.editor_ui.home,
+            ui: &state.editor_ui,
+            now_ms,
+            chip_label: model::model_chip_label(state),
+            usable_agent: state.has_usable_chat_agent(),
+            attachment_names: state
+                .chat
+                .pending_attachments
+                .iter()
+                .map(|attachment| attachment.name.clone())
+                .collect(),
+            recent_files: state
                 .editor_ui
                 .recent_files
                 .iter()
-                .map(|f| f.path.as_str())
-                .collect();
-            let labels = recent_names::work_labels(&paths);
-            Self {
-                id: WidgetId::new(7600),
-                theme: theme_for(&state.editor_ui),
-                state: &state.editor_ui.home,
-                ui: &state.editor_ui,
-                now_ms,
-                chip_label: model::model_chip_label(state),
-                usable_agent: state.has_usable_chat_agent(),
-                attachment_names: state
-                    .chat
-                    .pending_attachments
-                    .iter()
-                    .map(|attachment| attachment.name.clone())
-                    .collect(),
-                recent_files: labels.iter().take(5).cloned().collect(),
-                works_recent: labels.into_iter().take(WORKS_RECENT_CAP).collect(),
-                current_work: CurrentWork::for_editor(state),
-            }
+                .take(5)
+                .map(|file| {
+                    file.path
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or(&file.path)
+                        .to_string()
+                })
+                .collect(),
         })
     }
 
@@ -211,121 +183,16 @@ impl<'a> HomeSurface<'a> {
     }
 
     pub fn layout(&self, viewport_width: f32, viewport_height: f32) -> HomeLayout {
-        self.layout_at_scroll(viewport_width, viewport_height, self.state.scroll_y)
-    }
-
-    /// [`Self::layout`] as if the page were scrolled to `scroll_y` (clamped
-    /// into range the same way) — the keyboard focus order reads the page
-    /// at the top so a target scrolled under the top bar still counts.
-    pub fn layout_at_scroll(
-        &self,
-        viewport_width: f32,
-        viewport_height: f32,
-        scroll_y: f32,
-    ) -> HomeLayout {
         let chip_w = model::model_chip_width(&self.chip_label);
-        let compact = self.ui.compact_layout();
-        if tablet::is_touch_tablet(self.ui) {
-            let visible_h = (viewport_height - self.ui.keyboard_occlusion.max(0.0)).max(0.0);
-            let max_scroll = self.tablet_max_scroll(viewport_width, visible_h);
-            return self.tablet_layout(
-                viewport_width,
-                viewport_height,
-                scroll_y.clamp(0.0, max_scroll),
-            );
-        }
-        // The page lays out against the full viewport — a software
-        // keyboard covers the bottom, it does not resize the window — but
-        // the band it covers has to come out of the SCROLL RANGE or the
-        // content under it can never be brought into view.
-        let max_scroll = layout::max_scroll_for_mode(
-            viewport_width,
-            (viewport_height - self.ui.keyboard_occlusion.max(0.0)).max(0.0),
-            self.state.task,
-            chip_w,
-            compact,
-            self.ui.locale,
-        );
-        let focused = compact && self.state.composer_focused;
-        let mut layout = layout::layout_for_scrolled_mode(
+        let max_scroll =
+            Self::max_scroll_for(viewport_width, viewport_height, self.state.task, chip_w);
+        Self::layout_for_scrolled(
             viewport_width,
             viewport_height,
             self.state.task,
-            // The scroll still applies while focused: on a short phone the
-            // lifted composer can need the keyboard reveal to bring Send up.
-            scroll_y.clamp(0.0, max_scroll),
+            self.state.scroll_y.clamp(0.0, max_scroll),
             chip_w,
-            compact,
-            self.ui.locale,
-        );
-        if focused {
-            layout::compact::collapse_for_focused_composer(&mut layout);
-        }
-        connect::adapt_connect_card(&mut layout, self.ui);
-        recent_names::adapt_layout(&mut layout, self.recent_files.len(), self.ui.locale);
-        if self.works_page() {
-            layout.open_file = self.works_layout(viewport_width, viewport_height).open_file;
-        }
-        if self.state.variants_unavailable {
-            layout.variants = Rect::ZERO;
-        }
-        layout
-    }
-
-    /// The touch-tablet page: the wide composition with tablet margins
-    /// and the 作品 grid in place of the recent chip row.
-    fn tablet_layout(
-        &self,
-        viewport_width: f32,
-        viewport_height: f32,
-        scroll_y: f32,
-    ) -> HomeLayout {
-        let mut layout = layout::wide_layout_for_scrolled(
-            viewport_width,
-            viewport_height,
-            self.state.task,
-            scroll_y,
-            model::model_chip_width(&self.chip_label),
-            self.ui.locale,
-            tablet::TABLET_PAD_X,
-        );
-        tablet::adapt_layout(
-            &mut layout,
-            self.current_work.is_some(),
-            self.works_recent.len(),
-        );
-        connect::adapt_connect_card(&mut layout, self.ui);
-        if self.state.variants_unavailable {
-            layout.variants = Rect::ZERO;
-        }
-        layout
-    }
-
-    /// The tablet page's furthest scroll for a `visible_h`-tall view
-    /// (the viewport minus any software keyboard).
-    pub fn tablet_max_scroll(&self, viewport_width: f32, visible_h: f32) -> f32 {
-        let layout = self.tablet_layout(viewport_width, visible_h, 0.0);
-        (layout.recent.origin.y + layout.recent.size.y + tablet::PAGE_PAD_BOTTOM - visible_h)
-            .max(0.0)
-    }
-
-    /// The tablet 作品 grid for `layout` (`None` off tablets).
-    pub fn works_grid(&self, layout: &HomeLayout) -> Option<tablet::WorksGrid> {
-        tablet::is_touch_tablet(self.ui).then(|| {
-            tablet::works_grid(
-                layout.recent.origin.x,
-                layout.recent.origin.y,
-                layout.recent.size.x,
-                self.current_work.is_some(),
-                self.works_recent.len(),
-            )
-        })
-    }
-
-    /// Whether the phone's 作品 page is on show (compact only; a wide
-    /// Home has no bottom nav to reach it from).
-    pub fn works_page(&self) -> bool {
-        self.state.works_open && self.ui.compact_layout()
+        )
     }
 
     /// The active task's example prompt — what 使用这个示例 fills.
@@ -339,57 +206,6 @@ impl<'a> HomeSurface<'a> {
         copy::task_copy(self.ui.locale, family, self.state.draft_for(family)).example
     }
 
-    /// What the Send button does right now. Paint and the host's press
-    /// both read this, so the label never promises a different action
-    /// than the press takes.
-    pub fn send_mode(&self) -> op_editor_core::HomeSendMode {
-        self.state
-            .send_mode(self.example_prompt(), self.usable_agent)
-    }
-
-    /// Whether the Send button's "the example will be used" hint shows:
-    /// hovering the button while the box is still empty.
-    pub fn send_example_hint_visible(&self) -> bool {
-        self.state.hover == Some(HomeHit::Send)
-            && self.state.draft.trim().is_empty()
-            && self.send_mode() == op_editor_core::HomeSendMode::UseExample
-    }
-
-    /// The i18n key of the tooltip floating over the Send button, if any:
-    /// a website import's timed failure, the import explanation while a
-    /// link-only draft's button is hovered, else the example hint.
-    pub fn send_hint_key(&self) -> Option<&'static str> {
-        let import = &self.state.site_import;
-        if import.hint_visible(self.now_ms) {
-            return Some("home.siteImport.failed");
-        }
-        let hovered = self.state.hover == Some(HomeHit::Send);
-        if hovered
-            && !import.is_importing()
-            && self.send_mode() == op_editor_core::HomeSendMode::ImportSite
-        {
-            return Some("home.siteImport.hint");
-        }
-        self.send_example_hint_visible()
-            .then_some("home.submit.exampleHint")
-    }
-
-    /// The Send label's i18n key for the current mode.
-    pub fn send_label_key(&self) -> &'static str {
-        copy::send_label_key(self.send_mode(), self.state.site_import.is_importing())
-    }
-
-    /// The brand chip and its remove button, when a brand is being read or
-    /// is staged (`None` otherwise).
-    pub fn brand_chip_rects(
-        &self,
-        viewport_width: f32,
-        viewport_height: f32,
-    ) -> Option<(Rect, Rect)> {
-        let layout = self.layout(viewport_width, viewport_height);
-        brand_chip::chip_rects(self, layout.input_box)
-    }
-
     pub fn hit_test(
         &self,
         viewport_width: f32,
@@ -397,62 +213,21 @@ impl<'a> HomeSurface<'a> {
         point: Point2D,
     ) -> Option<HomeHit> {
         let layout = self.layout(viewport_width, viewport_height);
-        self.hit_test_layout(viewport_width, viewport_height, &layout, point)
-    }
-
-    /// Hit-test against a prebuilt `layout` (the focus order validates
-    /// its targets against the unscrolled page).
-    pub fn hit_test_layout(
-        &self,
-        viewport_width: f32,
-        viewport_height: f32,
-        layout: &HomeLayout,
-        point: Point2D,
-    ) -> Option<HomeHit> {
         // The 接入卡 is modal over the whole surface: presses inside its
         // rows act, presses anywhere else (even on Home chrome) close it.
         if self.state.connect_card_open {
-            return Some(connect::connect_card_hit(layout, point).unwrap_or(HomeHit::ConnectClose));
+            return Some(
+                connect::connect_card_hit(&layout, point).unwrap_or(HomeHit::ConnectClose),
+            );
         }
-        if self.state.references_open {
-            return Some(reference_manager::hit(self, layout.viewport, point));
-        }
-        // A touch tablet grows the desktop-sized targets to 44 pt.
-        let tablet = tablet::is_touch_tablet(self.ui);
-        let hits = |rect: Rect| tablet::hits(tablet, rect, point);
-        if hits(layout.professional) {
+        if layout.professional.contains(point) {
             return Some(HomeHit::Professional);
         }
-        if layout.mode_normal.size.y > 0.0 && layout.mode_normal.contains(point) {
-            return Some(HomeHit::ModeNormal);
-        }
-        // The compact top bar's settings gear shares the bottom nav's
-        // settings destination.
-        if layout.settings.size.y > 0.0 && layout.settings.contains(point) {
-            return Some(HomeHit::NavSettings);
-        }
-        if hits(layout.open_file) {
+        if layout.open_file.contains(point) {
             return Some(HomeHit::OpenFile);
         }
-        if self.ui.account_ui_available && hits(layout.account) {
+        if self.ui.account_ui_available && layout.account.contains(point) {
             return Some(HomeHit::Account);
-        }
-        // The compact bottom nav (创作 / 作品 / 设置) is pinned chrome
-        // painted over the scrolling page, so it answers before any
-        // page target.
-        for (index, rect) in layout.nav_items.iter().enumerate() {
-            if rect.size.y > 0.0 && rect.contains(point) {
-                return Some(match index {
-                    0 => HomeHit::NavCreate,
-                    1 => HomeHit::NavProjects,
-                    _ => HomeHit::NavSettings,
-                });
-            }
-        }
-        // The 作品 page replaces the whole 创作 column under the chrome.
-        if self.works_page() {
-            let works = self.works_layout(viewport_width, viewport_height);
-            return self.works_hit(&works, point);
         }
         if self.state.more_open && layout.more_popover.contains(point) {
             for (index, rect) in layout.more_rows.iter().enumerate() {
@@ -463,7 +238,7 @@ impl<'a> HomeSurface<'a> {
             }
             return Some(HomeHit::More);
         }
-        if hits(layout.more_button) {
+        if layout.more_button.contains(point) {
             return Some(HomeHit::More);
         }
         for (index, rect) in layout.tabs.into_iter().enumerate() {
@@ -471,13 +246,8 @@ impl<'a> HomeSurface<'a> {
                 return Some(HomeHit::Tab(HomeFamily::ALL[index]));
             }
         }
-        for (index, rect) in layout.app_page_options.into_iter().enumerate() {
-            if rect.size.x > 0.0 && rect.contains(point) {
-                return Some(HomeHit::Segment(index as u8 + 2));
-            }
-        }
         for (index, rect) in layout.segment_options.into_iter().enumerate() {
-            if rect.size.x > 0.0 && hits(rect) {
+            if rect.size.x > 0.0 && rect.contains(point) {
                 return Some(HomeHit::Segment(index as u8));
             }
         }
@@ -489,7 +259,7 @@ impl<'a> HomeSurface<'a> {
                 return Some(HomeHit::ReplaceKeep);
             }
         }
-        if hits(layout.use_example) {
+        if layout.use_example.contains(point) {
             // While a workspace is active on this document the footer
             // link returns to it instead of offering the example.
             return Some(if self.ui.workspace.active {
@@ -501,28 +271,17 @@ impl<'a> HomeSurface<'a> {
         if layout.send.contains(point) {
             return Some(HomeHit::Send);
         }
-        if hits(layout.model_chip) {
+        if layout.model_chip.contains(point) {
             return Some(HomeHit::ModelChip);
         }
-        if hits(layout.screenshot) {
+        if layout.screenshot.contains(point) {
             return Some(HomeHit::Attachment);
         }
-        if hits(layout.reference_link) {
+        if layout.reference_link.contains(point) {
             return Some(HomeHit::ReferenceLink);
         }
-        if hits(layout.figma) {
+        if layout.figma.contains(point) {
             return Some(HomeHit::Figma);
-        }
-        if layout.variants.size.x > 0.0 && hits(layout.variants) {
-            return Some(HomeHit::Variants);
-        }
-        if let Some((_, close)) = brand_chip::chip_rects(self, layout.input_box) {
-            if close.contains(point) {
-                return Some(HomeHit::BrandClear);
-            }
-        }
-        if references::manage_rect(self, layout.input_box).is_some_and(|r| r.contains(point)) {
-            return Some(HomeHit::References);
         }
         if layout.input_box.contains(point) {
             return Some(HomeHit::Sheet);
@@ -535,15 +294,8 @@ impl<'a> HomeSurface<'a> {
                     .map(HomeHit::ExploreCard);
             }
         }
-        if hits(layout.new_canvas) {
+        if layout.new_canvas.contains(point) {
             return Some(HomeHit::NewCanvas);
-        }
-        if let Some(grid) = self.works_grid(layout) {
-            return grid
-                .cards
-                .iter()
-                .find(|(_, rect)| rect.contains(point))
-                .map(|(hit, _)| *hit);
         }
         if layout.recent.size.y > 0.0 {
             for (index, rect) in layout.recent_chips.iter().enumerate() {
@@ -553,6 +305,35 @@ impl<'a> HomeSurface<'a> {
             }
         }
         None
+    }
+
+    /// The IME caret rect inside the composer's input box.
+    pub fn focused_input_caret_rect(&self, viewport_width: f32, viewport_height: f32) -> Rect {
+        let layout = self.layout(viewport_width, viewport_height);
+        let text = self.state.input.text();
+        let caret = jian_core::text_input::prev_char_boundary(
+            text,
+            self.state.input.caret().min(text.len()),
+        );
+        // Single-line estimate on the first wrapped row; the IME panel
+        // only needs a stable anchor near the caret.
+        let x = layout.input_box.origin.x
+            + 14.0
+            + (text[..caret].chars().count() as f32 * 8.0).min(layout.input_box.size.x - 16.0);
+        Rect::xywh(x, layout.input_box.origin.y + 13.0, 1.5, 20.0)
+    }
+
+    /// Map a press inside the input box to a caret byte offset
+    /// (single-line estimate, matching the caret anchor above).
+    pub fn input_offset_at(
+        &self,
+        viewport_width: f32,
+        viewport_height: f32,
+        point: Point2D,
+    ) -> Option<usize> {
+        let rect = self.layout(viewport_width, viewport_height).input_box;
+        rect.contains(point)
+            .then_some(self.state.input.text().len())
     }
 }
 
@@ -578,21 +359,12 @@ impl Widget for HomeSurface<'_> {
     }
 }
 
-#[path = "home_surface_recent.rs"]
-mod recent_names;
-
-#[path = "home_surface_app_pages.rs"]
-mod app_pages;
-
 #[path = "home_surface_paint.rs"]
 mod paint;
 
 impl HomeSurface<'_> {
     fn paint_home(&self, cx: &mut PaintCx<'_>, rect: Rect) {
         paint::paint_home(self, cx, rect);
-        if self.state.references_open {
-            reference_manager::paint(self, cx, &self.layout(rect.size.x, rect.size.y));
-        }
     }
 }
 
@@ -603,10 +375,6 @@ mod tests;
 #[cfg(test)]
 #[path = "home_surface_layout_tests.rs"]
 mod layout_tests;
-
-#[cfg(test)]
-#[path = "home_surface_compact_layout_tests.rs"]
-mod compact_layout_tests;
 
 #[cfg(test)]
 #[path = "home_surface_motion_tests.rs"]

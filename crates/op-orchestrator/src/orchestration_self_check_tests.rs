@@ -83,66 +83,6 @@ fn generated_nodes_reject_missing_progress_ring_without_auto_drawing() {
         "{report:?}"
     );
 }
-
-fn ring_card_without_a_ring() -> Vec<PenNode> {
-    // arena-m02 0927c run-2: "今日目标环形进度" lost its whole hero card
-    // after every attempt hit missing-progress-ring.
-    serde_json::from_value(json!([{
-        "type": "frame", "id": "goal-card", "name": "Goal Card",
-        "width": "fill_container", "layout": "vertical", "children": [{
-            "type": "frame", "id": "calorie-ring", "name": "Calorie Ring",
-            "width": 160, "height": 160, "layout": "vertical",
-            "alignItems": "center", "justifyContent": "center", "children": [
-                {"type": "text", "id": "value", "content": "480"},
-                {"type": "text", "id": "label", "content": "/ 720 kcal progress"}
-            ]
-        }]
-    }]))
-    .expect("parse nodes")
-}
-
-#[test]
-fn the_final_attempt_paints_the_missing_ring_instead_of_dropping_the_section() {
-    let mut nodes = ring_card_without_a_ring();
-    assert!(check_generated_nodes(&nodes, 390.0).has_fatal());
-
-    assert!(paint_missing_progress_rings(&mut nodes));
-    let report = check_generated_nodes(&nodes, 390.0);
-    assert!(
-        !report.failure_message().contains("missing-progress-ring"),
-        "{report:?}"
-    );
-    let ring = &serde_json::to_value(&nodes).expect("serialize")[0]["children"][0];
-    assert_eq!(ring["cornerRadius"], json!(80.0));
-    assert_eq!(ring["stroke"]["fill"][0]["color"], json!("$--primary"));
-}
-
-#[test]
-fn only_the_last_rung_paints_a_missing_ring() {
-    let mut early = ring_card_without_a_ring();
-    let rejected = crate::subagent_self_check::gate_generated_nodes(
-        &mut early,
-        390.0,
-        "fitness app home",
-        "goal-ring",
-        IntentCheckMode::Reject,
-    );
-    assert!(
-        rejected.is_err(),
-        "an early attempt still asks for a real arc"
-    );
-
-    let mut last = ring_card_without_a_ring();
-    let accepted = crate::subagent_self_check::gate_generated_nodes(
-        &mut last,
-        390.0,
-        "fitness app home",
-        "goal-ring",
-        IntentCheckMode::Advisory,
-    );
-    assert_eq!(accepted, Ok(()));
-}
-
 #[test]
 fn flags_mobile_product_row_that_will_clip_cards() {
     let nodes = json!([
@@ -312,31 +252,6 @@ fn allows_mobile_category_row_with_space_between() {
     assert!(
         !report.has_fatal(),
         "space_between on a category row must be allowed now: {report:?}"
-    );
-}
-
-#[test]
-fn a_featured_comment_card_with_an_avatar_is_not_a_food_card() {
-    // arena-m05 0929 (GLM + Gemini): comment rows named like featured cards
-    // failed every rung on mobile-featured-card-bad-split.
-    let nodes = json!([{
-        "type": "frame", "id": "hot-comment", "name": "热门评论 Card", "role": "card",
-        "width": "fill_container", "layout": "horizontal", "gap": 12,
-        "children": [
-            {"type": "image", "id": "avatar", "width": 40, "height": 40, "cornerRadius": 20,
-             "imageSearchQuery": "portrait"},
-            {"type": "frame", "id": "body", "width": 260, "layout": "vertical", "children": [
-                {"type": "text", "id": "nick", "content": "晚风吹过橘子海"},
-                {"type": "text", "id": "text", "content": "这张的光太好了"}
-            ]}
-        ]
-    }]);
-    let report = check_value_forest(&nodes, 390.0);
-    assert!(
-        !report
-            .failure_message()
-            .contains("mobile-featured-card-bad-split"),
-        "{report:?}"
     );
 }
 
@@ -629,58 +544,5 @@ fn a_hero_among_isomorphic_siblings_is_not_echoed() {
     assert!(
         !report.has_fatal(),
         "a hero among a majority-consistent family is exempt: {report:?}"
-    );
-}
-
-fn dish_row(action_size: f64) -> serde_json::Value {
-    json!([
-        {
-            "type": "frame",
-            "id": "dish-row-1",
-            "name": "菜品行-招牌汉堡",
-            "width": "fill_container",
-            "height": "fit_content",
-            "layout": "horizontal",
-            "gap": 12,
-            "children": [
-                {"type": "image", "id": "dish-photo", "width": 80, "height": 80,
-                 "imageSearchQuery": "burger"},
-                {
-                    "type": "frame",
-                    "id": "dish-info",
-                    "width": "fill_container",
-                    "layout": "vertical",
-                    "children": [
-                        {"type": "text", "id": "dish-name", "content": "招牌双层牛肉堡"},
-                        {"type": "text", "id": "dish-price", "content": "¥32"}
-                    ]
-                },
-                {
-                    "type": "frame",
-                    "id": "add-button",
-                    "name": "加入按钮",
-                    "width": action_size,
-                    "height": action_size,
-                    "children": [{"type": "icon_font", "iconFontName": "plus"}]
-                }
-            ]
-        }
-    ])
-}
-
-#[test]
-fn accepts_a_thumbnail_dish_row_whose_text_column_fills_the_rest() {
-    let report = check_value_forest(&dish_row(28.0), 375.0);
-    assert!(!report.has_fatal(), "{report:?}");
-}
-
-#[test]
-fn a_thumbnail_dish_row_with_an_oversized_square_action_is_still_rejected() {
-    let report = check_value_forest(&dish_row(64.0), 375.0);
-    assert!(
-        report
-            .failure_message()
-            .contains("mobile-featured-card-bad-split"),
-        "{report:?}"
     );
 }

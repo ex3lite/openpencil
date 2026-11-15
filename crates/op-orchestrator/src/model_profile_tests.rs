@@ -39,31 +39,6 @@ fn kimi_k3_uses_low_reasoning_effort_instead_of_thinking() {
     }
 }
 
-#[test]
-fn glm_flashx_reduces_always_on_reasoning_without_disabling_it() {
-    for model in [
-        "glm-5.3-flashx",
-        "GLM-5.3-FlashX",
-        "bigmodel/glm-5.3-flashx",
-    ] {
-        let profile = resolve_model_profile(model);
-        assert_eq!(profile.label, "GLM-5.3-FlashX", "{model}");
-        assert_eq!(profile.tier, ModelTier::Full, "{model}");
-        assert!(profile.thinking_disabled, "{model}");
-        assert_eq!(
-            reasoning_wire_control(model),
-            Some(ReasoningWireControl::ReasoningEffortLow),
-            "{model}"
-        );
-        assert!(!accepts_thinking_body_field(model), "{model}");
-    }
-    // Coding Plan's ordinary Flash compatibility remains independently tested.
-    assert_eq!(
-        reasoning_wire_control("glm-5.3-flash"),
-        Some(ReasoningWireControl::ThinkingDisabled)
-    );
-}
-
 /// The capability table must cover every model whose profile asks for
 /// thinking off — otherwise the profile's intent is silently dropped at
 /// the wire, which is exactly how deepseek-v4-pro regressed.
@@ -303,12 +278,6 @@ fn glm_version_lane_entries() {
     // (HTTP 400 code 1210 since 2026-09-03), so the field is never sent.
     assert!(!five_three.thinking_disabled);
     assert_eq!(five_three.timeout_multiplier, 3.0);
-    // The Flash variant is NOT always-thinking: it accepts the field, and
-    // left thinking it spends the whole output budget on reasoning.
-    let flash = resolve_model_profile("glm-5.3-flash");
-    assert!(flash.thinking_disabled);
-    assert_eq!(flash.tier, ModelTier::Full);
-    assert_eq!(flash.timeout_multiplier, 2.0);
     // Vendor prefix (ark/) hits the same rows.
     assert_eq!(resolve_model_profile("ark/glm-5.3").tier, ModelTier::Full);
     assert_eq!(resolve_model_profile("ark/glm-5.3").timeout_multiplier, 3.0);

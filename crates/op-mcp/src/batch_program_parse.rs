@@ -1,16 +1,49 @@
 //! Lenient JSON argument parsing for the `batch_design` DSL executor:
-//! the strict-then-repair `parse_json_arg` pipeline and its bracket /
-//! quote repair helpers.
+//! the strict-then-repair `parse_json_arg` pipeline, its bracket /
+//! quote repair helpers, and the node-body → `PenNode` step.
 //!
 //! Split out of `batch_program.rs` to stay under the 800-line cap.
 
+use jian_ops_schema::node::PenNode;
 use regex::Regex;
 use serde_json::Value;
 
+use super::batch_design::{ensure_node_ids, normalize_node_shape};
 use super::batch_program::Result;
 use super::batch_program_error::ProgramError;
 
-// The node-body -> `PenNode` step lives in `batch_program_node_parse.rs`.
+// --- Node JSON --------------------------------------------------------
+
+/// Parse + normalize an I()/R() node body into a `PenNode` with authored ids
+/// filled in (the caller remaps them to final ids). `document_root` controls
+/// the one refine pass that is valid only for a real document root; child
+/// insertion payloads still receive every subtree-safe post-process fix.
+pub(crate) fn parse_node_json(
+    raw: &str,
+    post_process: bool,
+    document_root: bool,
+) -> Result<PenNode> {
+    let mut value = parse_json_arg(raw)?;
+    if !value.is_object() {
+        return Err(ProgramError::Json("node data must be a JSON object".into()));
+    }
+    normalize_node_shape(&mut value);
+    let mut tmp = 1usize;
+    ensure_node_ids(&mut value, &mut tmp);
+    let mut node: PenNode = serde_json::from_value(value)
+        .map_err(|e| ProgramError::InvalidNode(format!("invalid PenNode payload: {e}")))?;
+    if post_process {
+        // TS postProcess hooks (emoji strip, unique ids, layout-child
+        // position sanitize, screen-bounds clamp) — the deterministic
+        // subset shipped in `command_refine.rs`.
+        if document_root {
+            let _ = op_editor_core::command_refine::refine_subtree(&mut node);
+        } else {
+            let _ = op_editor_core::command_refine::refine_child_subtree(&mut node);
+        }
+    }
+    Ok(node)
+}
 
 /// TS `parseJsonArg` — strict JSON first, then the lenient agent-typo
 /// pipeline: quote unquoted keys, single→double quote delimiters,

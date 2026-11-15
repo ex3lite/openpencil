@@ -213,22 +213,8 @@ impl WidgetHostNative {
         // overlays Home itself opens (agent settings, sign-in modal, the
         // Home-anchored model picker) paint ABOVE the takeover, so their
         // presses must arrive first.
-        if let Some(consumed) = self.press_home_overlays(
-            x,
-            y,
-            viewport_width,
-            viewport_height,
-            allow_touch_panel_defer,
-        ) {
+        if let Some(consumed) = self.press_home_overlays(x, y, viewport_width, viewport_height) {
             return consumed;
-        }
-        // Touch + compact Home defers its taps to release so a one-finger
-        // drag can scroll the page column (desktop keeps the immediate
-        // press — the arm declines without touch chrome).
-        if allow_touch_panel_defer
-            && self.begin_home_touch_gesture(x, y, viewport_width, viewport_height)
-        {
-            return true;
         }
         if let Some(consumed) = self.press_home(x, y, viewport_width, viewport_height) {
             return consumed;
@@ -346,21 +332,13 @@ impl WidgetHostNative {
         }
         // Tier 3 — image-fill popover, StatusBar, resize gutter, and the
         // model-picker slice that lifts above the TopBar.
-        if let Some(consumed) = self.press_rail_overlay_tiers(&ctx, allow_touch_panel_defer) {
+        if let Some(consumed) = self.press_rail_overlay_tiers(&ctx) {
             return consumed;
         }
         // Tier 3b — an open touch surface owns its outside scrim and close
         // affordance before app-bar/page/dock controls can claim the tap.
         if !self.preview_slideshow_active() {
             if let Some(consumed) = self.press_mobile_modal_surface_tier(&ctx) {
-                return consumed;
-            }
-        }
-        // Tier 3c′ — the phone works reader is a takeover: every press
-        // inside it is its own unless an open sheet (tier 3b above, the
-        // chat tiers below) owns the point.
-        if !presenting {
-            if let Some(consumed) = self.press_works_reader(x, y, viewport_width, viewport_height) {
                 return consumed;
             }
         }
@@ -395,7 +373,7 @@ impl WidgetHostNative {
             return consumed;
         }
         // Tier 7 — model picker, theme presets, VariablesPanel.
-        if let Some(consumed) = self.press_panel_dispatch_tiers(&ctx, allow_touch_panel_defer) {
+        if let Some(consumed) = self.press_panel_dispatch_tiers(&ctx) {
             return consumed;
         }
         // Tier 8 — PropertyPanel input row.

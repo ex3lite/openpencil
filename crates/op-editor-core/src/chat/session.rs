@@ -23,17 +23,16 @@ impl ChatState {
     ///
     /// [`available_models`]: ChatState::available_models
     /// [`discovered_models`]: ChatState::discovered_models
-    pub fn rebuild_available_models(&mut self, connected: &[bool; 8]) {
+    pub fn rebuild_available_models(&mut self, connected: &[bool; 7]) {
         let prev = self.available_models.get(self.selected_model).cloned();
         self.available_models = self
             .discovered_models
             .iter()
             .filter(|m| {
-                m.hosted.is_none()
-                    && AgentProvider::ALL
-                        .iter()
-                        .position(|p| *p == m.provider)
-                        .is_some_and(|i| connected[i])
+                AgentProvider::ALL
+                    .iter()
+                    .position(|p| *p == m.provider)
+                    .is_some_and(|i| connected[i])
             })
             .cloned()
             .collect();
@@ -43,7 +42,6 @@ impl ChatState {
                     m.provider == p.provider
                         && m.value == p.value
                         && m.builtin_provider_id == p.builtin_provider_id
-                        && m.hosted == p.hosted
                 })
             })
             .unwrap_or(0);
@@ -71,8 +69,7 @@ impl ChatState {
     /// may be queued with text, with staged attachments, or both
     /// (TS parity: an attachment-only message is sendable).
     pub fn begin_send(&mut self) -> bool {
-        // An explicit send confirms the text visible in the IME, including preedit.
-        let trimmed = self.input.effective_text().trim().to_string();
+        let trimmed = self.input.text().trim().to_string();
         if trimmed.is_empty() && self.pending_attachments.is_empty() {
             return false;
         }
@@ -81,9 +78,6 @@ impl ChatState {
         // (measured, user report 2026-07-12). Design runs later restamp
         // this with the run's agent persona (canvas cursor parity).
         let agent_name = self.selected_model_entry().map(|entry| {
-            if entry.hosted.is_some() {
-                return "OpenPencil".to_string();
-            }
             entry
                 .builtin_provider_display_name
                 .clone()
@@ -127,39 +121,6 @@ impl ChatState {
         self.transcript_scroll.offset = 0.0;
         self.pending_send = Some(trimmed);
         true
-    }
-
-    /// [`Self::begin_send`], but the transcript shows `shown` instead of
-    /// the queued prompt. Engineered turns (the Studio draft refine wraps
-    /// the user's brief in model instructions) keep the exact prompt in
-    /// `pending_send` for the provider, while the user bubble carries the
-    /// user's own words — in whatever language they typed them — rather
-    /// than instructions written for the model. An empty `shown` falls
-    /// back to the prompt.
-    pub fn begin_send_showing(&mut self, shown: &str) -> bool {
-        let sent = self.begin_send();
-        if sent {
-            self.show_last_user_message_as(shown);
-        }
-        sent
-    }
-
-    /// Rewrite the newest user bubble to `shown` (trimmed; empty is a
-    /// no-op). Only the transcript changes — a queued `pending_send`
-    /// keeps the prompt the provider receives.
-    pub fn show_last_user_message_as(&mut self, shown: &str) {
-        let shown = shown.trim();
-        if shown.is_empty() {
-            return;
-        }
-        if let Some(user) = self
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|message| message.role == ChatRole::User)
-        {
-            user.content = shown.to_string();
-        }
     }
 
     pub fn has_streaming_turn(&self) -> bool {
@@ -224,7 +185,6 @@ impl ChatState {
     /// Start a fresh chat transcript and ask the host to abort any
     /// in-flight worker tied to the previous conversation.
     pub fn new_chat(&mut self) {
-        self.runtime_instance = ChatInstanceId::default();
         self.messages.clear();
         self.title = DEFAULT_CHAT_TITLE.to_string();
         self.input.set_text("");
@@ -242,13 +202,6 @@ impl ChatState {
 
     pub fn queue_copy_text(&mut self, text: impl Into<String>) {
         self.pending_copy_text = Some(text.into());
-    }
-
-    /// Title an untitled conversation after `prompt` — for turns whose sent
-    /// text is a wrapper around the user's words (a Home refine brief), so
-    /// the title reads as the request rather than the wrapper's preamble.
-    pub fn title_from_prompt_if_untitled(&mut self, prompt: &str) {
-        self.auto_title_from_prompt(prompt);
     }
 
     fn auto_title_from_prompt(&mut self, prompt: &str) {

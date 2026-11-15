@@ -34,12 +34,6 @@ pub(crate) use launch::launch_design::{
     builtin_provider_with_design_tools, design_turn_thinking_mode,
 };
 
-pub(crate) fn hosted_epoch_is_current(epoch: Option<u64>) -> bool {
-    epoch.is_none_or(|epoch| {
-        epoch != 0 && op_auth_bridge::hosted_access_provider().session_epoch() == epoch
-    })
-}
-
 /// Finalize-lifecycle invariant (0718-1-k3-1 postmortem): a design-loop
 /// session must never be dropped/replaced without at least one best-effort
 /// structural finalize pass over the live document. `run_loop_finalize`
@@ -70,10 +64,7 @@ pub(crate) fn finalize_design_session_if_needed(
     let Some(session) = session.as_ref() else {
         return;
     };
-    if !hosted_epoch_is_current(session.hosted_session_epoch())
-        || !session.is_design_loop()
-        || session.loop_finalized()
-    {
+    if !session.is_design_loop() || session.loop_finalized() {
         return;
     }
     if !host.gate_collaboration_action(
@@ -137,22 +128,6 @@ fn pump_with_channel_interleave(
     viewport_size: (f32, f32),
     between_channel_observations: impl FnOnce(),
 ) -> bool {
-    if current
-        .as_ref()
-        .is_some_and(|session| !hosted_epoch_is_current(session.hosted_session_epoch()))
-    {
-        *current = None;
-        for message in &mut host
-            .editor_state_mut()
-            .chat
-            .run_tab_mut(running_tab)
-            .messages
-        {
-            message.streaming = false;
-        }
-        host.mark_editor_state_dirty();
-        return true;
-    }
     let Some(session) = current.as_mut() else {
         return false;
     };
@@ -226,35 +201,31 @@ fn pump_with_channel_interleave(
     changed
 }
 
-#[cfg(test)]
-#[path = "hosted_session_guard_tests.rs"]
-mod hosted_session_guard_tests;
-
 fn agent_message_index(
     messages: &[ChatMessage],
     agent_identity: Option<(&str, &str)>,
 ) -> Option<usize> {
-    let turn_start = messages
-        .iter()
-        .rposition(|message| message.role == ChatRole::User)
-        .map_or(0, |index| index + 1);
-    let turn = &messages[turn_start..];
-    let index = match agent_identity {
-        Some((name, color)) => turn.iter().rposition(|message| {
-            message.role == ChatRole::Assistant
-                && message.agent_name.as_deref() == Some(name)
-                && message.agent_color.as_deref() == Some(color)
-        }),
-        None => {
-            // begin_send creates the primary bubble before any subagents.
-            // Its design persona can also have a color, so color is not an
-            // ownership marker. Never fall back into a previous user turn.
-            turn.iter().position(|message| {
-                message.role == ChatRole::Assistant && message.design_worker_group.is_none()
-            })
-        }
+    let matching = |message: &&ChatMessage| {
+        message.role == ChatRole::Assistant
+            && match agent_identity {
+                Some((name, color)) => {
+                    message.agent_name.as_deref() == Some(name)
+                        && message.agent_color.as_deref() == Some(color)
+                }
+                None => message.agent_color.is_none(),
+            }
     };
-    index.map(|index| turn_start + index)
+    messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, message)| matching(message))
+        .map(|(index, _)| index)
+        .or_else(|| {
+            messages
+                .iter()
+                .rposition(|message| message.role == ChatRole::Assistant)
+        })
 }
 
 fn allow_ai_bulk_write(host: &mut WidgetHostNative) -> bool {

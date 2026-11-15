@@ -470,7 +470,6 @@ fn a_non_card_intent_prompt_omits_the_card_contract_rules() {
 /// card domain skill must fire on).
 fn card_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -483,7 +482,6 @@ fn card_plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -503,7 +501,6 @@ fn card_subtask() -> crate::plan::Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -521,7 +518,6 @@ fn card_request(model: &str) -> DesignRequest {
 /// keyword-gated skills.
 fn deck_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "deck".into(),
             name: "Deck".into(),
@@ -534,7 +530,6 @@ fn deck_plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -554,7 +549,6 @@ fn deck_subtask() -> crate::plan::Subtask {
         screen: Some("封面".into()),
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }

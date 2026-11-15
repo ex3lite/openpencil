@@ -64,9 +64,6 @@ impl ChatProvider for QueuedProvider {
 fn new_design_request(user: &str, attachments: Vec<ChatAttachment>) -> WebStandardTurnRequest {
     WebStandardTurnRequest {
         ai: AiStreamRequest {
-            hosted_route_id: None,
-            history: Vec::new(),
-            attachments: Vec::new(),
             provider: None,
             builtin_provider_id: None,
             model: "test-model".into(),
@@ -80,15 +77,11 @@ fn new_design_request(user: &str, attachments: Vec<ChatAttachment>) -> WebStanda
         document_json: None,
         editor_meta: None,
         selected_ids: Vec::new(),
-        workspace_visible: false,
-        workspace_selected: 0,
         active_page_id: None,
         agent_team_size: None,
         history: Vec::new(),
         attachments,
         transient_builtin: None,
-        launch_route: op_editor_core::LaunchRoute::Auto,
-        locale: None,
     }
 }
 
@@ -99,7 +92,7 @@ fn rejected_reference_is_reported_and_new_design_still_runs() {
     let hub = SseHub::default();
     let snapshot = state.lock().expect("state").editor.clone();
     let provider = QueuedProvider::new(&[
-        r#"{"sharedContext":{},"rootFrame":{"id":"root","name":"Page","width":375,"height":200,"layout":"vertical"},"subtasks":[{"id":"hero","label":"Hero","elements":"headline","region":{"width":375,"height":200}}]}"#,
+        r#"{"rootFrame":{"id":"root","name":"Page","width":375,"height":200,"layout":"vertical"},"subtasks":[{"id":"hero","label":"Hero","elements":"headline","region":{"width":375,"height":200}}]}"#,
         r#"I(null,{"type":"frame","name":"Hero","x":0,"y":0,"width":375,"height":200,"children":[{"type":"text","content":"Home","fontSize":18}]});"#,
     ]);
     let mut out = Vec::new();
@@ -151,7 +144,7 @@ Calm and focused.
 - **Blue** (#2563EB) — Primary action
 <<<SKELETON>>>
 {"source":"screenshot","width":1440,"sections":[{"role":"navbar","heightRatio":0.05,"childCount":3,"layout":"horizontal","hasImage":false}],"navKind":"topBar","heroKind":"split","columnRhythm":[3]}"#;
-    let root = r#"{"sharedContext":{},"rootFrame":{"id":"root","name":"Page","width":375,"height":200,"layout":"vertical"},"subtasks":[{"id":"hero","label":"Hero","elements":"headline","region":{"width":375,"height":200}}]}"#;
+    let root = r#"{"rootFrame":{"id":"root","name":"Page","width":375,"height":200,"layout":"vertical"},"subtasks":[{"id":"hero","label":"Hero","elements":"headline","region":{"width":375,"height":200}}]}"#;
     let subtask = r#"I(null,{"type":"frame","name":"Hero","x":0,"y":0,"width":375,"height":200,"children":[{"type":"text","content":"Home","fontSize":18}]});"#;
     let (provider, seen) = QueuedProvider::with_seen(&[vision_response, root, subtask]);
     let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
@@ -205,7 +198,7 @@ fn url_reference_is_attempted_before_screenshot_fallback() {
     let vision_response = r#"# Design System: Screenshot App
 <<<SKELETON>>>
 {"source":"screenshot","width":1440,"sections":[],"navKind":"none","heroKind":"none","columnRhythm":[]}"#;
-    let root = r#"{"sharedContext":{},"rootFrame":{"id":"root","name":"Page","width":375,"height":200,"layout":"vertical"},"subtasks":[{"id":"hero","label":"Hero","elements":"headline","region":{"width":375,"height":200}}]}"#;
+    let root = r#"{"rootFrame":{"id":"root","name":"Page","width":375,"height":200,"layout":"vertical"},"subtasks":[{"id":"hero","label":"Hero","elements":"headline","region":{"width":375,"height":200}}]}"#;
     let subtask = r#"I(null,{"type":"frame","name":"Hero","x":0,"y":0,"width":375,"height":200,"children":[]});"#;
     let (provider, seen) = QueuedProvider::with_seen(&[vision_response, root, subtask]);
     let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));

@@ -13,8 +13,6 @@ use std::sync::Arc;
 use op_editor_core::EditorState;
 use op_orchestrator::repair_summary::RepairSummary;
 
-use super::tool_catalog::McpToolCatalog;
-use super::tool_profile::McpAccessProfile;
 use super::*;
 
 const AUTO_FINALIZE_ENV: &str = "OPENPENCIL_MCP_AUTO_FINALIZE";
@@ -89,19 +87,9 @@ impl AutoFinalize {
         }
     }
 
-    /// A standalone precise annotation has no generation writes to finalize.
-    /// Keep an earlier design batch pending, but do not restyle a saved file
-    /// just because its confirmed screenshot annotation changed.
-    pub fn note_scoped_annotation(&mut self, revision: u64) {
-        if self.enabled() && self.last_write_at.is_none() {
-            self.finalized_at_revision = Some(revision);
-        }
-    }
-
     pub fn run(&mut self, state: &mut EditorState, reason: &'static str) -> Option<RepairSummary> {
         let revision = state.document_revision();
         if !self.enabled()
-            || self.last_write_at.is_none()
             || state.active_children().is_empty()
             || self.finalized_at_revision == Some(revision)
         {
@@ -130,7 +118,7 @@ impl AutoFinalize {
     }
 }
 
-pub(super) fn run(path: PathBuf, profile: McpAccessProfile) -> Result<(), McpServeError> {
+pub(super) fn run(path: PathBuf) -> Result<(), McpServeError> {
     let mut state = super::load_editor_state(&path)?;
     let signals = install_shutdown_signals()?;
     let mut auto_finalize = AutoFinalize::from_env();
@@ -145,7 +133,6 @@ pub(super) fn run(path: PathBuf, profile: McpAccessProfile) -> Result<(), McpSer
         &path,
         &mut auto_finalize,
         &signals.flag,
-        profile,
     )
 }
 
@@ -156,7 +143,6 @@ pub(super) fn run_stdio_session<R: BufRead, W: Write>(
     path: &Path,
     auto_finalize: &mut AutoFinalize,
     shutdown_flag: &AtomicBool,
-    profile: McpAccessProfile,
 ) -> Result<(), McpServeError> {
     let mut line = String::new();
     loop {
@@ -180,13 +166,9 @@ pub(super) fn run_stdio_session<R: BufRead, W: Write>(
             run_auto_finalize_and_save(auto_finalize, state, path, "stdin-eof")?;
             return Ok(());
         }
-        if let Some(resp) = super::process_message_with_auto_finalize(
-            state,
-            path,
-            &line,
-            Some(auto_finalize),
-            profile,
-        )? {
+        if let Some(resp) =
+            super::process_message_with_auto_finalize(state, path, &line, Some(auto_finalize))?
+        {
             writeln!(writer, "{resp}")
                 .map_err(|e| McpServeError::Io(format!("stdout write: {e}")))?;
             writer
@@ -196,11 +178,7 @@ pub(super) fn run_stdio_session<R: BufRead, W: Write>(
     }
 }
 
-pub(super) fn run_http(
-    path: PathBuf,
-    port: u16,
-    profile: McpAccessProfile,
-) -> Result<(), McpServeError> {
+pub(super) fn run_http(path: PathBuf, port: u16) -> Result<(), McpServeError> {
     const HTTP_IO_TIMEOUT: Duration = Duration::from_secs(30);
     let mut state = super::load_editor_state(&path)?;
     let signals = install_shutdown_signals()?;
@@ -227,7 +205,6 @@ pub(super) fn run_http(
                     &mut state,
                     &path,
                     Some(&mut auto_finalize),
-                    profile,
                 ) {
                     Ok(true) => {
                         eprintln!("openpencil-desktop --mcp-http: shutdown requested; exiting");
@@ -256,7 +233,6 @@ pub(super) fn serve_http_connection<S: std::io::Read + std::io::Write>(
     state: &mut EditorState,
     path: &Path,
     auto_finalize: Option<&mut AutoFinalize>,
-    profile: McpAccessProfile,
 ) -> Result<bool, McpServeError> {
     let reply = |stream: &mut S, status: &str, body: &str| {
         super::write_mcp_http_response_with_origin(stream, status, body, Some("*"))
@@ -265,15 +241,9 @@ pub(super) fn serve_http_connection<S: std::io::Read + std::io::Write>(
     if req.method == "OPTIONS" {
         return reply(stream, "204 No Content", "").map(|()| false);
     }
-    // `/mcp/lean` serves the lean catalog whatever the server was started
-    // with; `/mcp` and `/` serve the configured one.
-    let profile = match McpToolCatalog::for_http_path(&req.path) {
-        Some(McpToolCatalog::Lean) => profile.with_catalog(McpToolCatalog::Lean),
-        Some(McpToolCatalog::Full) => profile,
-        None => {
-            return reply(stream, "404 Not Found", r#"{"error":"Not found"}"#).map(|()| false);
-        }
-    };
+    if req.path != "/mcp" && req.path != "/" {
+        return reply(stream, "404 Not Found", r#"{"error":"Not found"}"#).map(|()| false);
+    }
     if req.method != "POST" {
         return reply(
             stream,
@@ -289,8 +259,7 @@ pub(super) fn serve_http_connection<S: std::io::Read + std::io::Write>(
         reply(stream, "200 OK", &super::shutdown_ok_response(&id))?;
         return Ok(true);
     }
-    match super::process_message_with_auto_finalize(state, path, &req.body, auto_finalize, profile)?
-    {
+    match super::process_message_with_auto_finalize(state, path, &req.body, auto_finalize)? {
         Some(response) => reply(stream, "200 OK", &response).map(|()| false),
         None => reply(stream, "202 Accepted", "").map(|()| false),
     }

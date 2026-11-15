@@ -296,7 +296,7 @@ mod tests {
         let archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("valid zip");
         archive
             .file_names()
-            .map(|name| name.expect("valid entry name").into_owned())
+            .map(|name| name.expect("name").into_owned())
             .collect()
     }
 
@@ -335,7 +335,6 @@ mod tests {
 
         let expected = [
             (Framework::React, "tsx"),
-            (Framework::ReactTailwind, "tsx"),
             (Framework::Vue, "vue"),
             (Framework::Svelte, "svelte"),
             (Framework::Html, "html"),

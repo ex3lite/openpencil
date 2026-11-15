@@ -42,10 +42,6 @@ use std::collections::HashMap;
 mod prompt_components;
 #[path = "prompt_design_tokens.rs"]
 mod prompt_design_tokens;
-#[path = "prompt_palette.rs"]
-mod prompt_palette;
-#[path = "prompt_source_facts.rs"]
-mod prompt_source_facts;
 #[path = "prompt_style_skills.rs"]
 mod prompt_style_skills;
 #[path = "prompt_subagent.rs"]
@@ -53,8 +49,6 @@ mod prompt_subagent;
 
 use prompt_components::*;
 use prompt_design_tokens::*;
-use prompt_palette::build_plan_palette_instruction;
-use prompt_source_facts::append_source_facts_contract;
 pub use prompt_style_skills::*;
 pub use prompt_subagent::*;
 
@@ -78,7 +72,7 @@ tabs:[{value,label}] and value. Never generate a frame/rectangle mockup with a r
 Every interactive node MUST explicitly carry design-system fill, stroke, and cornerRadius.
 fill is the active/accent paint (or field surface).
 stroke.fill is the inactive track/border paint. Do not rely on renderer defaults.
-Syntax example only, not factual source data (a horizontal row of two cards):
+Example (a horizontal row of two cards inside a section):
 {"_parent":null,"id":"<prefix>-root","type":"frame","name":"Section","width":"fill_container","height":"fit_content","layout":"vertical","gap":16}
 {"_parent":"<prefix>-root","id":"<prefix>-row","type":"frame","name":"Row","width":"fill_container","height":"fit_content","layout":"horizontal","gap":16}
 {"_parent":"<prefix>-row","id":"<prefix>-card1","type":"frame","name":"Card","width":"fill_container","height":"fit_content","layout":"vertical","cornerRadius":12}
@@ -104,10 +98,6 @@ fences) that builds this section by calling the global function I(parent, node):
   const id = I(parent, { ...node... });   // inserts node, RETURNS its id (a string)
 `parent` is null for THIS section's single root frame, otherwise an id returned by an
 EARLIER I(...) call. A node is a child of X only if you call I(X, {...}).
-Returned ids are opaque strings, not mutable node objects or DOM nodes. Never read or
-assign handle.events, handle.children, handle.parent, or handle.lastRow. Keep each parent
-id in a separate local variable. Put events, state and bindings in the node object passed
-to I(...); do not attach them by assigning properties to its returned id.
 I(...) is the ONLY function available — there is no console, and no other builder. Do
 not call console.log or any helper; just call I(...).
 USE REAL JAVASCRIPT — const/let, arrays of data, and for...of / .forEach loops — to
@@ -132,7 +122,7 @@ EVERY frame with children MUST declare layout ("vertical" or "horizontal"; "none
 absolute stack). A section that holds a title and a card rail is layout:"vertical". Omitting
 layout is ambiguous and the current engine may place flow children in a row, so always choose it
 explicitly.
-Syntax example only; its names/statuses are not source data for this design:
+Example:
   const sec = I(null, {type:"frame", name:"Clients", layout:"vertical", width:"fill_container", gap:0});
   const tbl = I(sec, {type:"frame", layout:"vertical", width:"fill_container"});
   const rows = [{name:"Alice Chen", status:"Active"}, {name:"Bob Ito", status:"VIP"}];
@@ -141,9 +131,7 @@ Syntax example only; its names/statuses are not source data for this design:
     const c1 = I(row, {type:"frame", width:"fill_container"}); I(c1, {type:"text", content:r.name});
     const c2 = I(row, {type:"frame", width:"fill_container"}); I(c2, {type:"text", content:r.status});
   }
-Generate every requested row/card/item using supplied values or demo content for requested
-components; use honest placeholders only where the SOURCE FACTS contract requires them.
-Output ONLY the JavaScript program."#;
+Generate EVERY row/card/item with realistic values. Output ONLY the JavaScript program."#;
 
 /// Rich 模式 system prompt 末尾后缀 —— verbatim,`orchestrator.ts:1382-1383`。
 const RICH_SUFFIX: &str = "\n\n---\nCRITICAL OUTPUT FORMAT ENFORCEMENT:\n\
@@ -157,18 +145,14 @@ Violating this format will cause a system error.";
 const MINIMAL_SUFFIX: &str =
     "\n\nOUTPUT ONLY ONE JSON OBJECT. No prose. No markdown. No tool calls.";
 
-const PLANNING_QUALITY_GUARDRAILS: &str = r##"
+const PLANNING_QUALITY_GUARDRAILS: &str = r#"
 
 PLANNING QUALITY GUARDRAILS:
-- SHARED PALETTE: When the brief explicitly specifies brand colors, emit a top-level "palette" object with concrete #RRGGBB values for the requested roles: background, surface, primary, primaryForeground, text, mutedText, border. Example: navy with warm orange => {"background":"#0F1B2D","primary":"#F97316","primaryForeground":"#0F1B2D"}. Choose a readable foreground for primary. Set rootFrame.fill to the same background if supplied. These colors override conflicting catalog colors; preserve the guide's typography and composition. Every section must share this palette. Omit palette when the user does not specify colors or when design.md supplies the design system. Never put success/error/status colors into the brand palette.
-- A single-store ordering home does not need marketplace metrics or order history.
-- FIXED CARD COPY: for article/knowledge cards, summarize the supplied material instead of adding new explanations. Plan at most three short points per card and keep the footer inside the requested board height.
-- SUMMARY OWNERSHIP: Assign each entity's overall duration, total, price and other summary facts to one owning section. Other sections must not independently invent the same summary; repeat an established value only when useful. State explicitly when two metrics refer to different entities or scopes. User-provided facts always take priority.
 - Do not plan the same predictable mobile stack of search + categories + orange promo + two cards unless the request explicitly asks for that exact convention.
 - Mobile top rhythm: planned header/title/search/primary-content sections should be compact; avoid allocating a huge empty band between the title and first useful module.
 - Plan one signature moment in the first viewport: a crafted hero/product composition, editorial crop, distinctive category rail, refined data module, or other domain-specific focal idea.
 - Bottom navigation is optional. If planned, it should be integrated with the page flow, not a detached floating pill, nested rounded capsule, or extra footer band.
-- Product-card favorite/heart controls must be inside their card/image; never plan them as protruding decorative badges."##;
+- Product-card favorite/heart controls must be inside their card/image; never plan them as protruding decorative badges."#;
 
 fn planning_suffix(mode: PlanningMode) -> &'static str {
     match mode {
@@ -226,16 +210,9 @@ pub fn build_orchestrator_prompt(
             );
             let mut user_prompt = cp.user_prompt;
             append_reference_skeleton(&mut user_prompt, req);
-            crate::source_copy::SourceCopy::from_brief(&req.prompt)
-                .append_planning_instruction(&mut user_prompt);
-            let mut system_prompt = cp.system;
-            system_prompt.push_str(PLANNING_QUALITY_GUARDRAILS);
-            system_prompt.push_str(crate::plan_shared_context::PLANNING_INSTRUCTION);
-            crate::output_language::append_copy_language_instruction(&mut system_prompt, req);
-            append_source_facts_contract(&mut system_prompt, req);
             PlanningPrompt {
                 call_request: CallRequest {
-                    system_prompt,
+                    system_prompt: cp.system,
                     user_prompt,
                     model: req.model.clone(),
                     provider: req.provider.clone(),
@@ -274,15 +251,9 @@ pub fn build_orchestrator_prompt(
                 .collect::<Vec<_>>()
                 .join("\n\n");
             system_prompt.push_str(PLANNING_QUALITY_GUARDRAILS);
-            system_prompt.push_str(planning_schema::OUTPUT_SHAPE);
-            system_prompt.push_str(crate::plan_shared_context::PLANNING_INSTRUCTION);
             system_prompt.push_str(planning_suffix(mode));
-            crate::output_language::append_copy_language_instruction(&mut system_prompt, req);
-            append_source_facts_contract(&mut system_prompt, req);
             let mut user_prompt = req.prompt.clone();
             append_reference_skeleton(&mut user_prompt, req);
-            crate::source_copy::SourceCopy::from_brief(&req.prompt)
-                .append_planning_instruction(&mut user_prompt);
             PlanningPrompt {
                 call_request: CallRequest {
                     system_prompt,
@@ -335,10 +306,3 @@ mod tests;
 #[cfg(test)]
 #[path = "prompt_reference_tests.rs"]
 mod reference_skeleton_tests;
-
-#[cfg(test)]
-#[path = "prompt_schema_tests.rs"]
-mod schema_tests;
-
-#[path = "planning_schema.rs"]
-pub(crate) mod planning_schema;

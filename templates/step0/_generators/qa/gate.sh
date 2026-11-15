@@ -14,15 +14,13 @@
 #   真实行数 == 硬换行数  ⇒  没发生自动折行  ⇒  该条报告作废。
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/../../../.." && pwd)"
-# OP_BIN_DIR points at another profile (e.g. target/debug).
-BIN_DIR="${OP_BIN_DIR:-$REPO/target/release}"
+REPO=/Users/fini/workspace/openpencil
 FAIL=0
 
 for f in "$@"; do
   name=$(basename "$f" .op)
   issues=$(OPENPENCIL_ANTHROPIC_API_KEY=dummy OPENPENCIL_SMOKE_AUDIT="$f" \
-    "$BIN_DIR/op-smoke" audit 2>/dev/null \
+    "$REPO/target/release/op-smoke" audit 2>/dev/null \
     | python3 -c "import sys,json;print(json.loads(sys.stdin.read())['issueCount'])")
   if [ "$issues" != "0" ]; then
     echo "✗ $name  audit=$issues"

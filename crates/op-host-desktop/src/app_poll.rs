@@ -9,11 +9,7 @@ impl DesktopApp {
     /// into UI state and open the verification page (exactly once per
     /// flow) in the system browser.
     pub(crate) fn poll_auth_flow(&mut self) -> bool {
-        let mut changed = self.host.poll_auth();
-        if op_host_services::hosted_models::sync_editor(self.host.editor_state_mut()) {
-            self.host.mark_editor_state_dirty();
-            changed = true;
-        }
+        let changed = self.host.poll_auth();
         if let Some(url) = self.host.take_pending_browser_url() {
             update_check::open_url(&url);
         }
@@ -222,10 +218,6 @@ impl DesktopApp {
         // of adding or removing a guide the panel has already put in (or taken
         // out of) the runtime catalogue.
         should_paint |= crate::style_import_host::drain_pending_style_import(self);
-        // Home's 加链接: start a queued brand extraction, land finished ones.
-        should_paint |= self.brand_jobs.drain(&mut self.host);
-        // Home's link-only draft: start a queued website import, land it.
-        should_paint |= self.site_imports.drain(&mut self.host);
         // The Templates tab's saved-template delete: the disk half of removing
         // a template the panel has already taken out of the runtime registry.
         should_paint |=

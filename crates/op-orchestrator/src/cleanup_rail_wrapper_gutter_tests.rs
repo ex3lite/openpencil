@@ -13,7 +13,6 @@ use serde_json::{json, Value};
 
 fn plan() -> crate::plan::OrchestratorPlan {
     crate::plan::OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "root".into(),
             name: "Habit Tracker".into(),
@@ -26,7 +25,6 @@ fn plan() -> crate::plan::OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 

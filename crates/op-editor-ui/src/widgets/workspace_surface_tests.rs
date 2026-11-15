@@ -3,34 +3,6 @@
 use super::*;
 use op_editor_core::WorkspacePhase;
 
-#[test]
-fn unclassified_works_have_neutral_labels_and_page_navigation() {
-    let mut work = op_editor_core::WorkspaceState::default();
-    assert_eq!(
-        super::paint::work_family_label(op_i18n::Locale::ZhCn, &work),
-        "作品"
-    );
-    assert_eq!(
-        super::paint::view_label(
-            op_i18n::Locale::ZhCn,
-            work.family,
-            false,
-            WorkspaceView::Single { index: 0 }
-        ),
-        "单页"
-    );
-    work.family_known = true;
-    assert_eq!(
-        super::paint::work_family_label(op_i18n::Locale::ZhCn, &work),
-        "应用界面"
-    );
-    work.family = HomeFamily::EventPoster;
-    assert_eq!(
-        super::paint::work_family_label(op_i18n::Locale::ZhCn, &work),
-        "活动海报"
-    );
-}
-
 fn layout_1440_900(family: HomeFamily, collapsed: bool, boards: usize) -> WorkspaceLayout {
     layout_for(1440.0, 900.0, family, 320.0, collapsed, boards)
 }
@@ -132,10 +104,7 @@ fn surface_hit(
         visible: true,
         active: true,
         family,
-        family_known: true,
         view,
-        // A finished result: Present is only live once the run is Done.
-        phase: WorkspacePhase::Done,
         ..op_editor_core::WorkspaceState::default()
     };
     // The dock IS the left panel: the surface reads the panel's own
@@ -340,7 +309,6 @@ fn failed_phase_surfaces_the_banner_buttons() {
     editor.editor_ui.workspace = op_editor_core::WorkspaceState {
         visible: true,
         active: true,
-        brief: "A three-page presentation".into(),
         phase: WorkspacePhase::Failed,
         ..op_editor_core::WorkspaceState::default()
     };
@@ -367,67 +335,6 @@ fn failed_phase_surfaces_the_banner_buttons() {
     let ok_surface = WorkspaceSurface::for_editor_at(&ok, 0).expect("workspace visible");
     let ok_layout = ok_surface.layout(1440.0, 900.0);
     assert!(ok_surface.banner_buttons(&ok_layout).is_none());
-}
-
-#[test]
-fn a_waiting_template_draft_surfaces_its_banner_action_over_the_canvas() {
-    let mut editor = editor_with_boards(2);
-    editor.editor_ui.workspace = op_editor_core::WorkspaceState {
-        visible: true,
-        active: true,
-        ..op_editor_core::WorkspaceState::default()
-    };
-    editor
-        .editor_ui
-        .workspace
-        .adopt_template_draft("knowledge-carousel", false);
-    let surface = WorkspaceSurface::for_editor_at(&editor, 0).expect("workspace visible");
-    let layout = surface.layout(1440.0, 900.0);
-    let button = surface.draft_banner_button(&layout).expect("draft banner");
-    assert!(layout.canvas.contains(Point2D::new(
-        button.origin.x + button.size.x / 2.0,
-        button.origin.y + button.size.y / 2.0
-    )));
-    assert_eq!(
-        surface.hit_test_layout(
-            &layout,
-            Point2D::new(button.origin.x + 2.0, button.origin.y + 2.0)
-        ),
-        Some(WorkspaceHit::DraftAction)
-    );
-
-    // The banner paints in the canvas pass, not with the chrome: painted
-    // under the canvas background its button was invisible.
-    let mut chrome = crate::widgets::test_capture_backend::CaptureBackend::default();
-    {
-        let mut cx = PaintCx {
-            backend: &mut chrome,
-        };
-        surface.paint(&mut cx, Rect::xywh(0.0, 0.0, 1440.0, 900.0));
-    }
-    assert!(!chrome
-        .round_fills
-        .iter()
-        .any(|(rect, _, _)| *rect == button));
-    let mut banners = crate::widgets::test_capture_backend::CaptureBackend::default();
-    {
-        let mut cx = PaintCx {
-            backend: &mut banners,
-        };
-        surface.paint_canvas_banners(&mut cx, Rect::xywh(0.0, 0.0, 1440.0, 900.0));
-    }
-    assert!(banners
-        .round_fills
-        .iter()
-        .any(|(rect, _, _)| *rect == button));
-    let connect = op_i18n::translate(editor.editor_ui.locale, "home.submit.connect");
-    assert!(banners.texts.iter().any(|(text, _)| text == connect));
-
-    // Once the refine is under way the banner retires.
-    editor.editor_ui.workspace.begin_draft_refine();
-    let surface = WorkspaceSurface::for_editor_at(&editor, 0).expect("workspace visible");
-    let layout = surface.layout(1440.0, 900.0);
-    assert!(surface.draft_banner_button(&layout).is_none());
 }
 
 #[test]
@@ -494,210 +401,4 @@ fn the_strip_tiles_share_the_thumbnail_rows_geometry() {
     let last = *layout.thumbs.last().expect("thumbnails");
     assert!(layout.overview.origin.x + layout.overview.size.x < thumb.origin.x);
     assert!(last.origin.x + last.size.x < play.origin.x);
-}
-
-#[test]
-fn stopped_phase_offers_retry_too() {
-    let mut editor = editor_with_boards(2);
-    editor.editor_ui.workspace = op_editor_core::WorkspaceState {
-        visible: true,
-        active: true,
-        brief: "A three-page presentation".into(),
-        phase: WorkspacePhase::Stopped,
-        ..op_editor_core::WorkspaceState::default()
-    };
-    let surface = WorkspaceSurface::for_editor_at(&editor, 0).expect("workspace visible");
-    let layout = surface.layout(1440.0, 900.0);
-    let (retry, _) = surface
-        .banner_buttons(&layout)
-        .expect("a stopped run must offer a way to try again");
-    assert_eq!(
-        surface.hit_test_layout(
-            &layout,
-            Point2D::new(retry.origin.x + 2.0, retry.origin.y + 2.0)
-        ),
-        Some(WorkspaceHit::Retry)
-    );
-}
-
-#[test]
-fn present_is_inert_while_the_run_is_still_generating() {
-    let mut editor = editor_with_boards(3);
-    editor.editor_ui.workspace = op_editor_core::WorkspaceState {
-        visible: true,
-        active: true,
-        family: HomeFamily::Presentation,
-        phase: WorkspacePhase::Generating,
-        ..op_editor_core::WorkspaceState::default()
-    };
-    editor.editor_ui.layer_panel_width = 320.0;
-    editor.editor_ui.sidebar_open = true;
-    let surface = WorkspaceSurface::for_editor_at(&editor, 0).expect("workspace visible");
-    let layout = surface.layout(1440.0, 900.0);
-    let play = layout.play.expect("deck strip carries Present");
-    assert!(!surface.play_enabled());
-    assert_eq!(
-        surface.hit_test_layout(
-            &layout,
-            Point2D::new(play.origin.x + 2.0, play.origin.y + 2.0)
-        ),
-        None,
-        "the tile paints disabled, so the press must not present a half-drawn deck"
-    );
-}
-
-#[test]
-fn the_thumbnail_window_follows_the_selection() {
-    assert_eq!(
-        thumb_window_start(5, 8, 4),
-        0,
-        "a deck that fits never slides"
-    );
-    assert_eq!(thumb_window_start(20, 6, 0), 0);
-    assert_eq!(thumb_window_start(20, 6, 10), 7, "centred on the selection");
-    assert_eq!(thumb_window_start(20, 6, 19), 14, "clamped at the end");
-    assert_eq!(thumb_window_start(20, 0, 10), 0);
-}
-
-#[test]
-fn a_long_deck_keeps_its_late_slides_reachable_from_the_strip() {
-    // Measured: the strip dropped every board past what fit, so on a long
-    // deck the later slides had no thumbnail to press.
-    let boards = 30;
-    let mut editor = editor_with_boards(boards);
-    editor.editor_ui.workspace = op_editor_core::WorkspaceState {
-        visible: true,
-        active: true,
-        family: HomeFamily::Presentation,
-        phase: WorkspacePhase::Done,
-        selected: 27,
-        ..op_editor_core::WorkspaceState::default()
-    };
-    editor.editor_ui.layer_panel_width = 320.0;
-    editor.editor_ui.sidebar_open = true;
-    let surface = WorkspaceSurface::for_editor_at(&editor, 0).expect("workspace visible");
-    let layout = surface.layout(1440.0, 900.0);
-    assert!(
-        layout.thumbs.len() < boards,
-        "the fixture must overflow the strip"
-    );
-    let rect = layout
-        .thumb_rect(27)
-        .expect("the selected late slide has a thumbnail slot");
-    assert_eq!(
-        surface.hit_test_layout(
-            &layout,
-            Point2D::new(rect.origin.x + 2.0, rect.origin.y + 2.0)
-        ),
-        Some(WorkspaceHit::Thumb(27))
-    );
-    assert!(
-        layout.thumb_rect(0).is_none(),
-        "the head scrolled out of the window"
-    );
-}
-
-#[test]
-fn the_pager_keeps_room_for_its_position_label() {
-    // The "3 / 12" label paints between the arrows; with a 2 px gap it was
-    // drawn under the chevrons and only a sliver showed.
-    let layout = layout_1440_900(HomeFamily::Presentation, false, 12);
-    let (prev, next) = (layout.prev.unwrap(), layout.next.unwrap());
-    let gap = next.origin.x - (prev.origin.x + prev.size.x);
-    assert!(gap >= 40.0, "gap {gap}");
-    assert!(next.origin.x + next.size.x <= layout.zoom_out.origin.x);
-}
-
-#[test]
-fn toolbar_labels_are_centered_inside_their_painted_hit_targets() {
-    use crate::widgets::test_capture_backend::CaptureBackend;
-    use crate::RenderBackend;
-    for locale in op_i18n::Locale::ALL {
-        for family in HomeFamily::ALL {
-            let mut editor = editor_with_boards(3);
-            editor.editor_ui.locale = locale;
-            editor.editor_ui.workspace = op_editor_core::WorkspaceState {
-                visible: true,
-                active: true,
-                family,
-                ..op_editor_core::WorkspaceState::default()
-            };
-            let surface = WorkspaceSurface::for_editor_at(&editor, 10_000).unwrap();
-            let layout = surface.layout(1180.0, 820.0);
-            let mut backend = CaptureBackend::default();
-            surface.paint(
-                &mut PaintCx {
-                    backend: &mut backend,
-                },
-                Rect::xywh(0.0, 0.0, 1180.0, 820.0),
-            );
-            for rect in layout.view_segments.iter().chain([&layout.zoom_fit]) {
-                let (label, origin) = backend
-                    .texts
-                    .iter()
-                    .find(|(_, origin)| rect.contains(*origin))
-                    .cloned()
-                    .expect("button must contain a visible label");
-                let size = if *rect == layout.zoom_fit { 11.0 } else { 12.0 };
-                let text_w = backend.measure_text_family(&label, size, "system-ui");
-                let left = origin.x - rect.origin.x;
-                let right = rect.origin.x + rect.size.x - origin.x - text_w;
-                assert!(
-                    (left - right).abs() < 0.1,
-                    "{locale:?} {label:?}: unequal insets {left}/{right}"
-                );
-                assert!(left >= 5.9 && right >= 5.9);
-            }
-            let last = layout.view_segments.last().unwrap();
-            assert!(
-                last.origin.x + last.size.x + 11.9
-                    <= layout.prev.unwrap_or(layout.zoom_out).origin.x
-            );
-        }
-    }
-}
-
-#[test]
-fn finished_apps_and_web_pages_offer_runtime_preview_and_reserve_header_room() {
-    use op_editor_core::{EditorState, WorkspacePhase};
-    for family in [HomeFamily::AppUi, HomeFamily::Web] {
-        let document = serde_json::from_value(serde_json::json!({"version":"1.0.0","children":[
-            {"type":"frame","id":"work","width":390,"height":844,"children":[
-                {"type":"text","id":"title","content":"Preview fixture"}
-            ]}
-        ]}))
-        .unwrap();
-        let mut state = EditorState::from_document(document);
-        state.editor_ui.workspace.visible = true;
-        state.editor_ui.workspace.family = family;
-        state.editor_ui.workspace.phase = WorkspacePhase::Done;
-        state.editor_ui.deck_html_export_supported = true;
-        for width in [800.0, 1024.0, 1440.0] {
-            let surface = WorkspaceSurface::for_editor(&state).unwrap();
-            let layout = surface.layout(width, 900.0);
-            let preview = surface.preview_button(&layout).unwrap();
-            assert_eq!(
-                surface.hit_test(
-                    width,
-                    900.0,
-                    Point2D::new(preview.origin.x + 2.0, preview.origin.y + 2.0)
-                ),
-                Some(WorkspaceHit::Play)
-            );
-            assert!(layout.title.origin.x + layout.title.size.x <= preview.origin.x - 11.9);
-            assert!(
-                preview.origin.x + preview.size.x
-                    <= surface.share_button(&layout).unwrap().origin.x - 7.9
-            );
-            assert!(surface
-                .focus_order(&layout)
-                .iter()
-                .any(|(hit, _)| *hit == WorkspaceHit::Play));
-        }
-        state.editor_ui.workspace.phase = WorkspacePhase::Generating;
-        assert!(WorkspaceSurface::for_editor(&state)
-            .unwrap()
-            .preview_button(&layout_1440_900(family, false, 1))
-            .is_none());
-    }
 }

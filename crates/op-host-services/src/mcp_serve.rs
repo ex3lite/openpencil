@@ -14,7 +14,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::brand_extract::brand_extract_snapshot;
 use crate::import_html_url::import_html_url_snapshot;
 use op_editor_core::{EditorCommand, EditorState};
 use op_mcp::import_html_tool::import_html_snapshot;
@@ -177,13 +176,7 @@ fn process_message(
     path: &Path,
     line: &str,
 ) -> Result<Option<String>, McpServeError> {
-    process_message_with_auto_finalize(
-        state,
-        path,
-        line,
-        None,
-        tool_profile::McpAccessProfile::UNRESTRICTED,
-    )
+    process_message_with_auto_finalize(state, path, line, None)
 }
 
 fn process_message_with_auto_finalize(
@@ -191,22 +184,18 @@ fn process_message_with_auto_finalize(
     path: &Path,
     line: &str,
     mut auto_finalize: Option<&mut auto_finalize::AutoFinalize>,
-    profile: tool_profile::McpAccessProfile,
 ) -> Result<Option<String>, McpServeError> {
-    if let Some(response) = file_path::process_message_for_file_path_arg(Some(path), line, profile)?
-    {
+    if let Some(response) = file_path::process_message_for_file_path_arg(Some(path), line)? {
         return Ok(Some(response));
     }
     let explicit_finalize =
         op_mcp::parse_tool_call(line.trim()).is_some_and(|call| call.tool == "finalize_design");
-    let annotation_only =
-        op_mcp::parse_tool_call(line.trim()).is_some_and(|call| call.tool == "annotate_image");
     let mut applier_failed: Option<String> = None;
     let mut apply_rejected = false;
     // File-backed mode has no live canvas for any tool call to animate —
     // the tool name is accepted (shared signature with the live-MCP path)
     // and deliberately ignored here.
-    let response = process_message_with_applier_profiled(state, line, profile, |_, state, cmd| {
+    let response = process_message_with_applier(state, line, |_tool_name, state, cmd| {
         // `EditorState::apply` runs the pre-validate-then-mutate
         // discipline; `false` means the command rejected and the
         // document was NOT changed.
@@ -214,21 +203,13 @@ fn process_message_with_auto_finalize(
             apply_rejected = true;
             return false;
         }
-        if !annotation_only {
-            run_write_repairs_after_apply(state);
-        }
+        run_write_repairs_after_apply(state);
         if let Err(e) = save_editor_state(state, path) {
             applier_failed = Some(format!("save failed: {e}"));
             return false;
         }
-        if annotation_only {
-            if let Some(auto_finalize) = auto_finalize.as_deref_mut() {
-                auto_finalize.note_scoped_annotation(state.document_revision());
-            }
-        } else {
-            if let Some(auto_finalize) = auto_finalize.as_deref_mut() {
-                auto_finalize.note_write(Instant::now());
-            }
+        if let Some(auto_finalize) = auto_finalize.as_deref_mut() {
+            auto_finalize.note_write(Instant::now());
         }
         true
     })?;
@@ -369,24 +350,12 @@ where
     Ok((!resp.is_empty()).then_some(resp))
 }
 
-/// `--mcp <path>`: stdio MCP over `path`, serving `catalog`.
-pub fn run(path: PathBuf, catalog: tool_catalog::McpToolCatalog) -> Result<(), McpServeError> {
-    auto_finalize::run(path, local_profile(catalog))
+pub fn run(path: PathBuf) -> Result<(), McpServeError> {
+    auto_finalize::run(path)
 }
 
-/// `--mcp-http <port> <path>`: Streamable-HTTP MCP over `path`. `catalog`
-/// is served on `/mcp`; `/mcp/lean` always serves the lean catalog.
-pub fn run_http(
-    path: PathBuf,
-    port: u16,
-    catalog: tool_catalog::McpToolCatalog,
-) -> Result<(), McpServeError> {
-    auto_finalize::run_http(path, port, local_profile(catalog))
-}
-
-/// The local operator's profile (full authority) over `catalog`.
-fn local_profile(catalog: tool_catalog::McpToolCatalog) -> tool_profile::McpAccessProfile {
-    tool_profile::McpAccessProfile::UNRESTRICTED.with_catalog(catalog)
+pub fn run_http(path: PathBuf, port: u16) -> Result<(), McpServeError> {
+    auto_finalize::run_http(path, port)
 }
 
 #[cfg(test)]
@@ -395,13 +364,7 @@ fn serve_http_connection<S: std::io::Read + std::io::Write>(
     state: &mut EditorState,
     path: &Path,
 ) -> Result<bool, McpServeError> {
-    auto_finalize::serve_http_connection(
-        stream,
-        state,
-        path,
-        None,
-        tool_profile::McpAccessProfile::UNRESTRICTED,
-    )
+    auto_finalize::serve_http_connection(stream, state, path, None)
 }
 
 #[derive(Debug)]
@@ -723,10 +686,7 @@ pub use wire::*;
 mod doc_sync;
 pub use doc_sync::*;
 
-mod lean_profile;
-mod lean_tools;
 pub(crate) mod schemas;
-pub mod tool_catalog;
 mod tools_list;
 use tools_list::tools_list_response;
 pub mod tool_profile;

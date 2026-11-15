@@ -240,7 +240,6 @@ fn spread_chains_into_unify_and_wire_end_to_end() {
         .collect();
     let root_id_refs: Vec<&str> = root_ids.iter().map(String::as_str).collect();
     let plan = crate::plan::OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "root".into(),
             name: "Page".into(),
@@ -253,7 +252,6 @@ fn spread_chains_into_unify_and_wire_end_to_end() {
         },
         subtasks: Vec::new(),
         style_guide_name: None,
-        palette: None,
     };
     crate::cleanup::run_cleanup_passes(&mut sink, &plan, &root_id_refs);
 

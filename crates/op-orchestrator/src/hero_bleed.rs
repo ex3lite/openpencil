@@ -56,13 +56,7 @@ pub(crate) fn enforce(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_id: 
     else {
         return 0;
     };
-    // Absolute siblings paint front-to-back, so the actual image can be last.
-    // A direction/summary card at the front is never the background hero.
-    let direct_image = (layout_str(&section_value) == Some("none"))
-        .then(|| children.iter().position(|c| c["type"] == "image"))
-        .flatten()
-        .map(|index| vec![index]);
-    let Some(media_path) = direct_image.or_else(|| first_media_path(&children, first_index)) else {
+    let Some(media_path) = first_media_path(&children, first_index) else {
         return 0;
     };
 
@@ -137,29 +131,10 @@ pub(crate) fn enforce(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_id: 
         .cloned()
         .unwrap_or_else(|| json!(0));
     let original_padding = section_value.get("padding").cloned();
-    let is_overlay_section = layout_str(&section_value) == Some("none");
     section_value["name"] = Value::String(format!("{original_name}{BLEED_NAME_SUFFIX}"));
     section_value["padding"] = zero_horizontal_padding(original_padding.as_ref());
 
-    // Direct overlay siblings belong to one viewport. Putting its scrim and
-    // copy into a vertical inset turns their heights into a tall blank band.
-    if is_overlay_section && media_path.len() == 1 {
-        for child in &mut next_children {
-            if child.get("width").and_then(Value::as_f64) == chosen_original_width
-                && chosen_original_width.is_some()
-                && (child.get("type").and_then(Value::as_str) == Some("image")
-                    || is_coloured_media(child))
-            {
-                child["width"] = Value::String("fill_container".into());
-                child["x"] = json!(0);
-            }
-        }
-    }
-    let trailing = if is_overlay_section {
-        Vec::new()
-    } else {
-        next_children.split_off(first_index + 1)
-    };
+    let trailing = next_children.split_off(first_index + 1);
     if !trailing.is_empty() {
         let wrapper_id = unique_wrapper_id(sink.state(), &section_id);
         next_children.push(json!({
@@ -175,16 +150,6 @@ pub(crate) fn enforce(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_id: 
         }));
     }
     section_value["children"] = Value::Array(next_children);
-    if is_overlay_section && media_path.len() == 1 {
-        repair_image_hero_stack(
-            &mut section_value,
-            media_path[0],
-            &original_name,
-            sink.state(),
-            &variables,
-            &theme,
-        );
-    }
 
     let Ok(patch_json) = serde_json::to_string(&json!({
         "name": section_value.get("name").cloned().unwrap_or(Value::Null),
@@ -350,15 +315,14 @@ fn is_coloured_media(value: &Value) -> bool {
         value.get("type").and_then(Value::as_str),
         Some("frame" | "rectangle")
     ) && has_solid_or_gradient_fill(value)
-        && !contains_copy_or_icon(value)
-}
-
-fn contains_copy_or_icon(value: &Value) -> bool {
-    matches!(value["type"].as_str(), Some("text" | "icon_font"))
-        || value
+        && !value
             .get("children")
             .and_then(Value::as_array)
-            .is_some_and(|children| children.iter().any(contains_copy_or_icon))
+            .is_some_and(|children| {
+                children
+                    .iter()
+                    .any(|child| child.get("type").and_then(Value::as_str) == Some("text"))
+            })
 }
 
 /// Add the legibility layer to the none-stack that owns an image hero. This
@@ -385,18 +349,6 @@ fn repair_image_hero_stack(
         return false;
     }
 
-    let media = &stack["children"][media_index];
-    if crate::map_placeholder::is_map_image_intent(
-        media.get("name").and_then(Value::as_str),
-        media.get("imageSearchQuery").and_then(Value::as_str),
-        media.get("imagePrompt").and_then(Value::as_str),
-    ) {
-        // Map symbols and routes already have deliberate contrast. Preserve
-        // full-bleed sizing, but never apply a photographic scrim or recolor
-        // authored map labels before the deterministic scene is materialized.
-        return false;
-    }
-
     let stack_width = stack.get("width").cloned();
     let stack_id = stack
         .get("id")
@@ -410,24 +362,16 @@ fn repair_image_hero_stack(
         return false;
     }
 
-    // `children[0]` paints topmost. A model's own scrim may sit anywhere in
-    // the stack (listed over the copy, it is moved down to the photo by
-    // `geometry_buried_overlay`), so any spanning see-through layer other
-    // than the media counts — scanning only below the photo missed every
-    // scrim a model actually drew and stacked a second, dark one under it.
-    let model_scrim_tones: Vec<ScrimTone> = children
+    let has_scrim = children
         .iter()
         .enumerate()
-        .filter(|(index, _)| *index != media_index)
-        .filter(|(_, child)| acts_as_hero_scrim(child, stack_width.as_ref(), variables, theme))
-        .map(|(_, child)| scrim_tone(child, variables, theme))
-        .collect();
+        .skip(media_index.saturating_add(1))
+        .any(|(_, child)| acts_as_hero_scrim(child, stack_width.as_ref(), variables, theme));
     let mut changed = false;
-    if model_scrim_tones.is_empty() {
+    if !has_scrim {
         let scrim_id = unique_id(state, &format!("{stack_id}-scrim"));
-        // Directly above the photo: the slot a tint has to occupy to tint it.
         children.insert(
-            media_index,
+            media_index + 1,
             json!({
                 "type": "frame",
                 "id": scrim_id,
@@ -452,56 +396,10 @@ fn repair_image_hero_stack(
         changed = true;
     }
 
-    // A light wash (transparent → white / `$--background`) is the model
-    // lifting dark copy off the picture; turning that copy white erases it.
-    // Only a dark scrim — ours or the model's — calls for light copy.
-    if model_scrim_tones.contains(&ScrimTone::Light) {
-        return changed;
-    }
     for child in children.iter_mut() {
         changed |= recolor_hero_text(child, false, variables, theme);
     }
     changed
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ScrimTone {
-    Light,
-    Dark,
-}
-
-/// The tone of a scrim, read from its most opaque colour: a fade whose
-/// visible end is light reads as a light wash, anything else as dark.
-fn scrim_tone(
-    node: &Value,
-    variables: &op_design_lint::node_util::Variables,
-    theme: &op_design_lint::node_util::Theme,
-) -> ScrimTone {
-    let mut strongest: Option<(u8, [u8; 4])> = None;
-    let fills = node.get("fill").and_then(Value::as_array);
-    for fill in fills.into_iter().flatten() {
-        let solid = fill.get("color").and_then(Value::as_str);
-        let stops = fill
-            .get("stops")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|stop| stop.get("color").and_then(Value::as_str));
-        for raw in solid.into_iter().chain(stops) {
-            let Some(rgba) = op_design_lint::node_util::resolve_color_ref(raw, variables, theme)
-                .and_then(|resolved| crate::text_contrast_repair::parse_color_rgba(&resolved))
-            else {
-                continue;
-            };
-            if strongest.is_none_or(|(alpha, _)| rgba[3] > alpha) {
-                strongest = Some((rgba[3], rgba));
-            }
-        }
-    }
-    match strongest {
-        Some((alpha, rgba)) if alpha > 0 && relative_luminance(rgba) >= 0.5 => ScrimTone::Light,
-        _ => ScrimTone::Dark,
-    }
 }
 
 fn contains_non_status_text(node: &Value) -> bool {
@@ -584,7 +482,7 @@ fn dark_hero_fill_should_change(
     !raw.starts_with('$') || is_hero_semantic_token(raw)
 }
 
-pub(crate) fn relative_luminance(rgba: [u8; 4]) -> f64 {
+fn relative_luminance(rgba: [u8; 4]) -> f64 {
     let channel = |value: u8| {
         let value = f64::from(value) / 255.0;
         if value <= 0.03928 {

@@ -457,21 +457,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_unreferenced_entry_with_a_malformed_local_header() {
-        let mut bytes = archive(&[
-            ("index.html", b"<p>ok</p>", CompressionMethod::Stored),
-            ("unused.bin", b"unused", CompressionMethod::Stored),
-        ]);
-        let central = central_offsets(&bytes)[1];
-        let local = read_u32(&bytes, central + 42).unwrap() as usize;
-        bytes[local..local + 4].fill(0);
-        assert!(matches!(
-            import_html_zip(&bytes, &HtmlImportOptions::default()),
-            Err(HtmlProjectError::InvalidZip(_))
-        ));
-    }
-
-    #[test]
     fn rejects_traversal_duplicate_encrypted_and_non_regular_entries() {
         let traversal = archive(&[("../index.html", b"x", CompressionMethod::Stored)]);
         assert!(matches!(

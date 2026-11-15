@@ -59,9 +59,6 @@
 
 mod animation;
 mod app_mode;
-mod asset_sync;
-#[cfg(all(test, not(target_os = "windows")))]
-mod asset_sync_tests;
 #[cfg(feature = "gl-host")]
 mod auto_wire;
 #[cfg(not(feature = "gl-host"))]
@@ -77,7 +74,6 @@ mod effects;
 mod error;
 mod input;
 mod input_event;
-mod input_paint_hit;
 mod interaction_state;
 mod invalidation;
 mod mode_transition;
@@ -87,14 +83,6 @@ mod scene_helpers;
 mod session;
 mod session_paint;
 mod test_helpers;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_binding_text_reflow;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_generated_controls;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_paint_order;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_routed_binding_reflow;
 mod transition;
 mod ui_actions;
 
@@ -182,15 +170,11 @@ mod tests_event_payloads;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_geometry_parity;
 #[cfg(all(test, not(target_os = "windows")))]
-mod tests_horizontal_scroll;
-#[cfg(all(test, not(target_os = "windows")))]
 mod tests_input_trace;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_interaction;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_interaction_state;
-#[cfg(all(test, feature = "gl-host", not(target_os = "windows")))]
-mod tests_local_pagination;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_motion;
 #[cfg(all(test, not(target_os = "windows")))]
@@ -200,15 +184,7 @@ mod tests_page_scroll;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_pointer_bindings;
 #[cfg(all(test, not(target_os = "windows")))]
-mod tests_retained_console_scroll;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_retained_mobile_scroll;
-#[cfg(all(test, not(target_os = "windows")))]
 mod tests_swipe;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_table_filter;
-#[cfg(all(test, not(target_os = "windows")))]
-mod tests_table_search;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_tabs;
 #[cfg(all(test, not(target_os = "windows")))]

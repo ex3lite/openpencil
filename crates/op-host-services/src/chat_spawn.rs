@@ -377,13 +377,9 @@ pub(crate) fn resolve_binary(name: &str) -> Option<PathBuf> {
 fn resolve_binary_from(name: &str, path_env: &OsStr, fallbacks: &[PathBuf]) -> Option<PathBuf> {
     for dir in std::env::split_paths(path_env).filter(|dir| !dir.as_os_str().is_empty()) {
         let candidate = dir.join(name);
-        // Windows first: `CreateProcessW` cannot run an extensionless file, and
-        // `npm i -g` writes three of them into its bin directory — a POSIX
-        // `foo` shell script for Git Bash alongside `foo.cmd` and `foo.ps1`.
-        // Probing the bare name first picks that shell script, which then
-        // spawns as os error 193 ("not a valid Win32 application"). The
-        // fallback list below and `model_discovery` already order the bare
-        // name last for this reason.
+        if candidate.is_file() {
+            return Some(candidate);
+        }
         #[cfg(windows)]
         for ext in &["exe", "cmd", "bat", "ps1"] {
             let mut with_ext = candidate.clone();
@@ -391,9 +387,6 @@ fn resolve_binary_from(name: &str, path_env: &OsStr, fallbacks: &[PathBuf]) -> O
             if with_ext.is_file() {
                 return Some(with_ext);
             }
-        }
-        if candidate.is_file() {
-            return Some(candidate);
         }
     }
     fallbacks.iter().find(|path| path.is_file()).cloned()
@@ -440,7 +433,6 @@ fn well_known_install_paths(name: &str) -> Vec<PathBuf> {
                 ".pnpm-global/bin",
                 ".cargo/bin",
                 ".opencode/bin",
-                ".kimi-code/bin",
                 ".npm-global/bin",
                 "node_modules/.bin",
                 ".yarn/bin",

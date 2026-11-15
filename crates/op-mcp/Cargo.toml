@@ -15,16 +15,13 @@ default = []
 debug-tools = []
 # Native-only QuickJS script→program expansion for batch_design + the
 # orchestrator. Never enabled by wasm consumers (bundled C engine).
-script = ["dep:rquickjs", "dep:tracing", "dep:jian-core"]
+script = ["dep:rquickjs", "dep:tracing"]
 
 [dependencies]
-# Share Preview's actual builtin registry with native script diagnostics.
-jian-core = { path = "../../vendor/jian/crates/jian-core", optional = true }
+op-codegen = { path = "../op-codegen" }
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
 jian-scene = { path = "../../vendor/jian/crates/jian-scene" }
 op-ai-skills = { path = "../op-ai-skills" }
-# Deterministic generators behind `codegen_export` (no `ai` feature).
-op-codegen = { path = "../op-codegen" }
 # `~/.openpencil` resolution for the debug-tools log reader (single source
 # of truth for the config-dir path; tiny serde-only crate).
 op-config-store = { path = "../op-config-store" }
@@ -32,7 +29,6 @@ op-design-lint = { path = "../op-design-lint" }
 op-editor-core = { path = "../op-editor-core" }
 op-html = { path = "../op-html" }
 op-pen-loader = { path = "../op-pen-loader" }
-op-image-enrich = { path = "../op-image-enrich", features = ["pixels"] }
 # Canonical JSON string escaping (dependency-free, wasm-clean).
 op-util = { path = "../op-util" }
 regex = "1"
@@ -40,7 +36,3 @@ rquickjs = { version = "0.12", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true, optional = true }
-
-[dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
-base64 = "0.22"

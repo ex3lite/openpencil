@@ -23,20 +23,11 @@ pub(crate) fn pen_roots_to_page_payload(
 }
 
 pub(super) fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usize) -> PagePayload {
-    let _ = page_idx;
-    build_page_with_measure(id, name, roots, layout_measure_backend())
-}
-
-pub(super) fn build_page_with_measure(
-    id: &str,
-    name: &str,
-    roots: &[PenNode],
-    measure: Rc<dyn MeasureBackend>,
-) -> PagePayload {
     let mut layout_rects: BTreeMap<String, [f32; 4]> = BTreeMap::new();
     for root in roots {
-        compute_layout_with_measure(root, &mut layout_rects, Rc::clone(&measure));
+        compute_layout(root, &mut layout_rects);
     }
+    let _ = page_idx;
     let mut children: Vec<NodePayload> = roots
         .iter()
         .map(|n| node_to_payload(n, &layout_rects))
@@ -97,16 +88,18 @@ pub(super) fn mark_root_frame_clips(roots: &[PenNode], children: &mut [NodePaylo
 /// origin` stays exported for `op-host-native`'s Canvas Preview tap
 /// translation, which still needs the authored origin as a standalone
 /// value (not baked into a rect).
-pub(super) fn compute_layout_with_measure(
-    root: &PenNode,
-    out: &mut BTreeMap<String, [f32; 4]>,
-    measure: Rc<dyn MeasureBackend>,
-) {
+pub(super) fn compute_layout(root: &PenNode, out: &mut BTreeMap<String, [f32; 4]>) {
     let (root_w, root_h) = root_available_size(root);
     let mut tree = NodeTree::new();
     tree.insert_subtree(root.clone(), None);
-    // Preview must use its injected runtime backend for paint geometry too.
-    let mut engine = LayoutEngine::with_backend(measure);
+    // Real-skia text measurement via jian-skia's `SkiaMeasure`
+    // (paragraph shaper). The default `EstimateBackend` is a
+    // character-count heuristic accurate to ~10% — for any
+    // `fit_content` frame whose size depends on text length the
+    // 10% error cascades through every flex parent. SkiaMeasure
+    // matches what the canvas painter actually draws so the
+    // engine + paint agree on widths.
+    let mut engine = LayoutEngine::with_backend(layout_measure_backend());
     let Ok(taffy_roots) = engine.build(&tree) else {
         return;
     };
@@ -138,7 +131,6 @@ pub(super) fn compute_layout_with_measure(
     crate::layout_repair::repair_fit_content_layout(root, out);
 }
 
-/// The canvas's selected backend, also used by runtimes that share its geometry.
-pub fn layout_measure_backend() -> Rc<dyn MeasureBackend> {
+fn layout_measure_backend() -> Rc<dyn MeasureBackend> {
     LAYOUT_MEASURE_BACKEND.with(Rc::clone)
 }

@@ -180,17 +180,11 @@ fn generation_turn_uses_empty_mcp_policy_without_host_config() {
     .unwrap();
     assert_eq!(mcp, serde_json::json!({"mcpServers": {}}));
     assert_eq!(settings["permissions"]["allow"], serde_json::json!([]));
-    let mut generation_deny = ANTIGRAVITY_DENY_RULES.to_vec();
-    generation_deny.extend(["read_file(*)", "list_dir(*)", "grep(*)"]);
     assert_eq!(
         settings["permissions"]["deny"],
-        serde_json::json!(generation_deny)
+        serde_json::json!(ANTIGRAVITY_DENY_RULES)
     );
-    assert!(turn
-        .prompt()
-        .starts_with("Reply with text only. Do not call any tool"));
-    assert!(turn.prompt().ends_with("\n\nreturn only JavaScript"));
-    assert!(!turn.prompt().contains("OPENPENCIL AUTOMATION SAFETY"));
+    assert_eq!(turn.prompt(), "return only JavaScript");
 }
 
 /// End-to-end wiring: a turn whose CLI wrote its real cause only to its own

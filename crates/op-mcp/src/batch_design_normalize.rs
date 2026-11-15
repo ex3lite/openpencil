@@ -13,17 +13,10 @@ pub(crate) fn normalize_node_shape(value: &mut serde_json::Value) {
     // Canonicalize authoring-only video nodes before any shape normalizer or
     // typed PenNode parse can inspect their discriminator.
     op_pen_loader::normalize_video_alias(value);
-    normalize_node_shape_inner(value, true);
+    normalize_node_shape_inner(value);
 }
 
-/// A replacement already has authored sizing semantics. Normalize dialects
-/// without materializing omitted text bounds as generation defaults.
-pub(crate) fn normalize_replacement_node_shape(value: &mut serde_json::Value) {
-    op_pen_loader::normalize_video_alias(value);
-    normalize_node_shape_inner(value, false);
-}
-
-fn normalize_node_shape_inner(value: &mut serde_json::Value, add_text_defaults: bool) {
+fn normalize_node_shape_inner(value: &mut serde_json::Value) {
     let serde_json::Value::Object(obj) = value else {
         return;
     };
@@ -65,9 +58,7 @@ fn normalize_node_shape_inner(value: &mut serde_json::Value, add_text_defaults: 
     // that omits one fails the whole node, and in the program DSL that
     // cascades through every descendant line — see `effect_normalize`.
     crate::effect_normalize::normalize_node_effects(obj);
-    if add_text_defaults {
-        super::node_shape_defaults::normalize_text_default_bounds(obj);
-    }
+    super::node_shape_defaults::normalize_text_default_bounds(obj);
     normalize_layout_keyword(obj, "justifyContent");
     normalize_layout_keyword(obj, "alignItems");
     normalize_image_src(obj);
@@ -78,7 +69,7 @@ fn normalize_node_shape_inner(value: &mut serde_json::Value, add_text_defaults: 
     normalize_sizing_keyword(obj, "height");
     if let Some(serde_json::Value::Array(children)) = obj.get_mut("children") {
         for child in children {
-            normalize_node_shape_inner(child, add_text_defaults);
+            normalize_node_shape_inner(child);
         }
     }
 }

@@ -36,8 +36,6 @@ impl DesktopApp {
         let fit_blank_frame = initial_file.is_none();
         // Best-effort prefs restore onto the host's `EditorState`.
         op_host_services::settings_io::load(host.editor_state_mut());
-        host.editor_state_mut().editor_ui.reduced_motion =
-            crate::reduced_motion::system_reduced_motion();
         let entry_surface = host.editor_state().editor_ui.entry_surface;
         // Keep unit-test fixtures deterministic and canvas-first; production
         // startup alone applies the persisted Home preference, while the
@@ -45,11 +43,6 @@ impl DesktopApp {
         host.editor_state_mut().editor_ui.home.visible =
             !cfg!(test) && should_show_home(initial_file.is_some(), entry_surface);
         prompt_center_store::install_user_prompts(&mut host);
-        // Desktop runs brand extraction (network + image decode) off the UI
-        // thread, so Home's 加链接 tool is live here.
-        host.editor_state_mut().editor_ui.home.brand.available = true;
-        // …and the one-click website import (fetch + post-import pipeline).
-        host.editor_state_mut().editor_ui.home.site_import.available = true;
         // Zode is a desktop-local integration. Keep it out of the shared
         // settings loader so `--serve-web` never exposes machine-local Zode
         // providers that the browser settings UI cannot manage.
@@ -187,8 +180,6 @@ impl DesktopApp {
             builtin_model_refresh: Default::default(),
             image_search: image_search_session::ImageSearchSession::new(),
             image_panel: image_panel_host::ImagePanelJobs::new(),
-            brand_jobs: crate::brand_extract_host::BrandJobs::new(),
-            site_imports: crate::site_import_host::SiteImportJobs::new(),
             remote_images: remote_image_host::RemoteImageSession::new(),
             collab_avatars: collab_avatar_host::CollabAvatarHost::new(),
             image_decodes: image_decode_host::ImageDecodeHost::new(),
@@ -196,11 +187,10 @@ impl DesktopApp {
             collab_runtime: crate::collab_runtime::DesktopCollabRuntime::new(),
             forwarded_files: single_instance::ForwardQueue::default(),
             iconify_job: None,
-            image_gen_test_job: None,
             kit_browser_open_persisted,
             provider_connect_job: None,
             provider_reconnect_queue: Vec::new(),
-            remembered_connections: [false; 8],
+            remembered_connections: [false; 7],
             last_seen_provider_phase: Default::default(),
             hovered_image_drop: false,
             drop_cursor: None,

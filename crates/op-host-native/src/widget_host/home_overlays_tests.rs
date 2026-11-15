@@ -107,10 +107,8 @@ fn connect_card_rows_open_their_modals_and_escape_closes_the_card() {
 
     // Re-open via Send this time, then Escape peels the card off. The
     // settings modal must be closed first — while it is open it owns
-    // every press above Home. The brief is the user's own: an empty box
-    // would open the example's template draft instead of the card.
+    // every press above Home.
     host.editor_state_mut().editor_ui.agent_settings_open = false;
-    host.editor_state_mut().editor_ui.home.set_draft("取餐预约");
     let send = center(layout.send);
     assert!(host.apply_press(send.x, send.y, W, H));
     assert!(host.editor_state().editor_ui.home.connect_card_open);
@@ -131,21 +129,6 @@ fn home_send_marks_the_turn_for_the_orchestrator_route() {
         "a Home-launched brief must take the orchestrator pipeline"
     );
     assert!(host.editor_state().chat.pending_send.is_some());
-    let chat = &host.editor_state().chat;
-    assert_eq!(chat.title, "取餐预约");
-    assert_eq!(
-        chat.messages
-            .iter()
-            .find(|message| message.role == op_editor_core::ChatRole::User)
-            .unwrap()
-            .content,
-        "取餐预约"
-    );
-    assert!(chat
-        .pending_send
-        .as_ref()
-        .unwrap()
-        .contains("用户需求：取餐预约"));
 }
 
 #[test]
@@ -271,7 +254,7 @@ fn home_routes_the_signed_in_account_menu_as_well_as_the_sign_in_modal() {
     assert!(host.open_account_entry());
     assert!(host.editor_state().editor_ui.login_modal_open);
     assert_eq!(
-        host.press_home_overlays(400.0, 400.0, 1440.0, 900.0, true),
+        host.press_home_overlays(400.0, 400.0, 1440.0, 900.0),
         Some(true),
         "the modal owns presses over the takeover"
     );
@@ -280,7 +263,7 @@ fn home_routes_the_signed_in_account_menu_as_well_as_the_sign_in_modal() {
     host.editor_state_mut().editor_ui.login_modal_open = false;
     host.editor_state_mut().editor_ui.account_menu_open = true;
     assert_eq!(
-        host.press_home_overlays(400.0, 400.0, 1440.0, 900.0, true),
+        host.press_home_overlays(400.0, 400.0, 1440.0, 900.0),
         Some(true),
         "an open account menu must not let presses fall through Home"
     );
@@ -303,90 +286,4 @@ fn the_account_menu_anchors_to_homes_own_avatar() {
     assert!(home.size.x > 0.0 && home.size.y > 0.0);
     assert!(home.origin.y < 60.0, "in the top bar: {home:?}");
     assert!(home.origin.x < pro.origin.x, "left of the pro avatar");
-}
-
-/// The picker's own footer action must reach the agent settings. It sat
-/// inert because the press path asked only "which model row is this",
-/// and the footer answers that question with "chrome".
-#[test]
-fn the_home_picker_footer_opens_agent_settings_on_the_agents_tab() {
-    use op_editor_ui::widgets::ai_chat_model_picker::MODEL_FOOTER_H;
-    let mut host = host_with_usable_agent();
-    let chip = chip_center(&host);
-    assert!(host.apply_press(chip.x, chip.y, W, H));
-    let card = host.home_model_picker_geometry(W, H).expect("picker open");
-    let footer = Point2D::new(
-        card.origin.x + 40.0,
-        card.origin.y + card.size.y - MODEL_FOOTER_H / 2.0,
-    );
-    assert!(host.apply_press(footer.x, footer.y, W, H));
-    assert!(host.editor_state().editor_ui.agent_settings_open);
-    assert_eq!(
-        host.editor_state().editor_ui.agent_settings.tab,
-        op_editor_core::AgentSettingsTab::Agents
-    );
-    assert!(!host.editor_state().editor_ui.chat_model_picker.open);
-}
-
-#[test]
-fn home_settings_hover_exposes_provider_edit_and_owns_the_following_press() {
-    use op_editor_core::agent_settings::{BuiltinAgentField, SettingsFocus};
-    use op_editor_ui::widgets::agent_settings_panel::{content_viewport, AgentSettingsPanel};
-
-    let mut host = host_with_usable_agent();
-    host.last_viewport_w = W;
-    host.last_viewport_h = H;
-    host.editor_state_mut().editor_ui.home.composer_focused = false;
-    host.editor_state_mut()
-        .editor_ui
-        .home
-        .set_draft("keep this brief");
-    // Cmd+, can open settings while a Home picker is still present.
-    host.editor_state_mut().editor_ui.chat_model_picker.open = true;
-    assert!(host.apply_toggle_agent_settings());
-    let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let content = content_viewport(panel.rect(W, H));
-    let y = content.origin.y
-        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
-        + 28.0
-        + 28.0
-        + 30.0;
-    let point = Point2D::new(content.origin.x + content.size.x - 52.0, y);
-
-    assert!(host.apply_cursor_move(point.x, point.y));
-    assert_eq!(
-        host.editor_state()
-            .editor_ui
-            .agent_settings
-            .hover_builtin_agent,
-        0
-    );
-    assert_eq!(host.editor_state().editor_ui.home.hover, None);
-    assert!(host.apply_press(point.x, point.y, W, H));
-    assert_eq!(
-        host.editor_state().editor_ui.agent_settings.focus,
-        Some(SettingsFocus::BuiltinAgent {
-            index: 0,
-            field: BuiltinAgentField::DisplayName,
-        })
-    );
-    assert!(!host.editor_state().editor_ui.home.composer_focused);
-    assert_eq!(host.editor_state().editor_ui.home.draft, "keep this brief");
-    assert_eq!(host.editor_state().editor_ui.home.pressed, None);
-}
-
-#[test]
-fn home_settings_scrim_keeps_hover_and_press_off_the_home_composer() {
-    let mut host = host_with_usable_agent();
-    host.last_viewport_w = W;
-    host.last_viewport_h = H;
-    host.editor_state_mut().editor_ui.home.composer_focused = false;
-    assert!(host.apply_toggle_agent_settings());
-    let blank = Point2D::new(8.0, H - 8.0);
-    host.apply_cursor_move(blank.x, blank.y);
-    assert_eq!(host.editor_state().editor_ui.home.hover, None);
-    assert!(host.apply_press(blank.x, blank.y, W, H));
-    assert!(host.home_visible());
-    assert!(!host.editor_state().editor_ui.home.composer_focused);
-    assert_eq!(host.editor_state().editor_ui.home.pressed, None);
 }

@@ -49,7 +49,6 @@ pub struct AgentLoopConfig {
     pub system_prompt: String,
     pub history: Vec<(ChatHistoryRole, String)>,
     pub user_prompt: String,
-    pub attachments: Vec<op_ai::chat_provider::ChatAttachment>,
     pub max_output_tokens: u32,
     pub tools: Vec<ChatToolDef>,
     pub executor: Arc<dyn ChatToolExecutor>,

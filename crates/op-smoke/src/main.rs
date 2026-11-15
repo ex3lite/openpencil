@@ -21,10 +21,6 @@
 //! - `OPENPENCIL_SMOKE_VALIDATION=1` — opt into the production lint
 //!   pre-validator and post-generation validation stage. The default remains
 //!   skipped so existing smoke traces are unchanged.
-//! - `OPENPENCIL_SMOKE_CHECKPOINT_OUT` — create a new, independent pre-image
-//!   document; refuses existing paths and aliases of the final output.
-//! - `OPENPENCIL_SMOKE_IMAGE_BUDGET_SECS` — optional positive whole-image-stage
-//!   deadline. Exhaustion saves final output and exits 5 when slots remain.
 //!
 //! ## What this verifies vs the desktop GUI smoke
 //!
@@ -51,17 +47,12 @@ use std::sync::Arc;
 
 mod audit_rubric;
 mod best_of;
-mod home_prompt;
 mod image_fill;
 mod llm_clients;
 mod loop_mode;
 mod loop_seed;
 mod modify_mode;
-mod smoke_post;
-mod smoke_post_error;
-mod smoke_save;
 mod smoke_support;
-mod variants_mode;
 
 use agent::provider::anthropic::AnthropicProvider;
 use agent::provider::openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
@@ -76,8 +67,8 @@ use crate::llm_clients::{DirectOpenAiClient, SmokeLlmClient};
 // items keep their original `crate::<item>` paths.
 pub(crate) use smoke_support::InlineDocSink;
 use smoke_support::{
-    antigravity_llm, claude_code_llm, codex_llm, kimi_llm, loop_thinking_mode,
-    maybe_merge_smoke_library, truthy_env_value, SmokeProviderKind,
+    antigravity_llm, claude_code_llm, loop_thinking_mode, maybe_merge_smoke_library,
+    truthy_env_value, SmokeProviderKind,
 };
 
 /// Headless agentic tool-loop branch (`OPENPENCIL_SMOKE_LOOP=1`).
@@ -85,15 +76,8 @@ use smoke_support::{
 /// Reads the openai-compat `OPENPENCIL_LLM_*` env (the ab-v9 wire), runs the
 /// production builtin design loop against a live `EditorState`, then dumps
 /// `state.doc` to `OPENPENCIL_SMOKE_OUT` using the SAME serialize path as the
-/// orchestrator mode (canonical bytes with editor metadata → file write).
+/// orchestrator mode (`serde_json::to_string_pretty` → `std::fs::write`).
 async fn run_loop_mode(prompt: String) -> std::process::ExitCode {
-    let post = match smoke_post::PostGeneration::from_env() {
-        Ok(post) => post,
-        Err(error) => {
-            eprintln!("[SMOKE] configuration error: {error}");
-            return std::process::ExitCode::from(3);
-        }
-    };
     let model =
         std::env::var("OPENPENCIL_ORCHESTRATOR_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into());
     let key = match std::env::var("OPENPENCIL_LLM_API_KEY")
@@ -179,41 +163,64 @@ async fn run_loop_mode(prompt: String) -> std::process::ExitCode {
         }
     };
 
-    // Optional independent checkpoint, real image fill, then final canonical
-    // save. Run off the tokio worker because the shared fetch bridge blocks.
-    let post_code = std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                let mut guard = state.lock().expect("EditorState mutex poisoned");
-                post.run(&mut guard, dump)
-            })
-            .join()
-            .expect("image-fill task panicked")
+    // Image-fill post-loop step (OPENPENCIL_SMOKE_FILL_IMAGES=1): resolve
+    // pending image-search queries to real URLs from Openverse BEFORE the `.op`
+    // is persisted so the saved document contains the filled `src` values.
+    let image_config = image_fill::ImageFillConfig::from_env();
+    // On a plain thread, never inline: the fetch bridge builds its own small
+    // runtime, which panics with "Cannot start a runtime from within a runtime"
+    // when driven from this tokio-hosted main (measured on the first benchmark
+    // run, which lost its whole image pass to the abort).
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut guard = state.lock().expect("EditorState mutex poisoned");
+            image_fill::fill_images(&mut guard, &image_config, dump);
+        });
     });
 
     let guard = state.lock().expect("EditorState mutex poisoned");
     let total_nodes = guard.active_children().len();
     eprintln!("[LOOP] finished in {elapsed:?}; top-level node(s)={total_nodes}");
 
-    std::process::ExitCode::from(post_code)
+    // Dump via the IDENTICAL serialize path the orchestrator mode uses.
+    let save_failed = match std::env::var("OPENPENCIL_SMOKE_OUT") {
+        Ok(out_path) if !out_path.is_empty() => match serde_json::to_string_pretty(&guard.doc) {
+            Ok(json) => match std::fs::write(&out_path, json) {
+                Ok(()) => {
+                    eprintln!("[SMOKE] saved doc → {out_path}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!("[SMOKE] save failed ({out_path}): {e}");
+                    true
+                }
+            },
+            Err(e) => {
+                eprintln!("[SMOKE] serialize failed: {e}");
+                true
+            }
+        },
+        _ => false,
+    };
+
+    if save_failed {
+        std::process::ExitCode::from(4)
+    } else {
+        std::process::ExitCode::SUCCESS
+    }
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> std::process::ExitCode {
-    op_host_native::bundled_design_fonts::register();
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    let (variants, prompt) = match variants_mode::parse_smoke_args(&argv) {
-        Ok(parsed) => (parsed.variants, parsed.prompt),
-        Err(reason) => {
+    let prompt = match std::env::args().nth(1) {
+        Some(p) if !p.is_empty() => p,
+        _ => {
             eprintln!(
-                "error: {reason}\n\
-                 usage: op-smoke [--variants N] <prompt>\n\n\
+                "usage: op-smoke <prompt>\n\n\
                  providers:\n\
                    anthropic (default): OPENPENCIL_ANTHROPIC_API_KEY=...\n\
                    openai-compat: OPENPENCIL_LLM_BASE_URL=... OPENPENCIL_LLM_API_KEY=...\n\
                    antigravity/agy: uses the logged-in agy CLI\n\
-                   codex: uses the logged-in Codex CLI\n\
-                   kimi: uses the logged-in Kimi Code CLI (model alias e.g. k3.1-pro)\n\
                    claude/claude-code: uses the logged-in claude CLI (model alias e.g. opus)\n\n\
                  common:\n\
                    OPENPENCIL_ORCHESTRATOR_MODEL=<model>\n\
@@ -221,13 +228,6 @@ async fn main() -> std::process::ExitCode {
                    OPENPENCIL_SMOKE_PIN_STYLE_GUIDE=<style guide name>\n\
                    OPENPENCIL_SMOKE_VALIDATION=1"
             );
-            return std::process::ExitCode::from(2);
-        }
-    };
-    let prompt = match home_prompt::from_env(prompt) {
-        Ok(prompt) => prompt,
-        Err(error) => {
-            eprintln!("[HOME] {error}");
             return std::process::ExitCode::from(2);
         }
     };
@@ -254,7 +254,7 @@ async fn main() -> std::process::ExitCode {
     let Some(provider_kind) = SmokeProviderKind::parse(&provider_kind_raw) else {
         eprintln!(
             "error: unknown OPENPENCIL_LLM_PROVIDER={provider_kind_raw:?} \
-             (want anthropic|openai-compat|antigravity|agy|claude|claude-code|codex|kimi)"
+             (want anthropic|openai-compat|antigravity|agy|claude|claude-code)"
         );
         return std::process::ExitCode::from(3);
     };
@@ -264,8 +264,6 @@ async fn main() -> std::process::ExitCode {
             SmokeProviderKind::OpenAiCompat => "gpt-4o-mini".into(),
             SmokeProviderKind::Antigravity => "gemini-3.6-flash-high".into(),
             SmokeProviderKind::ClaudeCode => "opus".into(),
-            SmokeProviderKind::Codex => "gpt-6.1-sol".into(),
-            SmokeProviderKind::Kimi => "k3.1-pro".into(),
         });
 
     eprintln!("[SMOKE] provider={} model={model}", provider_kind.label());
@@ -327,8 +325,6 @@ async fn main() -> std::process::ExitCode {
         }
         SmokeProviderKind::Antigravity => antigravity_llm(&model),
         SmokeProviderKind::ClaudeCode => claude_code_llm(&model),
-        SmokeProviderKind::Codex => codex_llm(&model),
-        SmokeProviderKind::Kimi => kimi_llm(&model),
     };
 
     // `OPENPENCIL_SMOKE_STARTER=1` seeds the fresh-canvas starter frame so a
@@ -345,7 +341,6 @@ async fn main() -> std::process::ExitCode {
             EditorState::new()
         },
     };
-    home_prompt::record_purpose(&mut sink.state);
     // `OPENPENCIL_SMOKE_LIBRARY=<path-to-.lib.op>` loads a harvested component
     // library into the doc BEFORE generation so the generator can instantiate
     // its reusable masters (the AVAILABLE COMPONENTS manifest path). Unset =
@@ -454,7 +449,7 @@ async fn main() -> std::process::ExitCode {
             }
         };
         let code = match std::env::var("OPENPENCIL_SMOKE_OUT") {
-            Ok(out) if !out.is_empty() => match smoke_save::bytes(&sink.state) {
+            Ok(out) if !out.is_empty() => match serde_json::to_string_pretty(&sink.state.doc) {
                 Ok(j) => match std::fs::write(&out, j) {
                     Ok(()) => {
                         eprintln!("[PROGRAM] saved doc -> {out}");
@@ -565,8 +560,7 @@ async fn main() -> std::process::ExitCode {
     // geometry-scored, best one saved. The plain single-run path below
     // stays byte-identical when the knob is unset.
     let best_of_n = best_of::parse_best_of_count();
-    // Best-of-N picks one design; it does not compose with `--variants`.
-    if best_of_n > 1 && variants.is_none() {
+    if best_of_n > 1 {
         return best_of::run_best_of(
             best_of_n,
             &request,
@@ -582,63 +576,63 @@ async fn main() -> std::process::ExitCode {
         eprintln!("[PROGRESS] {p:?}");
     };
 
-    let post = match smoke_post::PostGeneration::from_env() {
-        Ok(post) => post,
-        Err(error) => {
-            eprintln!("[SMOKE] configuration error: {error}");
-            return std::process::ExitCode::from(3);
-        }
-    };
     let started = std::time::Instant::now();
-    // `--variants N`: the same side-by-side directions runner the desktop's
-    // `LaunchRoute::Variants` turn drives, landing every direction here.
-    let result = match variants {
-        Some(count) => {
-            variants_mode::run_variants(
-                count,
-                &request,
-                &mut sink,
-                llm.as_ref(),
-                &abort,
-                &providers,
-                &mut on_progress,
-            )
-            .await
-        }
-        None => {
-            Orchestrator::new()
-                .run(
-                    request,
-                    &mut sink,
-                    llm.as_ref(),
-                    &mut on_progress,
-                    &abort,
-                    &providers,
-                )
-                .await
-        }
-    };
+    let result = Orchestrator::new()
+        .run(
+            request,
+            &mut sink,
+            llm.as_ref(),
+            &mut on_progress,
+            &abort,
+            &providers,
+        )
+        .await;
     let elapsed = started.elapsed();
 
-    // Both routes use the same checkpoint → image fill → final save contract.
-    // Even a failed generation or expired image budget retains its final doc.
+    // Image-fill post step (OPENPENCIL_SMOKE_FILL_IMAGES=1), the same one the
+    // loop path runs: resolve pending image-search queries to real Openverse
+    // URLs BEFORE persisting, so the saved `.op` — and the render-shots pass
+    // that reads it — carries real pictures instead of grey placeholders.
+    // Scoped thread for the same reason as the loop path: the fetch bridge
+    // builds its own runtime and cannot be driven from this tokio main.
+    let image_config = image_fill::ImageFillConfig::from_env();
     let dump_images = std::env::var("OPENPENCIL_SMOKE_DUMP").is_ok();
-    let post_code = std::thread::scope(|scope| {
-        scope
-            .spawn(|| post.run(&mut sink.state, dump_images))
-            .join()
-            .expect("image-fill task panicked")
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            image_fill::fill_images(&mut sink.state, &image_config, dump_images);
+        });
     });
+
+    // Persist the produced PenDocument when OPENPENCIL_SMOKE_OUT is set,
+    // so the render / screenshot step can pick it up. Canonical
+    // serde_json mirrors `persistence::save_to_path`. Saved regardless of
+    // Ok/Err so a partial doc stays inspectable on failure.
+    // A requested save that FAILS forces a non-zero exit below — a
+    // benchmark driver must not read "success" when no `.op` was written.
+    let save_failed = match std::env::var("OPENPENCIL_SMOKE_OUT") {
+        Ok(out_path) if !out_path.is_empty() => match serde_json::to_string_pretty(&sink.state.doc)
+        {
+            Ok(json) => match std::fs::write(&out_path, json) {
+                Ok(()) => {
+                    eprintln!("[SMOKE] saved doc → {out_path}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!("[SMOKE] save failed ({out_path}): {e}");
+                    true
+                }
+            },
+            Err(e) => {
+                eprintln!("[SMOKE] serialize failed: {e}");
+                true
+            }
+        },
+        _ => false,
+    };
 
     match result {
         Ok(summary) => {
-            if post_code == 0 {
-                eprintln!("[FINAL] Ok in {elapsed:?}");
-            } else {
-                eprintln!(
-                    "[FINAL] generation completed in {elapsed:?}; post-generation incomplete"
-                );
-            }
+            eprintln!("[FINAL] Ok in {elapsed:?}");
             eprintln!("  root_frame_id = {:?}", summary.root_frame_id);
             eprintln!("  total_nodes   = {}", summary.total_nodes);
             eprintln!("  subtasks      = {}", summary.subtasks.len());
@@ -653,42 +647,11 @@ async fn main() -> std::process::ExitCode {
                         .unwrap_or_default()
                 );
             }
-            if post_code != 0 {
-                eprintln!(
-                    "[FINAL] generation OK but post-generation stage failed (exit {post_code})"
-                );
-                std::process::ExitCode::from(post_code)
+            if save_failed {
+                eprintln!("[FINAL] generation OK but OPENPENCIL_SMOKE_OUT write failed");
+                std::process::ExitCode::from(4)
             } else {
-                // motion50 fix 1: a run that produced ZERO done subtasks, or
-                // that ended with the abort flag set (the provider-limit
-                // circuit breaker among others), must not exit 0 — the lane
-                // runner reads 0 as success (measured: lane1/web-10 delivered
-                // scaffold-only output and exited 0). The doc was already
-                // saved above so the scaffold stays inspectable.
-                match no_done_subtasks_exit_code(abort.is_set(), done_subtask_count(&summary)) {
-                    Some(code) => {
-                        eprintln!(
-                            "[FINAL] run delivered no completed subtasks \
-                             (done={}, abort_set={}) — failing with exit {code}",
-                            done_subtask_count(&summary),
-                            abort.is_set()
-                        );
-                        std::process::ExitCode::from(code)
-                    }
-                    None => {
-                        let failed = smoke_support::failed_subtask_count(&summary);
-                        match smoke_support::failed_subtasks_exit_code(failed) {
-                            Some(code) => {
-                                eprintln!(
-                                    "[FINAL] {failed} subtask(s) delivered nothing; the saved \
-                                     doc has gaps — failing with exit {code}"
-                                );
-                                std::process::ExitCode::from(code)
-                            }
-                            None => std::process::ExitCode::SUCCESS,
-                        }
-                    }
-                }
+                std::process::ExitCode::SUCCESS
             }
         }
         Err(e) => {
@@ -696,19 +659,6 @@ async fn main() -> std::process::ExitCode {
             std::process::ExitCode::from(1)
         }
     }
-}
-
-/// "Done" for smoke purposes: the subtask landed content. Incomplete /
-/// language-mismatch keep their nodes, so they still count as delivered work.
-fn done_subtask_count(summary: &op_orchestrator::RunSummary) -> usize {
-    summary.subtasks.iter().filter(|s| s.node_count > 0).count()
-}
-
-/// The exit-2 decision (motion50 fix 1): `Some(2)` when the abort flag is set
-/// or no subtask delivered content, `None` for a healthy run. A pure function
-/// so the rule is unit-testable without driving `main`.
-fn no_done_subtasks_exit_code(abort_set: bool, done_count: usize) -> Option<u8> {
-    (abort_set || done_count == 0).then_some(2)
 }
 
 #[cfg(test)]
@@ -734,23 +684,6 @@ mod provider_tests {
             Some(SmokeProviderKind::OpenAiCompat)
         );
         assert_eq!(SmokeProviderKind::parse("unknown"), None);
-    }
-
-    // ── motion50 fix 1: a scaffold-only or aborted run must exit non-zero ───
-
-    #[test]
-    fn zero_done_subtasks_forces_exit_two() {
-        assert_eq!(no_done_subtasks_exit_code(false, 0), Some(2));
-    }
-
-    #[test]
-    fn an_aborted_run_forces_exit_two_even_with_done_subtasks() {
-        assert_eq!(no_done_subtasks_exit_code(true, 3), Some(2));
-    }
-
-    #[test]
-    fn a_healthy_run_exits_zero() {
-        assert_eq!(no_done_subtasks_exit_code(false, 2), None);
     }
 
     #[test]

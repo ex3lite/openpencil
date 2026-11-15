@@ -36,5 +36,3 @@ mod tests_rail_wrapper_gutter;
 mod tests_repair_summary;
 #[path = "cleanup_repair_tier_tests.rs"]
 mod tests_repair_tier;
-#[path = "cleanup_square_ring_tests.rs"]
-mod tests_square_ring;

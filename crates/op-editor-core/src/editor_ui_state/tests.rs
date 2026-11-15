@@ -3,7 +3,6 @@
 //! Split out of the `editor_ui_state` spine (800-line file ceiling).
 
 use super::*;
-use crate::tool::Tool;
 
 #[test]
 fn default_editor_ui_is_quiescent() {
@@ -401,16 +400,4 @@ fn host_locale_override_changes_only_the_effective_locale() {
 
     ui.set_host_locale_override(None);
     assert_eq!(ui.effective_locale(), Locale::ZhCn);
-}
-
-#[test]
-fn reduced_motion_settles_every_chrome_animation_stamp() {
-    let mut ui = EditorUiState::default();
-    assert_eq!(ui.motion_stamp(1_234), 1_234, "full motion keeps the stamp");
-    ui.reduced_motion = true;
-    assert_eq!(
-        ui.motion_stamp(1_234),
-        0,
-        "a 0 stamp is the settled state every chrome animation already honours"
-    );
 }

@@ -7,22 +7,14 @@
 //! - `node_count == 0` —— 零节点失败,调用方应停止后续 subtask;
 //! - `node_count > 0`(`error` 可带软错误)—— 部分产出,继续后续。
 
-pub(crate) use crate::orchestration_self_check::IntentCheckMode;
 use crate::plan::{OrchestratorPlan, Subtask};
 use crate::prompt::build_subagent_prompt_with_screen_routes_and_outcomes;
-#[cfg(test)]
-use crate::subagent_self_check::rejected_subtree_summary;
 use crate::types::{AbortFlag, DesignRequest, DocSink, LlmChunk, LlmClient, SubtaskOutcome};
 use futures::StreamExt;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use op_editor_core::{EditorCommand, NodeId, PenNodeExt};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[path = "subagent_empty_controls.rs"]
-mod empty_controls;
-#[path = "subagent_spacing.rs"]
-mod spacing;
 
 /// 执行一个 subtask。总是返回 [`SubtaskOutcome`];调用方据
 /// `node_count` 决定继续/停止。
@@ -118,17 +110,10 @@ pub(crate) async fn run_subtask_with_reveal_at(
         reveal_started_ms,
         on_progress,
         &[],
-        IntentCheckMode::Reject,
     )
     .await
 }
 
-/// One subtask attempt. `intent_mode` decides whether intent-class
-/// self-check findings (`section-structure-drift`) reject this attempt
-/// ([`IntentCheckMode::Reject`] — any attempt the caller can still retry)
-/// or only log ([`IntentCheckMode::Advisory`] — the retry ladder's last
-/// rung, the salvage pass, the manual Retry). Contract-class findings
-/// reject in both modes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
     subtask: &Subtask,
@@ -143,7 +128,6 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
     reveal_started_ms: u64,
     on_progress: Option<&mut dyn FnMut(crate::types::Progress)>,
     prior_outcomes: &[SubtaskOutcome],
-    intent_mode: IntentCheckMode,
 ) -> SubtaskOutcome {
     let fail = |msg: String| SubtaskOutcome {
         id: subtask.id.clone(),
@@ -157,34 +141,6 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
         subtask: Some(subtask.clone()),
     };
 
-    if let Some(node) = spacing::node(subtask, plan) {
-        if abort.is_set() {
-            return fail("aborted".into());
-        }
-        let parent = subtask
-            .parent_frame_id
-            .clone()
-            .map(NodeId::new)
-            .unwrap_or(NodeId::NONE);
-        return match apply_insert_subtree_with_reveal(
-            sink,
-            vec![node],
-            parent,
-            indicator_epoch,
-            reveal_started_ms,
-        ) {
-            Some(inserted_root_ids) => SubtaskOutcome {
-                id: subtask.id.clone(),
-                node_count: 1,
-                error: None,
-                inserted_root_ids,
-                headline: None,
-                subtask: None,
-            },
-            None => fail("InsertSubtree rejected: layout spacer parent unavailable".into()),
-        };
-    }
-
     // Snapshot document-wide prompt context before building the prompt.
     // Classic fan-out derives routes from normalized planning groups; loop
     // continuation (whose synthetic plan has no screen labels) falls back to
@@ -195,7 +151,7 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
     let has_variables = state.doc.variables.as_ref().is_some_and(|v| !v.is_empty());
 
     // 收集 LLM 文本输出。
-    let (mut call_req, skill_report) = build_subagent_prompt_with_screen_routes_and_outcomes(
+    let (call_req, skill_report) = build_subagent_prompt_with_screen_routes_and_outcomes(
         subtask,
         plan,
         req,
@@ -207,22 +163,6 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
         &screen_routes,
         prior_outcomes,
     );
-    call_req
-        .user_prompt
-        .push_str(&crate::chrome_copy_context::prompt_block(
-            state,
-            subtask,
-            plan,
-            prior_outcomes,
-        ));
-    call_req
-        .user_prompt
-        .push_str(&crate::interaction_handoff::prompt_block(
-            state,
-            subtask,
-            plan,
-            prior_outcomes,
-        ));
     // Surface the per-subtask skill-load report to the chat UI immediately
     // after the prompt is built (spec Component 4).
     if let Some(cb) = on_progress {
@@ -251,16 +191,8 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
             Err(e) => {
                 return fail(if e.aborted {
                     "aborted".into()
-                } else if e
-                    .message
-                    .trim_start()
-                    .to_ascii_lowercase()
-                    .starts_with("stream error: ")
-                {
-                    e.message
                 } else {
-                    // Keep provider text outside locally emitted self-check categories.
-                    format!("stream error: {}", e.message)
+                    e.message
                 });
             }
         }
@@ -287,37 +219,11 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
                 raw = %text,
                 "subagent script-gen parse failed"
             );
-            return fail(
-                if matches!(
-                    &e,
-                    crate::script_gen::ScriptGenError::ParentReference(_)
-                        | crate::script_gen::ScriptGenError::RuntimeExpression(_)
-                ) {
-                    // A proven output-structure violation needs actionable
-                    // feedback, not a skill-tier downgrade or a partial forest.
-                    format!("self-check failed: {e}")
-                } else {
-                    e.to_string()
-                },
-            );
+            return fail(e.to_string());
         }
     };
     if is_blank_container_forest(&nodes) {
         return fail("blank container root produced no content nodes".into());
-    }
-    if let Some(reason) = crate::generated_stepper_check::rejection(&req.prompt, &nodes) {
-        return fail(reason);
-    }
-    // Check only this section's promised copy; multi-page runs must neither
-    // lose supplied lines nor repeat every line on each page.
-    let missing = crate::source_copy::SourceCopy::from_brief(&req.prompt)
-        .for_subtask(plan, subtask)
-        .missing(sink.state(), &nodes);
-    if !missing.is_empty() {
-        return fail(crate::source_copy::SourceCopy::retry_feedback(&missing));
-    }
-    if let Some(reason) = crate::source_facts::rejection(req, &nodes) {
-        return fail(reason);
     }
     // Semantic role inference + role-default injection (P2 I1/I2) on the parsed
     // subtree, BEFORE the fallback sizing normalize (semantic-before-fallback,
@@ -345,7 +251,6 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
     // full-width page bands (empty banner + floating invisible text, etc.).
     coalesce_subtask_section(&mut nodes);
     crate::role_infer::resolve_forest_roles(&mut nodes, canvas_width, theme);
-    crate::text_effect_overlay::normalize_generated_order(&mut nodes);
     // Cross-node contrast post-pass (I3) runs AFTER role resolution (it keys off
     // the roles I1/I2 set) and before the fallback sizing normalize.
     // Repair-tier policy for this document (see `crate::repair_tier`): the
@@ -370,14 +275,6 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
     // violations into the user-visible summary.
     for echo in &deck_echoes {
         tracing::warn!(subtask = %subtask.id, echo = %echo.line(), "deck geometry left unrepaired");
-    }
-    if let Some(reason) = empty_controls::rejection(&nodes) {
-        return fail(reason);
-    }
-    if let Some(reason) =
-        crate::navigation_interaction::rejection(req, subtask, &nodes, &program_state)
-    {
-        return fail(reason);
     }
     // Promote explicitly-marked role frames to first-class widget nodes.
     // Must run AFTER post_pass_forest (which keys on `role` to set defaults)
@@ -413,11 +310,7 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
         );
     }
     if tier.runs_pass(crate::repair_tier::TieredPass::VariableBinding) {
-        crate::variable_binding::bind_generated_color_variables_for_background(
-            &mut nodes,
-            sink.state(),
-            page_bg.as_deref(),
-        );
+        crate::variable_binding::bind_generated_color_variables(&mut nodes, sink.state());
     }
     // Surface-color discipline runs AFTER binding: glm emits raw hex, and binding
     // is what turns it into the `$--color-error` / `$--background` refs this
@@ -425,22 +318,35 @@ pub(crate) async fn run_subtask_with_reveal_at_and_outcomes(
     // page-bg token off inner wrappers). Pre-binding it only saw hex and missed.
     crate::role_post_pass::enforce_surface_color_discipline_with_tier(&mut nodes, &tier);
     normalize_section_roots_for_parent_layout(&mut nodes);
-    if let Err(reason) = crate::map_viewport::restore_height(&mut nodes, subtask) {
-        return fail(reason.to_string());
-    }
-    if let Some(reason) = crate::first_viewport::rejection(subtask, &nodes, sink.state()) {
-        return fail(reason);
-    }
-    if let Err(error) = crate::subagent_self_check::gate_generated_nodes(
-        &mut nodes,
+    let self_check = crate::orchestration_self_check::check_generated_nodes_for_prompt(
+        &nodes,
         canvas_width,
         &req.prompt,
-        &subtask.id,
-        intent_mode,
-    ) {
-        return fail(error);
+    );
+    if self_check.has_fatal() {
+        let fixed =
+            crate::orchestration_self_check::auto_fix_fixable_issues(&mut nodes, canvas_width);
+        let recheck = crate::orchestration_self_check::check_generated_nodes_for_prompt(
+            &nodes,
+            canvas_width,
+            &req.prompt,
+        );
+        if recheck.has_fatal() {
+            let message = recheck.failure_message();
+            tracing::warn!(
+                subtask = %subtask.id,
+                issues = %message,
+                "subagent self-check rejected generated nodes (unfixable after auto-fix)"
+            );
+            return fail(format!("self-check failed: {message}"));
+        }
+        if fixed {
+            tracing::info!(
+                subtask = %subtask.id,
+                "subagent self-check auto-fixed fixable layout issues before insertion"
+            );
+        }
     }
-    crate::mobile_action_bar_plan::preserve(&mut nodes, subtask, plan, req, sink.state());
     let node_count = nodes.len();
 
     // Hoist node-level `state` to one document-root MergeAppState so

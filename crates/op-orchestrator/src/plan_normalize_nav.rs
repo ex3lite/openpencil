@@ -3,7 +3,7 @@
 use crate::plan::{OrchestratorPlan, Region, Subtask};
 use crate::types::DesignRequest;
 
-use super::plan_home_intent::{plan_is_app_home_screen, screen_is_app_home};
+use super::plan_home_intent::plan_is_app_home_screen;
 
 fn prompt_requests_bottom_nav(prompt: &str) -> bool {
     let hay = prompt.to_lowercase();
@@ -36,15 +36,7 @@ pub(super) fn is_bottom_nav_subtask(st: &Subtask) -> bool {
         st.label.to_lowercase(),
         st.elements.as_deref().unwrap_or_default().to_lowercase()
     );
-    // Chinese labels and the `bottom-nav` id are what a Chinese brief gets
-    // planned as; missing them appended a second, English "Bottom
-    // Navigation" subtask under a plan that already had `bottom-nav
-    // (底部导航栏)`, and the screen drew two tab bars.
     hay.contains("bottom nav")
-        || hay.contains("bottom-nav")
-        || hay.contains("底部导航")
-        || hay.contains("底部标签")
-        || hay.contains("底栏")
         || hay.contains("bottom-navigation")
         || hay.contains("bottom navigation")
         || hay.contains("bottom tab")
@@ -62,37 +54,6 @@ pub(super) fn ensure_requested_bottom_nav_subtask(
         plan.subtasks.retain(|st| !is_bottom_nav_subtask(st));
         return;
     }
-    // A multi-screen app is often named simply "App". Decide per screen,
-    // even if a planner collapsed each complete screen into one subtask.
-    let groups = crate::screen_groups::group_subtasks_by_screen(&plan.subtasks);
-    if groups.len() > 1 {
-        if req.append_context.is_some() {
-            return;
-        }
-        for (index, group) in groups.iter().enumerate() {
-            // A partial hero/section continuation is not a whole new home.
-            let screen_height: f64 = group
-                .indices
-                .iter()
-                .map(|&i| plan.subtasks[i].region.height)
-                .sum();
-            let complete_screen =
-                group.indices.len() >= 3 || screen_height >= plan.root_frame.height * 0.75;
-            if screen_is_app_home(&group.screen)
-                && complete_screen
-                && !group
-                    .indices
-                    .iter()
-                    .any(|&i| is_bottom_nav_subtask(&plan.subtasks[i]))
-            {
-                let mut nav = bottom_nav_subtask(plan.root_frame.width);
-                nav.id = format!("bottom-navigation-{index}");
-                nav.screen = Some(group.screen.clone());
-                plan.subtasks.push(nav);
-            }
-        }
-        return;
-    }
     if plan.subtasks.iter().any(is_bottom_nav_subtask) {
         return;
     }
@@ -104,16 +65,11 @@ pub(super) fn ensure_requested_bottom_nav_subtask(
         return;
     }
 
-    plan.subtasks
-        .push(bottom_nav_subtask(plan.root_frame.width));
-}
-
-fn bottom_nav_subtask(width: f64) -> Subtask {
-    Subtask {
+    plan.subtasks.push(Subtask {
         id: "bottom-navigation".into(),
         label: "Bottom Navigation".into(),
         region: Region {
-            width,
+            width: plan.root_frame.width,
             height: 78.0,
         },
         bleed_hero: false,
@@ -126,7 +82,7 @@ fn bottom_nav_subtask(width: f64) -> Subtask {
         ),
         screen: None,
         generated_root_id: None,
-        existing_section_labels: None, covers: None,
+        existing_section_labels: None,
         retry_feedback: None,
-    }
+    });
 }

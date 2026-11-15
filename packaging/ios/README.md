@@ -10,11 +10,6 @@ Gestures are interpreted by the engine, not the shell: single-finger tap selects
 
 Sign-in is platform-native: the engine's device-login flow hands its verification URL to a UIKit screen that performs email/password sign-in against the regional SSO JSON API and approves the pairing directly, while third-party providers stay inside the app: Apple runs the native AuthenticationServices sheet and exchanges its nonce-bound identity token at `POST /api/v1/auth/providers/apple/native-login` (a failure surfaces an inline error — the web page is never involved), and the other providers open the pairing login page in an in-app Safari sheet deep-linked to the tapped provider — the running pairing is approved there. Registration and password recovery are native sibling screens. The Account tile opens a native account center backed by the engine's read-only profile snapshot (the private auth runtime never exposes its device token). The third-party buttons are region-accurate: the login screen fetches `GET /api/v1/auth/providers?channel=web_mobile` from the pairing's origin, so the mainland site lists WeChat / Alipay / Douyin and the global site lists Apple / GitHub / Google without a hardcoded table. The sign-in region (Mainland China `sso.zseven.cn` / Global `sso.zseven.tech`) resolves from a persisted user choice, then an IP-informed probe of the global gateway's mainland redirect, then the device locale; changes apply on the next launch because the auth runtime initializes once per process.
 
-The login, registration, and account screens expose the regional iOS privacy
-policy in an in-app Safari sheet. Account management and privacy links follow
-the active authentication region even after the user saves a different
-next-launch preference. Region selection does not terminate the app.
-
 ## Build inputs
 
 From the repository root, build the archive matching the destination if it is
@@ -42,19 +37,11 @@ scripts/build-mobile-auth-dev.sh \
   --abi 3
 ```
 
-For Hosted model access, use an ABI-v4 archive for the same mobile target and
-pass `--abi 4`. The script selects `mobile-hosted-dev`, which forwards the
-additional debug-only `op-auth-bridge/dev-hosted` capability. ABI-v3 retains
-login/collaboration support but cannot use Hosted plans. Shipping Hosted
-requires a complete signed ABI-v4 matrix and reviewed `AUTH-RELEASE-POLICY`
-adoption. The consumer verifies that matrix
-without requiring any development feature; unsigned archives remain Debug-only.
-
 Then pass that exact archive to Xcode as `OP_AUTH_ARCHIVE` and repeat the ABI
 with `OPENPENCIL_DEV_OP_AUTH_ABI_VERSION`. The project pre-build gate accepts
 an unsigned archive only for `CONFIGURATION=Debug`. Release linking accepts
-only the adopted complete signed matrix under `crates/op-auth-bridge/prebuilt/`:
-every target is SHA-pinned and Ed25519-signed, while the source-owned
+only the adopted ABI-v3 matrix under `crates/op-auth-bridge/prebuilt/`: every
+target is SHA-pinned and Ed25519-signed, while the source-owned
 `AUTH-RELEASE-POLICY` pins the exact complete matrix and private build identity.
 The matrix's signed `VERSION` and `openpencil_revision` record its own release
 provenance; they do not have to equal the consuming OpenPencil version or
@@ -62,28 +49,17 @@ commit. Never copy a local private archive into this source tree or into an
 Xcode resource phase.
 
 The protected production flow rebuilds, audits, and signs all ten immutable
-candidates together for the chosen production ABI (v4 for Hosted), including
-`aarch64-apple-ios`, `aarch64-apple-ios-sim`, both Android targets, and all six
-desktop targets.
+ABI-v3 candidates together, including `aarch64-apple-ios`,
+`aarch64-apple-ios-sim`, both Android targets, and all six desktop targets.
 App Store/TestFlight builds verify the adopted policy, the complete signed
-matrix, and Cargo's actual link selection against the policy's ABI before
-staging the exact device archive for the final Xcode link. Hosted builds require
-ABI 4 throughout that path. A missing target, policy, digest,
+matrix, and Cargo's actual ABI-v3 link selection before staging the exact
+device archive for the final Xcode link. A missing target, policy, digest,
 signature, or hardening mismatch, incomplete matrix, ABI downgrade, or stub
 fallback stops the release before upload. OpenPencil-only source changes and
 version bumps may reuse the adopted matrix; an op-platform, ABI, toolchain, or
 hardening change requires a newly signed matrix and reviewed policy adoption.
 
 ## App Store / TestFlight release
-
-For Guideline 2.1 responses, fill in [AppReviewNotes.txt](AppReviewNotes.txt)
-and follow [AppReviewRecordingChecklist.md](AppReviewRecordingChecklist.md).
-These are preparation documents, not evidence of a completed review or
-physical-device QA. [ACCOUNT_DELETION.md](ACCOUNT_DELETION.md) describes the
-OpenPencil-only deletion flow, preserved shared ZSeven data, and required
-service/auth-matrix rollout. That rollout and the missing review evidence
-must be completed before resubmission; source validation alone does not
-establish App Store readiness.
 
 The formal `v*` Rust release calls `.github/workflows/ios-app-store.yml` with
 the exact release ref and source commit. The iOS upload is intentionally

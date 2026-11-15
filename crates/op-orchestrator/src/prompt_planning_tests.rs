@@ -29,34 +29,6 @@ fn provider_planning_prompt_carries_quality_guardrails() {
     assert!(prompt.contains("Do not plan the same predictable mobile stack"));
     assert!(prompt.contains("Mobile top rhythm"));
     assert!(prompt.contains("signature moment"));
-    // "a pricing page" carries no user source content, so the gated
-    // source-facts contract stays out of the system prompt.
-    assert!(!prompt.contains("SOURCE FACTS"));
-    assert!(prompt.contains("FIXED CARD COPY"));
-}
-
-#[test]
-fn source_facts_and_card_copy_limits_reach_every_planning_mode() {
-    for mode in [
-        PlanningMode::Rich,
-        PlanningMode::Minimal,
-        PlanningMode::Compact,
-    ] {
-        // The source-facts contract is gated on actual source content; the
-        // supplied menu prices make this brief source-backed.
-        let mut request = req();
-        request.model = Some("glm-5.3-flash".into());
-        request.prompt = "晴日咖啡，静安店，到店自取；拿铁28元、美式22元、燕麦拿铁32元".into();
-        let pp = build_orchestrator_prompt(&request, mode, AbortFlag::new());
-        assert!(pp.call_request.system_prompt.contains("SOURCE FACTS"));
-        assert!(pp.call_request.system_prompt.contains("FIXED CARD COPY"));
-        assert!(pp.call_request.system_prompt.contains("SUMMARY OWNERSHIP"));
-        assert!(pp
-            .call_request
-            .system_prompt
-            .contains("Other sections must not independently invent the same summary"));
-        assert!(pp.call_request.user_prompt.contains(&request.prompt));
-    }
 }
 
 #[test]
@@ -68,42 +40,6 @@ fn phone_planning_prompt_uses_the_archetype_handoff_and_gate() {
         .call_request
         .system_prompt
         .contains("ARCHETYPE:"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("Explicit first-screen content comes first"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("Do not plan a status bar; it is pre-inserted."));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("Assign each title and meta row ONE owner"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("For image-led, the hero owns the title/meta on its scrim"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("ACTIONABLE DETAILS"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("keep the rest of the list scrollable"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("display <n>px / body <n>px"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("overlap-with-scrim"));
-    assert!(phone_prompt
-        .call_request
-        .system_prompt
-        .contains("title on scrim"));
     assert!(!phone_prompt
         .call_request
         .system_prompt
@@ -166,7 +102,6 @@ fn subagent_prompt_carries_subtask_and_script_format() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     let (cr, _) = bsp(&st, &plan(), &req(), AbortFlag::new(), false, false);
@@ -242,7 +177,6 @@ fn subagent_prompt_reduced_complexity_carries_script_format() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     let (cr, _) = bsp(&st, &plan(), &req(), AbortFlag::new(), true, false);
@@ -276,7 +210,6 @@ fn subagent_prompt_carries_ts_layout_contract() {
             screen: None,
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         },
         Subtask {
@@ -294,7 +227,6 @@ fn subagent_prompt_carries_ts_layout_contract() {
             screen: None,
             generated_root_id: None,
             existing_section_labels: None,
-            covers: None,
             retry_feedback: None,
         },
     ];
@@ -323,13 +255,6 @@ fn subagent_prompt_carries_ts_layout_contract() {
         );
     }
     let combined = format!("{}\n{}", cr.system_prompt, cr.user_prompt);
-    assert!(combined.contains(
-        "imagePrompt must describe actual objects/scenes, not just a project or brand name"
-    ));
-    // Unspecified label lettering came back as invented glyphs on generated
-    // product photos; the rule asks for the exact text or a blank label.
-    assert!(combined.contains("a label reading \"雨庭\""));
-    assert!(combined.contains("never ask for unspecified lettering, writing or logos"));
     for required in [
         "root page may keep 0 horizontal padding",
         "ordinary transparent root-direct content section",
@@ -374,7 +299,6 @@ fn subagent_prompt_minimal_skills_has_schema_and_script_format() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     // minimal_skills=true: the system prompt should contain schema skill
@@ -416,7 +340,6 @@ fn subagent_prompt_reduced_complexity_basic_is_shorter_than_full() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     // req() uses model "claude" which is Full tier — no narrowing.
@@ -463,7 +386,6 @@ fn subagent_prompt_reduced_complexity_full_tier_skill_filtering_is_noop() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     // req() uses "claude" which maps to Full tier → reduced_complexity's skill
@@ -519,7 +441,6 @@ fn subagent_prompt_reduced_complexity_keeps_script_gen_even_on_full_tier() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     let (full_cr, _) = bsp(&st, &plan(), &req(), AbortFlag::new(), false, false);
@@ -647,7 +568,6 @@ fn subagent_prompt_basic_mobile_food_keeps_mobile_app_skill() {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
 
@@ -694,7 +614,6 @@ fn subagent_prompt_teaches_camelcase_property_names() {
         screen: Some("Cover".into()),
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     };
     let (cr, _) = bsp(&st, &plan(), &req(), AbortFlag::new(), false, false);

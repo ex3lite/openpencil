@@ -511,3 +511,6 @@ mod tests;
 mod vector_fidelity_property_keys;
 #[cfg(test)]
 mod workspace_key_tests;
+
+#[cfg(test)]
+mod russian_copy_tests;

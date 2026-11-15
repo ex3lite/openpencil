@@ -101,8 +101,7 @@ fn search_test_enabled(settings: &AgentSettings) -> bool {
 }
 
 fn profile_test_enabled(profile: &ImageGenProfile) -> bool {
-    // `usable` covers the API key plus the Workbench-only endpoint rule.
-    profile.usable() && profile.test_status != ImageTestStatus::Testing
+    !profile.api_key.trim().is_empty() && profile.test_status != ImageTestStatus::Testing
 }
 
 fn profile_field_index(field: ImageGenField) -> usize {

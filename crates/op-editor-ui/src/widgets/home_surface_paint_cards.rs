@@ -1,44 +1,33 @@
 //! Artwork for the Studio Home surface: the headline's yellow marker,
 //! the 示例 sticker, the template previews with their paper edge +
 //! tape, and the explore cards (two-piece art in
-//! `paint_explore_art`). Every task's art, App included, is a baked
-//! scene-template preview; see [`task_art`].
+//! `paint_explore_art`). The App task's phone/desktop mock-ups live in
+//! `home_surface_paint_art.rs`.
 
 use super::super::copy::{self, SANS};
 use super::super::fade;
 use super::super::paint::art::draw_coffee_photo;
 use super::super::{HomeSurface, StudioPalette};
-use super::explore_copy::fit_lines;
 use super::hover_lift_dy;
 use crate::widgets::canvas_viewport_image::{
     has_cached_image_bytes, note_pending_decode, required_raster_edge, store_remote_image_bytes,
 };
-use crate::widgets::file_menu::truncate_to_width_measured;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
 use crate::{Color, ImageAdjustments, ImageDrawMode, Point2D, Rect};
-use op_editor_core::{HomeFamily, HomeHit, InfoKind, SlideRatio};
+use op_editor_core::{HomeFamily, HomeHit, InfoKind};
 
 /// The scene-template card previews are uniformly 1024×640 (the card
 /// baker's fixed canvas), which is what the contain-fit math below
 /// relies on.
 const PREVIEW_ASPECT: f32 = 1024.0 / 640.0;
 
-#[path = "home_surface_paint_app_preview.rs"]
-mod app_preview;
-
-pub(in crate::widgets::home_surface) fn text(
-    cx: &mut PaintCx<'_>,
-    content: &str,
-    origin: Point2D,
-    size: f32,
-    color: Color,
-) {
+pub(super) fn text(cx: &mut PaintCx<'_>, content: &str, origin: Point2D, size: f32, color: Color) {
     let layout = crate::TextLayout::single_run(content, SANS, size, color.to_jian(), Point2D::ZERO);
     cx.backend.draw_text(&layout, origin);
 }
 
-pub(in crate::widgets::home_surface) fn text_weighted(
+pub(super) fn text_weighted(
     cx: &mut PaintCx<'_>,
     content: &str,
     origin: Point2D,
@@ -51,31 +40,6 @@ pub(in crate::widgets::home_surface) fn text_weighted(
     cx.backend.draw_text(&layout, origin);
 }
 
-/// The torn silhouette of the headline marker, in percent of its box.
-const VERTICES: [(f32, f32); 21] = [
-    (0.0, 29.0),
-    (4.0, 11.0),
-    (7.0, 27.0),
-    (17.0, 13.0),
-    (22.0, 27.0),
-    (34.0, 8.0),
-    (45.0, 24.0),
-    (61.0, 4.0),
-    (72.0, 17.0),
-    (94.0, 8.0),
-    (99.0, 34.0),
-    (97.0, 63.0),
-    (100.0, 89.0),
-    (85.0, 82.0),
-    (72.0, 100.0),
-    (61.0, 90.0),
-    (44.0, 97.0),
-    (31.0, 77.0),
-    (18.0, 99.0),
-    (2.0, 81.0),
-    (5.0, 53.0),
-];
-
 /// The jagged yellow marker band under the 做点什么 run plus its two
 /// rays right of the question mark (prototype `.marker` / `.rays`).
 pub(super) fn paint_marker(
@@ -83,45 +47,8 @@ pub(super) fn paint_marker(
     x: f32,
     baseline_y: f32,
     width: f32,
-    palette: StudioPalette,
+    yellow: Color,
 ) {
-    let yellow = palette.marker;
-    if palette.marker_underline {
-        // Dark mode: the headline is near-white, so the band that sits
-        // BEHIND the glyphs in light mode would swallow them. The
-        // prototype pulls it down into a thin rule under the baseline
-        // (`.marker:before{height:8px;bottom:-2px}`) and keeps the same
-        // torn edge, at half the amplitude.
-        let top = baseline_y + 2.0;
-        let band_h = 8.0;
-        let left = x - 5.0;
-        let right = x + width + 2.0;
-        let band_w = right - left;
-        let points: Vec<Point2D> = VERTICES
-            .iter()
-            .map(|(px, py)| {
-                // Compress the jag toward the strip's middle so an 8 px
-                // rule keeps a torn silhouette instead of dissolving.
-                let compressed = 50.0 + (py - 50.0) * 0.55;
-                Point2D::new(
-                    left + px / 100.0 * band_w,
-                    top + compressed / 100.0 * band_h,
-                )
-            })
-            .collect();
-        cx.backend.fill_polygon(&points, yellow);
-        for (offset, height, angle) in [(0.0f32, 14.0f32, 28.0f32), (10.0f32, 10.0f32, 68.0f32)] {
-            let ray = Rect::xywh(right + 6.0 + offset, baseline_y - 12.0, 5.0, height);
-            cx.backend.save();
-            cx.backend.rotate(
-                angle.to_radians(),
-                Point2D::new(ray.origin.x + 2.5, ray.origin.y + ray.size.y),
-            );
-            cx.backend.fill_round_rect(ray, 3.0, yellow);
-            cx.backend.restore();
-        }
-        return;
-    }
     // The prototype seats the 15 px band at the text run's bottom
     // (`bottom:0; height:15px`, behind the glyphs): its top rides the
     // baseline − 6 so the band overlaps the lower 40 % of 做点什么 and
@@ -131,6 +58,29 @@ pub(super) fn paint_marker(
     let left = x - 5.0;
     let right = x + width + 2.0;
     let band_w = right - left;
+    const VERTICES: [(f32, f32); 21] = [
+        (0.0, 29.0),
+        (4.0, 11.0),
+        (7.0, 27.0),
+        (17.0, 13.0),
+        (22.0, 27.0),
+        (34.0, 8.0),
+        (45.0, 24.0),
+        (61.0, 4.0),
+        (72.0, 17.0),
+        (94.0, 8.0),
+        (99.0, 34.0),
+        (97.0, 63.0),
+        (100.0, 89.0),
+        (85.0, 82.0),
+        (72.0, 100.0),
+        (61.0, 90.0),
+        (44.0, 97.0),
+        (31.0, 77.0),
+        (18.0, 99.0),
+        (2.0, 81.0),
+        (5.0, 53.0),
+    ];
     let points: Vec<Point2D> = VERTICES
         .iter()
         .map(|(px, py)| Point2D::new(left + px / 100.0 * band_w, top + py / 100.0 * band_h))
@@ -174,7 +124,7 @@ pub(super) fn paint_sticker(
             jian_widgets::centered_text_baseline_y(sticker, 12.0),
         ),
         12.0,
-        palette.sticker_ink,
+        palette.ink,
         700,
     );
     cx.backend.restore();
@@ -214,10 +164,6 @@ pub(super) fn paint_template_paper(
     crop_aspect: Option<f32>,
     opacity: f32,
 ) {
-    if template_id == "coffee-order-app" {
-        app_preview::paint(cx, area, palette, opacity);
-        return;
-    }
     paint_paper_card(cx, area, template_id, palette, crop_aspect, 0.0, opacity);
 }
 
@@ -328,51 +274,19 @@ fn paint_paper_card(
     cx.backend.restore();
 }
 
-/// The preview a task's art area shows, with the crop aspect to paint it
-/// at (`None` = the baked card's own 16:10).
-///
-/// App showcases display the complete three-screen example. The requested
-/// page count still controls the input example and the instant draft. Other
-/// tasks show the template their example opens; a 16:9 deck keeps its crop.
-///
-/// [`HomeState::example_draft_template`]: op_editor_core::HomeState::example_draft_template
-pub(super) fn task_art(surface: &HomeSurface<'_>) -> (&'static str, Option<f32>) {
-    let draft = surface.state.task_draft();
-    if surface.state.task == HomeFamily::AppUi {
-        return (
-            match draft.device {
-                op_editor_core::HomeDevice::Mobile => "coffee-order-app",
-                op_editor_core::HomeDevice::Desktop => "coffee-counter-desktop",
-            },
-            None,
-        );
-    }
-    let template = surface
-        .state
-        .example_draft_template()
-        .unwrap_or_else(|| preview_template_for(surface.state.task, draft.info_kind));
-    let crop = (surface.state.task == HomeFamily::Presentation
-        && draft.ratio == SlideRatio::Wide169)
-        .then_some(16.0 / 9.0);
-    (template, crop)
-}
-
-/// The template id a task's preview panel shows when its example has no
-/// instant draft. Every task maps one today, so this mirrors
-/// [`op_editor_core::HomeState::example_draft_template`] and only keeps
-/// the art painted if a future task ships without a draft.
+/// The template id a task's preview panel shows.
 pub(super) fn preview_template_for(family: HomeFamily, info_kind: InfoKind) -> &'static str {
     match family {
-        HomeFamily::Web => "daybreak-coffee-site",
-        HomeFamily::Presentation => "openpencil-intro-deck",
-        HomeFamily::KnowledgeCards => "coffee-world-carousel",
-        HomeFamily::ScreenshotTutorial => "focus-mode-tutorial",
+        HomeFamily::Web => "product-landing-light",
+        HomeFamily::Presentation => "pitch-deck-dark",
+        HomeFamily::KnowledgeCards => "knowledge-carousel",
+        HomeFamily::ScreenshotTutorial => "screenshot-tutorial",
         HomeFamily::Infographic => match info_kind {
-            InfoKind::Data => "weekly-review-infographic",
-            InfoKind::Flow => "idea-to-publish-flow",
-            InfoKind::Comparison => "blank-vs-example-contrast",
+            InfoKind::Data => "data-report-infographic",
+            InfoKind::Flow => "steps-flow-infographic",
+            InfoKind::Comparison => "do-dont-comparison",
         },
-        _ => "city-music-fest-poster",
+        _ => "music-fest-poster-card",
     }
 }
 
@@ -412,11 +326,7 @@ pub(super) fn paint_explore_card(
     // were never hovered must not dip when the stamp refreshes.
     let leaving = surface.state.card_hover_leaving == Some(family);
     let lift = if hovered || leaving {
-        hover_lift_dy(
-            hovered,
-            surface.ui.motion_stamp(surface.state.card_hover_since_ms),
-            surface.now_ms,
-        )
+        hover_lift_dy(hovered, surface.state.card_hover_since_ms, surface.now_ms)
     } else {
         0.0
     };
@@ -461,39 +371,24 @@ pub(super) fn paint_explore_card(
         copy::task_icon(family),
         Point2D::new(tile_rect.origin.x + 6.0, tile_rect.origin.y + 6.0),
         16.0,
-        palette.tile_ink,
+        Color::WHITE,
         1.6,
     );
-    // The copy column ends where the art begins; nothing painted in it
-    // may run past that edge (long-text locales used to run under it).
-    let column_right = paint_rect.origin.x + copy_w + 2.0;
-    let name_x = tile_rect.origin.x + 36.0;
-    let name = truncate_to_width_measured(copy.name, column_right - name_x, |s| {
-        cx.backend.measure_text_family(s, 14.0, SANS)
-    });
     text_weighted(
         cx,
-        &name,
+        copy.name,
         Point2D::new(
-            name_x,
+            tile_rect.origin.x + 36.0,
             jian_widgets::centered_text_baseline_y(tile_rect, 14.0),
         ),
         14.0,
         palette.ink,
         650,
     );
-    // The description, wrapped to the copy column: as many 19 px lines
-    // as fit above the 查看示例 pill (two on the regular card, at most
-    // three), ellipsized past that.
+    // Two-line description.
     let desc = copy::home_str(locale, desc_key);
     let mut line_y = paint_rect.origin.y + pad + 44.0;
-    let pill_top = paint_rect.origin.y + paint_rect.size.y - 14.0 - 28.0;
-    let max_lines = (((pill_top - 6.0 - line_y) / 19.0).floor() as usize + 1).clamp(1, 3);
-    let desc_x = paint_rect.origin.x + pad;
-    let lines = fit_lines(desc, column_right - desc_x, max_lines, |s| {
-        cx.backend.measure_text_family(s, 12.0, SANS)
-    });
-    for line in &lines {
+    for line in desc.split("，").take(2) {
         text(
             cx,
             line,
@@ -505,10 +400,7 @@ pub(super) fn paint_explore_card(
     }
     // 查看示例 pill pinned to the card's bottom-left.
     let view = copy::home_str(locale, "home.explore.view");
-    // 13 px lead, the label, a 5 px gap, the 13 px arrow, 8 px trail —
-    // the arrow sits AFTER the label (it used to be drawn over its last
-    // glyph, which long labels such as "Смотреть пример" made obvious).
-    let view_w = cx.backend.measure_text_family(view, 12.0, SANS) + 13.0 + 5.0 + 13.0 + 8.0;
+    let view_w = cx.backend.measure_text_family(view, 12.0, SANS) + 13.0 * 2.0;
     let pill = Rect::xywh(
         paint_rect.origin.x + pad,
         paint_rect.origin.y + paint_rect.size.y - 14.0 - 28.0,
@@ -516,9 +408,8 @@ pub(super) fn paint_explore_card(
         28.0,
     );
     cx.backend
-        .fill_round_rect(pill, 7.0, palette.card_link_fill);
-    cx.backend
-        .stroke_round_rect(pill, 7.0, palette.card_link_line, 1.0);
+        .fill_round_rect(pill, 7.0, Color::rgba_u8(0xFF, 0xFF, 0xFF, 0.85));
+    cx.backend.stroke_round_rect(pill, 7.0, Color::WHITE, 1.0);
     text(
         cx,
         view,
@@ -527,17 +418,14 @@ pub(super) fn paint_explore_card(
             jian_widgets::centered_text_baseline_y(pill, 12.0),
         ),
         12.0,
-        palette.card_link_ink,
+        palette.ink,
     );
     draw_icon(
         cx.backend,
         Icon::ArrowUpRight,
-        Point2D::new(
-            pill.origin.x + pill.size.x - 8.0 - 13.0,
-            pill.origin.y + 7.0,
-        ),
+        Point2D::new(pill.origin.x + pill.size.x - 16.0, pill.origin.y + 7.0),
         13.0,
-        palette.link,
+        palette.blue,
         1.5,
     );
     // Art column: the family's two-piece composition.
@@ -577,12 +465,12 @@ fn paint_explore_art(cx: &mut PaintCx<'_>, area: Rect, family: HomeFamily, palet
                 -3.0,
                 1.0,
             );
-            paint_paper_card(cx, second, "coffee-world-carousel", palette, None, 6.0, 1.0);
+            paint_paper_card(cx, second, "knowledge-carousel", palette, None, 6.0, 1.0);
         }
         HomeFamily::ScreenshotTutorial => {
             let sheet_w = (area.size.x * 0.62).max(50.0);
             let sheet = Rect::xywh(area.origin.x, area.origin.y, sheet_w, area.size.y);
-            paint_paper_card(cx, sheet, "focus-mode-tutorial", palette, None, 0.0, 1.0);
+            paint_paper_card(cx, sheet, "screenshot-tutorial", palette, None, 0.0, 1.0);
             let phone_w = (area.size.x * 0.30).clamp(34.0, 64.0);
             let phone_h = (phone_w / 0.475).min(area.size.y * 0.86);
             let phone = Rect::xywh(

@@ -31,16 +31,10 @@
 //! Repair: move the buried overlay ahead of whatever covers it — the same
 //! `M(overlayId, stackId, 0)` the corpus prescribes, expressed as
 //! `EditorCommand::MoveNode { index: Some(0) }`.
-//!
-//! Two image-specific shapes sit beside it, both measured on GLM-5.3-Flash
-//! pages whose generated photos never reached the render: an image hidden by
-//! an EMPTY backdrop plate (moved just ahead of the plate), and a content card
-//! painted opaque over a scrimmed photo (its fill cleared — the scrim is the
-//! author's own proof the photo was meant to show).
 
 use std::collections::HashMap;
 
-use op_editor_core::{EditorCommand, EditorState, NodeId};
+use op_editor_core::{EditorCommand, NodeId};
 use serde_json::Value;
 
 use super::{children, layout_str, Rect};
@@ -62,104 +56,35 @@ const MIN_BURIED_FRACTION: f64 = 0.6;
 /// Comparable size means peers in a stack, and their order is a composition.
 const OVERLAY_MAX_AREA_RATIO: f64 = 0.5;
 
-/// Is this colour see-through? Only an 8-digit `#RRGGBBAA` under ~0.8 alpha
-/// is; a token (`$--card`) or a 6-digit hex paints solid.
-fn color_see_through(color: &Value) -> bool {
-    color.as_str().is_some_and(|hex| {
-        let hex = hex.trim();
-        hex.len() == 9
-            && hex.starts_with('#')
-            && u8::from_str_radix(&hex[7..9], 16).is_ok_and(|a| a < 0xCC)
-    })
-}
-
-fn fill_entries(v: &Value) -> &[Value] {
-    v.get("fill")
+/// Does this node paint an opaque surface — something that can actually hide
+/// what is behind it? A fill array with any entry counts; a translucent hex
+/// (8-digit with a low alpha) does not.
+fn paints_opaque(v: &Value) -> bool {
+    let Some(first) = v
+        .get("fill")
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-}
-
-fn gradient_stops(fill: &Value) -> &[Value] {
-    fill.get("stops")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-}
-
-/// Does one fill entry paint every pixel solid? A gradient only does when no
-/// stop fades out: a bottom scrim running `#00000000 → #000000B3` shows the
-/// top of whatever sits behind it.
-fn fill_entry_opaque(fill: &Value) -> bool {
-    match fill.get("type").and_then(Value::as_str) {
-        Some("mesh_gradient" | "image") => true,
-        Some("linear_gradient" | "radial_gradient") => {
-            let stops = gradient_stops(fill);
-            !stops.is_empty()
-                && stops
-                    .iter()
-                    .all(|stop| !stop.get("color").is_some_and(color_see_through))
-        }
-        Some("solid") => fill.get("color").is_some_and(|c| !color_see_through(c)),
+        .and_then(|a| a.first())
+    else {
+        return false;
+    };
+    match first.get("type").and_then(Value::as_str) {
+        Some("linear_gradient" | "radial_gradient" | "mesh_gradient" | "image") => true,
+        Some("solid") => first
+            .get("color")
+            .and_then(Value::as_str)
+            .map(|color| {
+                // `#RRGGBBAA` — treat anything under ~0.8 alpha as see-through.
+                let hex = color.trim();
+                if hex.len() != 9 || !hex.starts_with('#') {
+                    return true; // token or 6-digit hex: opaque
+                }
+                u8::from_str_radix(&hex[7..9], 16)
+                    .map(|a| a >= 0xCC)
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false),
         _ => false,
     }
-}
-
-/// Is the node composited as authored — full node opacity, normal blending?
-/// A 40% node or a `multiply` layer lets what is behind it through however
-/// solid its own paint is.
-fn composites_opaque(v: &Value) -> bool {
-    let opacity_ok = match v.get("opacity") {
-        None | Some(Value::Null) => true,
-        Some(o) => o.as_f64().is_some_and(|o| o >= 0.99),
-    };
-    let blend_ok = match v.get("blendMode") {
-        None | Some(Value::Null) => true,
-        Some(mode) => mode.as_str() == Some("normal"),
-    };
-    opacity_ok && blend_ok
-}
-
-/// A photo slot: an `image` node that will paint a picture — a `src` already,
-/// or a prompt / query the enrichment pass turns into one. It needs no `fill`
-/// to be opaque; the bitmap covers its whole box.
-fn is_photo(v: &Value) -> bool {
-    v.get("type").and_then(Value::as_str) == Some("image")
-        && ["src", "imagePrompt", "imageSearchQuery"]
-            .iter()
-            .any(|key| {
-                v.get(*key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| !s.trim().is_empty())
-            })
-}
-
-/// Does this node paint an opaque surface — something that can actually hide
-/// what is behind it? Any solid fill entry counts (one opaque layer hides the
-/// node's backdrop whichever order its fills stack in), and so does a photo,
-/// which paints its bitmap with no `fill` at all. A translucent hex, a fading
-/// gradient, a sub-opaque node, or a non-normal blend does not.
-///
-/// Measured on the arena corpus: seven `layout:none` stacks shipped with a
-/// fill-less hero `image` at a low index over its own scrim and caption. The
-/// old first-fill-only check read the photo as transparent, so the caption
-/// stayed buried in the render.
-pub(super) fn paints_opaque(v: &Value) -> bool {
-    composites_opaque(v) && (is_photo(v) || fill_entries(v).iter().any(fill_entry_opaque))
-}
-
-/// Does this node carry a see-through layer — a scrim, a grain, a glow wash —
-/// whose only purpose is to be seen OVER what sits behind it?
-fn paints_see_through(v: &Value) -> bool {
-    fill_entries(v)
-        .iter()
-        .any(|fill| match fill.get("type").and_then(Value::as_str) {
-            Some("solid") => fill.get("color").is_some_and(color_see_through),
-            Some("linear_gradient" | "radial_gradient") => gradient_stops(fill)
-                .iter()
-                .any(|stop| stop.get("color").is_some_and(color_see_through)),
-            _ => false,
-        })
 }
 
 /// Does this subtree carry something a reader is meant to SEE — a glyph, an
@@ -195,489 +120,15 @@ fn rect_of<'a>(v: &Value, rects: &'a HashMap<String, Rect>) -> Option<&'a Rect> 
         .and_then(|id| rects.get(id))
 }
 
-// A fill-less media viewport still paints solid when its full-size opaque
-// photo does. Do not generalize opacity through arbitrary content containers:
-// partial, faded, blended, rotated or masked media must keep authored order.
-fn covers_with_opaque_photo(v: &Value, rects: &HashMap<String, Rect>) -> bool {
-    if layout_str(v) != Some("none")
-        || !composites_opaque(v)
-        || v.get("visible").and_then(Value::as_bool) == Some(false)
-        || v.get("maskType").is_some()
-        || v.get("rotation").and_then(Value::as_f64).unwrap_or(0.0) != 0.0
-        || children(v).iter().any(|child| {
-            child.get("isMask").and_then(Value::as_bool) == Some(true)
-                || child.get("maskType").is_some()
-        })
-    {
-        return false;
-    }
-    let Some(viewport) = rect_of(v, rects) else {
-        return false;
-    };
-    children(v).iter().any(|photo| {
-        is_photo(photo)
-            && paints_opaque(photo)
-            && photo.get("visible").and_then(Value::as_bool) != Some(false)
-            && photo.get("objectFit").and_then(Value::as_str) != Some("fit")
-            && photo.get("rotation").and_then(Value::as_f64).unwrap_or(0.0) == 0.0
-            && rect_of(photo, rects)
-                .is_some_and(|bounds| covered_fraction(viewport, bounds) >= 0.999)
-    })
-}
-
-/// The index of the first EMPTY opaque plate that hides an image — the offset
-/// "backdrop" a model authors after (i.e. over) the photo it was meant to sit
-/// behind. Measured on a GLM-5.3-Flash brewery page: a 744×636 cream
-/// `visual-backdrop` rectangle at a lower index than the 768×636 process photo
-/// painted a blank panel where the generated image should be.
-///
-/// The size gate above cannot see this — image and plate are peers in size —
-/// but the deck exception it protects does not apply either: a deck's FRONT
-/// card carries content, while this cover carries nothing at all. An empty
-/// plate over a picture hides the only thing in the stack worth seeing.
-fn image_plate_cover(kids: &[Value], index: usize, rects: &HashMap<String, Rect>) -> Option<usize> {
-    let image = &kids[index];
-    if image.get("type").and_then(Value::as_str) != Some("image") {
-        return None;
-    }
-    let image_rect = rect_of(image, rects)?;
-    kids[..index].iter().position(|cover| {
-        paints_opaque(cover)
-            && !bears_content(cover)
-            && rect_of(cover, rects)
-                .is_some_and(|c| covered_fraction(image_rect, c) >= MIN_BURIED_FRACTION)
-    })
-}
-
-// Highlighter bands are smaller than the heading they decorate, so the
-// large-surface overlay threshold cannot detect even a fully hidden glyph.
-// Restrict this exception to named, empty highlighters behind direct text;
-// peer cards, photos and intentional strike-throughs keep their ordering.
-fn text_highlighter_cover(
-    stack: &Value,
-    kids: &[Value],
-    index: usize,
-    rects: &HashMap<String, Rect>,
-) -> Option<usize> {
-    if kids[index].get("type").and_then(Value::as_str) != Some("text") {
-        return None;
-    }
-    let text_rect = rect_of(&kids[index], rects)?;
-    let named_highlighter = |node: &Value| {
-        let name = node.get("name").and_then(Value::as_str).unwrap_or("");
-        let lower = name.to_ascii_lowercase();
-        lower.contains("highlight")
-            || lower.contains("marker")
-            || ["高亮", "记号笔", "记号带", "荧光笔"]
-                .iter()
-                .any(|label| name.contains(label))
-    };
-    kids[..index].iter().position(|cover| {
-        let name = cover.get("name").and_then(Value::as_str).unwrap_or("");
-        // A generic band-fill inside a named highlighter is the same shape.
-        // Explicit strike-throughs remain intentional front decorations.
-        let highlighter = named_highlighter(cover) || named_highlighter(stack);
-        highlighter
-            && !name.to_ascii_lowercase().contains("strike")
-            && !name.contains("删除线")
-            && children(cover).is_empty()
-            && matches!(cover.get("type").and_then(Value::as_str), Some("rectangle"))
-            && paints_opaque(cover)
-            && rect_of(cover, rects).is_some_and(|r| covered_fraction(text_rect, r) > 0.0)
-    })
-}
-
-// An empty primitive that paints over a glyph hides it from the author too.
-// Models that author a stack back-to-front put every shape before its label:
-// a booking calendar's range band and endpoint circle over the day numbers,
-// a knowledge card's ink bar over its caption, a map's road over its pin.
-// The overlay rule's size gate cannot see these (the band is the number's own
-// size), but it only guards deck peers, and a deck's front card carries
-// content while these covers carry nothing. A glyph is hidden once the shape
-// covers most of its box or its centre, where centred glyphs sit.
-fn empty_shape_cover(kids: &[Value], index: usize, rects: &HashMap<String, Rect>) -> Option<usize> {
-    if !matches!(
-        kids[index].get("type").and_then(Value::as_str),
-        Some("text" | "icon_font")
-    ) {
-        return None;
-    }
-    let glyph = rect_of(&kids[index], rects)?;
-    let (cx, cy) = (glyph.x + glyph.w / 2.0, glyph.y + glyph.h / 2.0);
-    kids[..index].iter().position(|cover| {
-        let name = cover.get("name").and_then(Value::as_str).unwrap_or("");
-        matches!(
-            cover.get("type").and_then(Value::as_str),
-            Some("rectangle" | "ellipse" | "line" | "polygon" | "path")
-        ) && children(cover).is_empty()
-            && !name.to_ascii_lowercase().contains("strike")
-            && !name.contains("删除线")
-            && paints_opaque(cover)
-            && rect_of(cover, rects).is_some_and(|c| {
-                covered_fraction(glyph, c) >= MIN_BURIED_FRACTION
-                    || (c.x <= cx && cx <= c.x + c.w && c.y <= cy && cy <= c.y + c.h)
-            })
-    })
-}
-
-/// Is this node a SCRIM — a fill that deliberately lets what is behind it
-/// through? Every colour in its first fill must carry a low alpha
-/// (`#RRGGBBAA` under ~0.8), whether a solid or each stop of a gradient.
-fn is_translucent_scrim(v: &Value) -> bool {
-    let Some(first) = v
-        .get("fill")
-        .and_then(Value::as_array)
-        .and_then(|a| a.first())
-    else {
-        return false;
-    };
-    let see_through = color_see_through;
-    match first.get("type").and_then(Value::as_str) {
-        Some("solid") => first.get("color").is_some_and(see_through),
-        Some("linear_gradient" | "radial_gradient") => first
-            .get("stops")
-            .and_then(Value::as_array)
-            .is_some_and(|stops| {
-                !stops.is_empty()
-                    && stops
-                        .iter()
-                        .all(|stop| stop.get("color").is_some_and(see_through))
-            }),
-        _ => false,
-    }
-}
-
-fn bears_image(v: &Value) -> bool {
-    v.get("type").and_then(Value::as_str) == Some("image") || children(v).iter().any(bears_image)
-}
-
-/// A content card painted opaque over a scrimmed image. Measured on a
-/// GLM-5.3-Flash EV page hero: `[scroll-hint, hero-content ($--card, the
-/// headline + CTAs), hero-scrim (a #…4D gradient), hero-parallax-bg (the car
-/// photo)]`. The scrim exists only to darken the photo under the text, which
-/// proves the author meant the photo to show; the opaque card fill above both
-/// hides the scrim AND the photo, so the render is a flat panel. Clearing the
-/// card's fill turns it back into the text layer the scrim was built for.
-fn collect_scrimmed_image_cover_fixes(
-    kids: &[Value],
-    rects: &HashMap<String, Rect>,
-    cmds: &mut Vec<EditorCommand>,
-) {
-    for (image_index, image) in kids.iter().enumerate() {
-        if !bears_image(image) {
-            continue;
-        }
-        let Some(image_rect) = rect_of(image, rects) else {
-            continue;
-        };
-        let covers = |node: &Value| {
-            rect_of(node, rects)
-                .is_some_and(|r| covered_fraction(image_rect, r) >= MIN_BURIED_FRACTION)
-        };
-        let Some(scrim_index) = kids[..image_index]
-            .iter()
-            .position(|node| is_translucent_scrim(node) && covers(node))
-        else {
-            continue;
-        };
-        for card in &kids[..scrim_index] {
-            if !(paints_opaque(card) && bears_content(card) && !bears_image(card) && covers(card)) {
-                continue;
-            }
-            let Some(card_id) = card.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            cmds.push(EditorCommand::PatchNodeData {
-                node_id: NodeId::new(card_id.to_string()),
-                patch_json: r#"{"fill":[]}"#.to_string(),
-                page_id: None,
-            });
-        }
-    }
-}
-
-/// A full-bleed photo must span at least this fraction of the stack on each
-/// axis to count as the stack's backdrop.
-const BACKDROP_MIN_SPAN: f64 = 0.95;
-
-/// A full-bleed hero photo authored ABOVE the layers it was meant to sit under.
-///
-/// Measured on the arena corpus (seven stacks across GLM-5.3-Flash,
-/// DeepSeek-v4-pro and space-bunny-alpha): `[photo, bottom-scrim, caption]`.
-/// The photo is `children[0]`, i.e. topmost, so it paints over its own scrim
-/// and the caption. The small-overlay rule alone would lift the caption to the
-/// top and leave the scrim buried, which puts white text straight on the
-/// photo. So the photo is sunk instead: it moves to sit just behind the
-/// last sibling it hides, and the scrim and caption keep their order above it.
-///
-/// Returns `(photo index, target index)`. It stays provable: a sibling only
-/// counts as hidden when it carries content or a see-through layer (a scrim
-/// or grain exists only to be seen over what is behind it), and the move is
-/// refused when an opaque sibling in between would then cover the photo. That
-/// is a composition question, not a contract breach.
-fn backdrop_photo_sink(
-    stack: &Value,
-    kids: &[Value],
-    rects: &HashMap<String, Rect>,
-) -> Option<(usize, usize)> {
-    let stack_rect = rect_of(stack, rects)?;
-    kids.iter().enumerate().find_map(|(photo_index, photo)| {
-        // An empty full-board rectangle is also a backdrop: the generated
-        // paper surface must not cover a large content column merely because
-        // that column exceeds the small-overlay area threshold.
-        let empty_surface = photo.get("type").and_then(Value::as_str) == Some("rectangle")
-            && children(photo).is_empty();
-        if !((is_photo(photo) || empty_surface) && paints_opaque(photo)) {
-            return None;
-        }
-        let photo_rect = rect_of(photo, rects)?;
-        let full_bleed = photo_rect.w >= stack_rect.w * BACKDROP_MIN_SPAN
-            && photo_rect.h >= stack_rect.h * BACKDROP_MIN_SPAN
-            && covered_fraction(stack_rect, photo_rect) >= BACKDROP_MIN_SPAN * BACKDROP_MIN_SPAN;
-        if !full_bleed {
-            return None;
-        }
-        let hidden_under = |node: &Value| {
-            rect_of(node, rects)
-                .is_some_and(|r| covered_fraction(r, photo_rect) >= MIN_BURIED_FRACTION)
-        };
-        let last_hidden = kids
-            .iter()
-            .enumerate()
-            .skip(photo_index + 1)
-            .rev()
-            .find(|(_, sib)| (bears_content(sib) || paints_see_through(sib)) && hidden_under(sib))
-            .map(|(index, _)| index)?;
-        let blocked = kids[photo_index + 1..=last_hidden].iter().any(|sib| {
-            paints_opaque(sib)
-                && rect_of(sib, rects).is_some_and(|r| {
-                    covered_fraction(photo_rect, r) >= BACKDROP_MIN_SPAN * BACKDROP_MIN_SPAN
-                })
-        });
-        // `MoveNode` inserts after detaching, so index `last_hidden` lands the
-        // photo directly behind that sibling.
-        (!blocked).then_some((photo_index, last_hidden))
-    })
-}
-
-// A verified clipped media lane is an image backdrop even though its direct
-// node is a transparent horizontal frame. Keep this proof separate from the
-// generic small-overlay rule: a full-viewport controls wrapper is not a peer
-// content card, and the lane's offscreen pages must not inflate coverage.
-fn media_node_composites_statically(v: &Value) -> bool {
-    v.get("opacity")
-        .is_none_or(|value| value.is_null() || value.as_f64() == Some(1.0))
-        && v.get("blendMode")
-            .is_none_or(|value| value.is_null() || value.as_str() == Some("normal"))
-        && v.get("isMask").and_then(Value::as_bool) != Some(true)
-        && v.get("maskType").is_none_or(Value::is_null)
-        && v.get("animations").is_none_or(|animations| {
-            animations.is_null() || animations.as_array().is_some_and(Vec::is_empty)
-        })
-}
-
-fn media_has_no_effects(v: &Value) -> bool {
-    v.get("effects")
-        .is_none_or(|effects| effects.is_null() || effects.as_array().is_some_and(Vec::is_empty))
-}
-
-fn media_lane_composites_normally(v: &Value) -> bool {
-    media_node_composites_statically(v)
-        && media_has_no_effects(v)
-        && children(v).iter().all(media_lane_composites_normally)
-}
-
-// Canonical fallback tiles use one solid fill. Resolve that colour using the
-// same variables/theme as the renderer; an unknown or transparent token is
-// not proof of coverage. Keep the legacy generic opacity heuristic unchanged.
-fn media_fill_is_opaque(v: &Value, state: Option<&EditorState>) -> bool {
-    let [fill] = fill_entries(v) else {
-        return false;
-    };
-    if fill.get("type").and_then(Value::as_str) != Some("solid")
-        || !media_lane_composites_normally(fill)
-    {
-        return false;
-    }
-    let Some(color) = fill.get("color").and_then(Value::as_str) else {
-        return false;
-    };
-    let resolved = if color.starts_with('$') {
-        let Some(state) = state else { return false };
-        let theme = op_editor_core::variables_resolve::effective_theme(
-            &state.doc,
-            &state.ui.variables.active_theme,
-        );
-        op_editor_core::variables_resolve::resolve_color_ref(
-            color,
-            state.doc.variables.as_ref(),
-            &theme,
-        )
-    } else {
-        Some(color.to_string())
-    };
-    resolved.is_some_and(|color| {
-        op_util::hex_color::parse_hex_rgba8(&color, op_util::hex_color::HexOptions::LENIENT)
-            .is_some_and(|rgba| rgba[3] == 255)
-    })
-}
-
-fn media_page_is_opaque(v: &Value, state: Option<&EditorState>) -> bool {
-    let square = v.get("cornerRadius").is_none_or(|radius| {
-        radius.is_null()
-            || radius.as_f64() == Some(0.0)
-            || radius
-                .as_array()
-                .is_some_and(|values| values.iter().all(|value| value.as_f64() == Some(0.0)))
-    });
-    (is_photo(v) || media_fill_is_opaque(v, state))
-        && square
-        && v.get("objectFit").and_then(Value::as_str) != Some("fit")
-}
-
-fn covered_overlay_glyph(v: &Value, viewport: &Rect, rects: &HashMap<String, Rect>) -> bool {
-    let glyph = matches!(
-        v.get("type").and_then(Value::as_str),
-        Some("icon_font" | "ellipse" | "path" | "line" | "polygon")
-    );
-    (glyph
-        && rect_of(v, rects).is_some_and(|r| {
-            r.w > 0.0
-                && r.h > 0.0
-                && r.w * r.h <= viewport.w * viewport.h * OVERLAY_MAX_AREA_RATIO
-                && covered_fraction(r, viewport) >= MIN_BURIED_FRACTION
-        }))
-        || children(v)
-            .iter()
-            .any(|child| covered_overlay_glyph(child, viewport, rects))
-}
-
-fn overlay_has_large_opaque_surface(
-    v: &Value,
-    viewport: &Rect,
-    rects: &HashMap<String, Rect>,
-) -> bool {
-    (paints_opaque(v)
-        && rect_of(v, rects)
-            .is_some_and(|r| r.w * r.h > viewport.w * viewport.h * OVERLAY_MAX_AREA_RATIO))
-        || children(v)
-            .iter()
-            .any(|child| overlay_has_large_opaque_surface(child, viewport, rects))
-}
-
-fn clipped_media_lane_sink(
-    state: Option<&EditorState>,
-    stack: &Value,
-    kids: &[Value],
-    rects: &HashMap<String, Rect>,
-) -> Option<(usize, usize)> {
-    let viewport = rect_of(stack, rects)?;
-    let lane = crate::clipped_media_strip::media_lane(stack, viewport.w)?;
-    if !media_lane_composites_normally(stack)
-        || !children(lane)
-            .iter()
-            .all(|page| media_page_is_opaque(page, state))
-    {
-        return None;
-    }
-    let first_page = rect_of(children(lane).first()?, rects)?;
-    if covered_fraction(viewport, first_page) < 0.999 {
-        return None;
-    }
-    // A large opaque sibling is a deliberate surface, not an icon/dot layer.
-    // The shared lane predicate already rejects text, images, dynamic fields
-    // and business-card descendants from these overlay siblings.
-    if kids
-        .iter()
-        .filter(|child| !std::ptr::eq(*child, lane))
-        .any(|child| overlay_has_large_opaque_surface(child, viewport, rects))
-    {
-        return None;
-    }
-    let index = kids.iter().position(|child| std::ptr::eq(child, lane))?;
-    let target = kids
-        .iter()
-        .enumerate()
-        .skip(index + 1)
-        .rev()
-        .find(|(_, overlay)| covered_overlay_glyph(overlay, viewport, rects))?
-        .0;
-    Some((index, target))
-}
-
-/// Emit a `MoveNode` for every content-bearing overlay buried under an opaque
-/// earlier sibling of the same `layout:none` stack: a full-bleed photo sinks
-/// behind the layers it hides, small overlays go to index 0, an image hidden
-/// by an empty plate goes just ahead of that plate (so any badge already above
-/// both stays on top).
-pub(super) fn collect_buried_overlay_fixes_in_state(
-    state: &EditorState,
-    v: &Value,
-    rects: &HashMap<String, Rect>,
-    cmds: &mut Vec<EditorCommand>,
-) {
-    collect_with_context(Some(state), v, rects, cmds);
-}
-
-// Existing generic-rule fixtures need no document context. Token-backed media
-// proof is available only through the production entry point above.
-#[cfg(test)]
-fn collect_buried_overlay_fixes(
-    v: &Value,
-    rects: &HashMap<String, Rect>,
-    cmds: &mut Vec<EditorCommand>,
-) {
-    collect_with_context(None, v, rects, cmds);
-}
-
-fn collect_with_context(
-    state: Option<&EditorState>,
+/// Emit a `MoveNode` to index 0 for every content-bearing overlay buried under
+/// an opaque earlier sibling of the same `layout:none` stack.
+pub(super) fn collect_buried_overlay_fixes(
     v: &Value,
     rects: &HashMap<String, Rect>,
     cmds: &mut Vec<EditorCommand>,
 ) {
     if layout_str(v) == Some("none") {
         let kids = children(v);
-        let stack_id = v.get("id").and_then(Value::as_str);
-        if let (Some((photo_index, target)), Some(stack_id)) = (
-            clipped_media_lane_sink(state, v, kids, rects)
-                .or_else(|| single_media::sink(state, v, kids, rects))
-                .or_else(|| backdrop_photo_sink(v, kids, rects)),
-            stack_id,
-        ) {
-            if let Some(photo_id) = kids[photo_index].get("id").and_then(Value::as_str) {
-                cmds.push(EditorCommand::MoveNode {
-                    node_id: NodeId::new(photo_id.to_string()),
-                    target_parent: NodeId::new(stack_id.to_string()),
-                    page_id: None,
-                    index: Some(target),
-                });
-                // Every other rule below reads this stack's order, which the
-                // sink is about to change: they re-run on the next geometry
-                // round against the settled order.
-                for c in kids {
-                    collect_with_context(state, c, rects, cmds);
-                }
-                return;
-            }
-        }
-        if let (Some((scrim_index, target)), Some(stack_id)) =
-            (scrim::scrim_over_content(kids, rects), stack_id)
-        {
-            if let Some(scrim_id) = kids[scrim_index].get("id").and_then(Value::as_str) {
-                cmds.push(EditorCommand::MoveNode {
-                    node_id: NodeId::new(scrim_id.to_string()),
-                    target_parent: NodeId::new(stack_id.to_string()),
-                    page_id: None,
-                    index: Some(target),
-                });
-                for c in kids {
-                    collect_with_context(state, c, rects, cmds);
-                }
-                return;
-            }
-        }
-        collect_scrimmed_image_cover_fixes(kids, rects, cmds);
         // Later index = painted EARLIER = further back. Walk from the back
         // forward so the rescued overlays keep their relative order once each
         // lands at index 0.
@@ -690,23 +141,15 @@ fn collect_with_context(
             };
             let overlay_area = overlay_rect.w * overlay_rect.h;
             let buried = kids[..index].iter().any(|cover| {
-                (paints_opaque(cover) || covers_with_opaque_photo(cover, rects))
+                paints_opaque(cover)
                     && rect_of(cover, rects).is_some_and(|c| {
                         covered_fraction(overlay_rect, c) >= MIN_BURIED_FRACTION
                             && overlay_area <= c.w * c.h * OVERLAY_MAX_AREA_RATIO
                     })
             });
-            let target_index = if buried {
-                0
-            } else if let Some(plate_index) = image_plate_cover(kids, index, rects) {
-                plate_index
-            } else if let Some(band_index) = text_highlighter_cover(v, kids, index, rects) {
-                band_index
-            } else if let Some(shape_index) = empty_shape_cover(kids, index, rects) {
-                shape_index
-            } else {
+            if !buried {
                 continue;
-            };
+            }
             let (Some(stack_id), Some(overlay_id)) = (
                 v.get("id").and_then(Value::as_str),
                 overlay.get("id").and_then(Value::as_str),
@@ -717,33 +160,15 @@ fn collect_with_context(
                 node_id: NodeId::new(overlay_id.to_string()),
                 target_parent: NodeId::new(stack_id.to_string()),
                 page_id: None,
-                index: Some(target_index),
+                index: Some(0),
             });
         }
     }
     for c in children(v) {
-        collect_with_context(state, c, rects, cmds);
+        collect_buried_overlay_fixes(c, rects, cmds);
     }
 }
-
-#[path = "geometry_buried_overlay_scrim.rs"]
-mod scrim;
-
-#[path = "geometry_buried_single_media.rs"]
-mod single_media;
 
 #[cfg(test)]
 #[path = "geometry_buried_overlay_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "geometry_buried_media_viewport_tests.rs"]
-mod media_viewport_tests;
-
-#[cfg(test)]
-#[path = "geometry_buried_media_lane_tests.rs"]
-mod media_lane_tests;
-
-#[cfg(test)]
-#[path = "geometry_buried_empty_shape_tests.rs"]
-mod empty_shape_tests;

@@ -335,13 +335,12 @@ impl PreviewSession {
         // mapping across the switch).
         self.gesture_mappings.clear();
         app.page_idx = app.table.page_index(&app.current_path).unwrap_or(0);
-        self.scene = op_pen_loader::pen_document_to_layout_scene_for_preview_with_measure(
+        self.scene = op_pen_loader::pen_document_to_layout_scene_for_preview(
             &app.promoted_doc,
             &self.layout_doc,
             self.preserve_authored_geometry,
             &app.theme,
             app.page_idx,
-            self.measure.clone(),
         );
         self.binding_sites.clear();
         let children: &[jian_ops_schema::node::PenNode] = app
@@ -384,7 +383,6 @@ impl PreviewSession {
         // AFTER the scene/layout rebuild so it seeds against the screen
         // that will actually paint.
         self.seed_all_widget_states();
-        self.materialize_initial_table_filter();
 
         // R4 lifecycle: resolve the INCOMING side's `onMount` /
         // `onEnter` against the freshly-mounted tree, then spawn all
@@ -663,7 +661,9 @@ pub(crate) fn solve_roots(
     };
     runtime.rebuild_spatial();
 
-    // Capture the engine's absolute root bounds for preview presentation.
+    // Capture each root's scene↔runtime coordinate mapping for tap
+    // translation. The design scene offsets every root by its authored
+    // `(base.x, base.y)`; the runtime lays each at its own origin.
     // `runtime.document` + `runtime.layout` are disjoint fields, so the
     // two immutable borrows below co-exist.
     //
@@ -675,14 +675,17 @@ pub(crate) fn solve_roots(
     // `offset`. Adding `offset` again doubled `scene_rect`'s origin,
     // making every scene-space tap fall outside every root's bounds
     // (matched nothing, fell through to the "outside all roots"
-    // passthrough). Input shares these absolute engine coordinates.
+    // passthrough). `frame.offset` itself (used unchanged by
+    // `input.rs`'s scene→runtime subtraction) is still the standalone
+    // authored origin, independent of this rect-construction bug.
     let root_frames = {
         let mut frames = Vec::new();
         if let Some(rt_doc) = runtime.document.as_ref() {
             for root_key in rt_doc.tree.roots.iter() {
-                if !rt_doc.tree.nodes.contains_key(*root_key) {
+                let Some(node_data) = rt_doc.tree.nodes.get(*root_key) else {
                     continue;
-                }
+                };
+                let offset = op_pen_loader::root_authored_origin(&node_data.schema);
                 let rrect = runtime.layout.node_rect(*root_key);
                 let (rx, ry, rw, rh) = rrect
                     .map(|r| (r.origin.x, r.origin.y, r.size.width, r.size.height))
@@ -692,6 +695,7 @@ pub(crate) fn solve_roots(
                         origin: Point2D::new(rx, ry),
                         size: Point2D::new(rw, rh),
                     },
+                    offset,
                 });
             }
         }

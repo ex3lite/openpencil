@@ -30,7 +30,6 @@ impl ChatProvider for ScriptedProvider {
 fn framework_ext_maps_every_framework() {
     assert_eq!(framework_ext(Framework::React), "tsx");
     assert_eq!(framework_ext(Framework::ReactNative), "tsx");
-    assert_eq!(framework_ext(Framework::ReactTailwind), "tsx");
     assert_eq!(framework_ext(Framework::Vue), "vue");
     assert_eq!(framework_ext(Framework::Svelte), "svelte");
     assert_eq!(framework_ext(Framework::Html), "html");
@@ -139,7 +138,6 @@ fn pump_after_cancel_drops_progress_and_terminal_deltas() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
     let mut results = CodegenResults::default();
     let mut host = WidgetHostNative::new();
@@ -197,7 +195,6 @@ fn failed_regeneration_keeps_previous_code_and_target_snapshot_together() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
     let mut results = CodegenResults::default();
 
@@ -249,7 +246,6 @@ fn successful_regeneration_commits_its_session_target_snapshot() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
     let mut results = CodegenResults::default();
 
@@ -282,7 +278,6 @@ fn pump_drops_terminal_delta_after_live_document_replacement() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
     let mut results = CodegenResults::default();
 
@@ -328,7 +323,6 @@ fn pump_drops_late_done_after_remote_commit_preserves_document_generation() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
     let mut results = CodegenResults::default();
 
@@ -374,7 +368,6 @@ fn launch_blocked_by_live_run_but_not_by_canceled_run() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
     host.editor_state_mut().codegen.pending_generate = true;
     assert!(!launch_codegen_if_pending(&mut host, &mut current));
@@ -405,7 +398,6 @@ fn stale_document_run_does_not_block_new_document_launch() {
         model: None,
         cancel: Arc::new(AtomicBool::new(false)),
         run_epoch: 1,
-        hosted_session_epoch: None,
     });
 
     host.editor_state_mut()
@@ -475,7 +467,6 @@ fn dropping_a_session_raises_its_worker_cancel_token() {
             model: None,
             cancel: Arc::clone(&cancel),
             run_epoch: 1,
-            hosted_session_epoch: None,
         };
         assert!(!cancel.load(Ordering::Relaxed));
     }
@@ -487,8 +478,6 @@ fn test_input() -> CodegenInput {
         nodes_json: "[{\"type\":\"frame\",\"id\":\"n1\",\"children\":[]}]".to_string(),
         framework: Framework::React,
         variables_json: None,
-        themes_json: None,
-        components_json: None,
         max_output_tokens: 4096,
         thinking: op_ai::chat_provider::ThinkingMode::Adaptive,
         effort: op_ai::chat_provider::EffortLevel::Low,
@@ -516,8 +505,6 @@ fn run_pipeline_drives_three_phases_to_done() {
         nodes_json: "[{\"type\":\"frame\",\"id\":\"n1\",\"children\":[]}]".to_string(),
         framework: Framework::React,
         variables_json: None,
-        themes_json: None,
-        components_json: None,
         max_output_tokens: 4096,
         thinking: op_ai::chat_provider::ThinkingMode::Adaptive,
         effort: op_ai::chat_provider::EffortLevel::Low,

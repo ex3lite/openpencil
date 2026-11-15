@@ -7,23 +7,6 @@ use crate::types::DocSink;
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{first_solid_fill_hex, walkers, EditorCommand, NodeId};
 
-#[path = "map_template_geometry.rs"]
-mod map_template_geometry;
-
-#[path = "map_template_palette.rs"]
-mod map_template_palette;
-
-/// Template parts follow the final viewport, after rail and overflow repairs.
-pub(super) fn settle_map_geometry(
-    sink: &mut dyn DocSink,
-    root_ids: &[String],
-    summary: &mut RepairSummary,
-    counter: &mut RepairCounter,
-) {
-    map_template_geometry::settle(sink, root_ids);
-    counter.checkpoint(summary, CheckCategory::Layout, "map-template-geometry");
-}
-
 /// Apply map patches before image target collection and checkpoint the group.
 pub(super) fn repair_map_placeholders(
     sink: &mut dyn DocSink,
@@ -39,22 +22,12 @@ pub(super) fn repair_map_placeholders(
         return;
     };
     let rects = crate::image_fallback_policy::resolved_rects(sink.state());
-    let variables = sink.state().doc.variables.clone().unwrap_or_default();
-    let active_theme = op_design_lint::node_util::default_theme(sink.state().doc.themes.as_ref());
-    let fill = first_solid_fill_hex(root).and_then(|raw| {
-        op_design_lint::node_util::resolve_color_ref(raw, &variables, &active_theme)
-    });
-    let theme = crate::role_defaults::detect_theme_from_fill(fill.as_deref());
+    let theme = crate::role_defaults::detect_theme_from_fill(first_solid_fill_hex(root));
     let patches = map_placeholder(root, &rects, theme);
     for patch in patches {
-        let mut data: serde_json::Value =
-            serde_json::from_str(&patch.patch_json).expect("map builder returns valid JSON");
-        map_template_palette::adapt(&mut data, |raw| {
-            op_design_lint::node_util::resolve_color_ref(raw, &variables, &active_theme)
-        });
         sink.apply(EditorCommand::PatchNodeData {
             node_id: NodeId::new(patch.node_id),
-            patch_json: data.to_string(),
+            patch_json: patch.patch_json,
             page_id: None,
         });
     }

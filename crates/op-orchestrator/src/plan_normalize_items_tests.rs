@@ -31,7 +31,6 @@ fn item(id: &str, label: &str, screen: Option<&str>, height: f64) -> Subtask {
         screen: screen.map(str::to_string),
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }
@@ -39,7 +38,6 @@ fn item(id: &str, label: &str, screen: Option<&str>, height: f64) -> Subtask {
 /// Five 法则 items, no screens — the canonical card-board family.
 fn five_item_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -61,7 +59,6 @@ fn five_item_plan() -> OrchestratorPlan {
             })
             .collect(),
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -135,7 +132,6 @@ fn unknown_model_keeps_the_family_unbundled() {
 #[test]
 fn different_stems_do_not_merge() {
     let mut plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -154,7 +150,6 @@ fn different_stems_do_not_merge() {
             item("case-02", "案例 02", None, 100.0),
         ],
         style_guide_name: None,
-        palette: None,
     };
     normalize(&mut plan, &req_with_model(Some("deepseek-v4-pro")));
     // 法则 (3) merges; 案例 (2) does not.
@@ -170,7 +165,6 @@ fn items_on_different_screens_never_merge() {
     // S2 pair does not, and NO subtask ever spans both screens (the
     // multi-screen fanout owns the screen dimension).
     let mut plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -189,7 +183,6 @@ fn items_on_different_screens_never_merge() {
             item("rule-05", "法则 05", Some("S2"), 100.0),
         ],
         style_guide_name: None,
-        palette: None,
     };
     normalize(&mut plan, &req_with_model(Some("deepseek-v4-pro")));
     assert_eq!(
@@ -218,7 +211,6 @@ fn per_screen_families_merge_independently_without_crossing_screens() {
     // Three items on S1 AND three items on S2: two merged subtasks, each
     // keeping its own screen — the deck fanout shape stays intact.
     let mut plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -238,7 +230,6 @@ fn per_screen_families_merge_independently_without_crossing_screens() {
             item("rule-06", "法则 06", Some("S2"), 100.0),
         ],
         style_guide_name: None,
-        palette: None,
     };
     normalize(&mut plan, &req_with_model(Some("deepseek-v4-pro")));
     assert_eq!(plan.subtasks.len(), 2, "one merged subtask per screen");
@@ -262,7 +253,6 @@ fn deck_fallback_screens_survive_bundling() {
     // deepseek model — the screen protection is what keeps the multi-root
     // fanout intact.
     let mut plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "deck".into(),
             name: "Deck".into(),
@@ -284,7 +274,6 @@ fn deck_fallback_screens_survive_bundling() {
             })
             .collect(),
         style_guide_name: None,
-        palette: None,
     };
     normalize(&mut plan, &req_with_model(Some("deepseek-v4-pro")));
     assert_eq!(
@@ -305,7 +294,6 @@ fn ordinal_only_labels_fall_back_to_the_id_stem() {
     // Labels like "01".."05" leave no label stem — the id stem ("rule-")
     // carries the family instead.
     let mut plan = OrchestratorPlan {
-        shared_context: None,
         root_frame: crate::plan::RootFrameSpec {
             id: "card".into(),
             name: "知识卡片".into(),
@@ -320,7 +308,6 @@ fn ordinal_only_labels_fall_back_to_the_id_stem() {
             .map(|n| item(&format!("rule-0{n}"), &format!("0{n}"), None, 100.0))
             .collect(),
         style_guide_name: None,
-        palette: None,
     };
     normalize(&mut plan, &req_with_model(Some("deepseek-v4-pro")));
     assert_eq!(plan.subtasks.len(), 1, "id-stem family must merge");

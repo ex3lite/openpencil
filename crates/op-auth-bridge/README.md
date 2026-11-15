@@ -14,8 +14,8 @@ crate's Cargo source package and this crate is not published to a registry.
 Their licensing and provenance are managed by their independent source rather
 than by this crate's notice.
 
-Production input is a complete ten-target signed matrix covering desktop, iOS
-device and simulator, and Android arm64 and x86_64. Its signed
+The committed production input is a complete ten-target ABI-v3 matrix covering
+desktop, iOS device and simulator, and Android arm64 and x86_64. Its signed
 `VERSION` and `openpencil_revision` values identify the artifact release and
 record its original public build context; neither value is a compatibility lock
 to the consuming OpenPencil checkout. Compatibility is instead gated by the
@@ -25,9 +25,8 @@ Private release CI rebuilds an immutable candidate for every supported target,
 audits its hardening, and signs each artifact plus the complete release
 manifest. Candidates are never linked directly into production. Normal Rust,
 Android, and App Store builds accept only a self-consistent matrix rooted in
-the repository Ed25519 public key, with exact archive hashes, one policy-adopted
-ABI (v3 or v4), all ten canonical targets, signed private provenance, and signed
-hardening digests. Shipping Hosted requires the complete ABI-v4 matrix.
+the repository Ed25519 public key, with exact archive hashes, ABI v3, all ten
+canonical targets, signed private provenance, and signed hardening digests.
 The source-owned `AUTH-RELEASE-POLICY` additionally pins the exact adopted
 matrix digest and private identity, so another older matrix signed by the same
 key cannot be replayed.
@@ -48,10 +47,10 @@ as the trust anchor, and avoids a broad linker multiple-definition exception.
 Malformed archives, changed bytes, and archives containing both names fail
 closed.
 
-Production ABI-v2, ABI-v3, and ABI-v4 artifacts fail closed unless their byte
-hash, target, ABI, source revision, build id, and `op-auth-hardened-v1`
-declaration are covered by an Ed25519 signature rooted in
-`prebuilt/PROVENANCE_PUBKEY`. The private release
+Production ABI-v2 and ABI-v3 artifacts fail closed unless their byte hash,
+target, ABI,
+source revision, build id, and `op-auth-hardened-v1` declaration are covered by
+an Ed25519 signature rooted in `prebuilt/PROVENANCE_PUBKEY`. The private release
 pipeline must rebuild with path remapping, debug stripping, a narrow C wrapper,
 LTO, and its reviewed obfuscation passes before
 `tools/package-op-auth-prebuilt.sh` will stage and sign new bytes. See
@@ -89,42 +88,6 @@ closed. Mobile shells use the narrower `mobile-auth-dev` forwarding feature
 and [`scripts/build-mobile-auth-dev.sh`](../../scripts/build-mobile-auth-dev.sh),
 which has no release mode and isolates Android output in the Debug source set.
 
-## Local Hosted ABI-v4 development
-
-Unsigned local Hosted development requires a separate opt-in and a private ABI-v4 archive:
-
-```sh
-OPENPENCIL_DEV_OP_AUTH_ARCHIVE=/absolute/path/to/libop_auth.a \
-OPENPENCIL_DEV_OP_AUTH_ABI_VERSION=4 \
-cargo build -p op-host-desktop --features dev-op-auth-hosted
-```
-
-Mobile Debug builds use the matching target archive and forward the same opt-in:
-
-```sh
-scripts/build-mobile-auth-dev.sh --platform ios-simulator \
-  --archive /absolute/path/to/aarch64-apple-ios-sim/libop_auth.a --abi 4
-# Android: --platform android-arm64 and an aarch64-linux-android archive.
-```
-
-The bridge feature is `op-auth-bridge/dev-hosted`; the existing `dev-prebuilt`
-feature alone rejects ABI v4. The same debug profile, target debug assertion,
-absolute regular-file path, and runtime ABI checks apply. A developer's declared
-ABI must equal the linked archive's actual ABI. Enabling the feature without
-override variables continues to use the signed production artifact.
-
-Hosted access is unavailable on ABI v1–v3; their login and collaboration APIs
-continue to work. ABI v4 adds independent begin/poll/cancel operations and a
-session epoch for short-lived, non-persistent Hosted credentials. A Hosted
-production release requires a complete signed ABI-v4 matrix and reviewed
-`AUTH-RELEASE-POLICY` adoption of its ABI, exact complete matrix digest, private
-source revision, and build ID. Once adopted and verified, signed ABI v4 is
-supported without a development feature.
-Each target still requires valid provenance, byte hashes, and all four Hosted
-symbols. The runtime ABI handshake must match the validated archive declaration.
-Consumer support alone does not produce or adopt a signed private release, and
-the Debug override does not authorize shipping an unsigned archive.
-
 ## Regional login and collaboration trust
 
 The credential-bearing login/ticket origin and the public collaboration trust
@@ -153,22 +116,13 @@ when both issuers produce the same logical `iss` and globally stable account
 must publish the same canonical envelope signed by the offline root pinned in
 this crate. Policy v2 binds every required region to a non-zero
 `recovery_epoch`; v1 envelopes fail closed. The verifier requires the exact
-issuer, a live window of at most 90 days (7,776,000 seconds), at most 8 unique
-regions/24 keys, one active plus one next key per region, globally unique `kid`
-and public keys, and safe overlap metadata. Next keys are integrity-checked but cannot verify
+issuer, a live seven-day-or-shorter window, at most 8 unique regions/24 keys,
+one active plus one next key per region, globally unique `kid` and public keys,
+and safe overlap metadata. Next keys are integrity-checked but cannot verify
 tickets before activation; expired overlap keys fail closed. A process rejects
 generation rollback and same-generation rewrites, including recovery-epoch
 rewrites. Neither tickets, the private provider, discovery, peers, nor a
 regional mirror can replace the offline root.
-
-The 90-day ceiling also accepts existing seven-day policies, without extending
-their signed expiry. `not_before_unix` remains inclusive with no future clock
-skew allowance, and `not_after_unix` remains exclusive. Previously shipped
-clients that cap the policy at seven days must be upgraded before a longer
-policy is published. Policy v2, the signing domain, pinned roots, generation
-floor, and recovery epochs are unchanged; existing signed fixtures remain
-byte-identical. This public Rust verifier is shared by desktop, the web daemon,
-and mobile collaboration and does not depend on the private auth archive ABI.
 
 When no compatible private artifact is present, the crate builds its public
 stub backend. Authentication availability then reports `false`, while the open

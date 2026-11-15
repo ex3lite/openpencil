@@ -2,7 +2,6 @@ import SwiftUI
 
 @main
 struct OpenPencilPlayerApp: App {
-    @StateObject private var deletion = AccountDeletionCoordinator.shared
     var body: some Scene {
         WindowGroup {
             // Edge-to-edge: the Metal view spans the full screen; the
@@ -10,20 +9,8 @@ struct OpenPencilPlayerApp: App {
             // out against the usable rectangle. Include the keyboard region
             // explicitly so SwiftUI never resizes or lifts the whole editor;
             // docked keyboard occlusion is delivered through its own channel.
-            Group {
-                if deletion.gate == .editor {
-                    OpPlayerContainer().ignoresSafeArea(.all, edges: .all)
-                        .overlay {
-                            if deletion.isPreparingCleanup {
-                                AccountDeletionRecoveryView(coordinator: deletion)
-                                    .background(Color(UIColor.systemBackground))
-                            }
-                        }
-                } else {
-                    AccountDeletionRecoveryView(coordinator: deletion)
-                }
-            }
-                .onAppear { deletion.bootstrap() }
+            OpPlayerContainer()
+                .ignoresSafeArea(.all, edges: .all)
                 // Native provider sign-in SDKs (Douyin / Alipay) return via
                 // the app's URL schemes; whatever they do not consume routes
                 // through the universal-link handler.
@@ -54,9 +41,7 @@ private struct OpPlayerContainer: UIViewRepresentable {
     }()
 
     func makeUIView(context: Context) -> OpPlayerView {
-        let view = OpPlayerView(editorMode: Self.editorMode)
-        AccountDeletionCoordinator.shared.register(view)
-        return view
+        OpPlayerView(editorMode: Self.editorMode)
     }
 
     func updateUIView(_ view: OpPlayerView, context: Context) {

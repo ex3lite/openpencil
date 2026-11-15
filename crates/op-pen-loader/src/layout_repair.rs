@@ -17,9 +17,6 @@ use jian_ops_schema::node::PenNode;
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use jian_ops_schema::style::StrokeThickness;
 
-#[path = "layout_repair_scroll.rs"]
-mod scroll;
-
 pub(crate) fn repair_fit_content_layout(root: &PenNode, rects: &mut BTreeMap<String, [f32; 4]>) {
     repair_node(root, rects, true);
 }
@@ -31,20 +28,9 @@ fn repair_node(node: &PenNode, rects: &mut BTreeMap<String, [f32; 4]>, is_root: 
         }
     }
 
-    let Some(authored_props) = container_props(node) else {
+    let Some(props) = container_props(node) else {
         return;
     };
-    // Root frames default to clipped artboards in the paint adapter. Layout
-    // repair must use the same default or an implicitly clipped fixed board
-    // grows before paint sees it, changing its viewport and export dimensions.
-    let props = if is_root && is_frame(node) && authored_props.clip_content.is_none() {
-        let mut props = authored_props.clone();
-        props.clip_content = Some(true);
-        std::borrow::Cow::Owned(props)
-    } else {
-        std::borrow::Cow::Borrowed(authored_props)
-    };
-    let props = props.as_ref();
     let Some(kids) = children(node) else {
         return;
     };
@@ -92,7 +78,6 @@ fn repair_vertical_container(
     let gap = gap_value(props);
     let avail_w = (parent.w - padding.left - padding.right).max(0.0);
     let avail_h = (parent.h - padding.top - padding.bottom).max(0.0);
-    scroll::reserve_intrinsic_footer(node, props, kids, rects, is_root);
     let rects_now: Vec<Rect> = layout_kids
         .iter()
         .filter_map(|child| rect(child, rects))

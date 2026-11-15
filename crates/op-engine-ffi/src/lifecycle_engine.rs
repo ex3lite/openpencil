@@ -88,18 +88,12 @@ pub(crate) unsafe fn call_session(
             None
         };
         let result = call(session);
-        // Capture every Home swap before another input call can replace the
-        // host's one-slot handoff. Disk I/O stays in the document drain.
-        #[cfg(feature = "editor")]
-        crate::editor_document::capture_replaced_home_document(session);
         #[cfg(feature = "editor")]
         if let (Some(before), Some(host)) = (settings_before, session.editor()) {
             op_editor_host_core::settings_io::save_if_changed(host.editor_state(), before);
         }
         if let Err(error) = &result {
-            if !error.quiet {
-                session.emit_runtime_error(2, &error.message, "op-engine-ffi");
-            }
+            session.emit_runtime_error(2, &error.message, "op-engine-ffi");
         }
         result
     }));

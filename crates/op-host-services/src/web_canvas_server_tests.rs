@@ -591,49 +591,6 @@ fn post_file_save_requires_a_known_daemon_path() {
 }
 
 #[test]
-fn unbinding_stops_save_from_writing_the_launch_file() {
-    let original = r#"{"version":"1.0.0","children":[]}"#;
-    let path = write_temp_op("unbind-target", original);
-    let mut s = WebCanvasState::new_with_path(EditorState::new(), 3100, Some(path.clone()));
-    let server = handle_web_canvas_request("GET", "/api/mcp/server", "", &mut s);
-    assert!(
-        server.body.contains(r#""fileBound":true"#),
-        "{}",
-        server.body
-    );
-    // A local daemon serves site import and directions; Home offers both.
-    assert!(
-        server.body.contains(r#""siteImport":true,"variants":true"#),
-        "{}",
-        server.body
-    );
-
-    let r = handle_web_canvas_request("POST", "/api/file/unbind", "", &mut s);
-    assert!(r.status.starts_with("200"), "{}", r.body);
-    assert!(r.body.contains(r#""unbound":true"#), "{}", r.body);
-    assert!(s.current_path.is_none());
-    let server = handle_web_canvas_request("GET", "/api/mcp/server", "", &mut s);
-    assert!(
-        server.body.contains(r#""fileBound":false"#),
-        "{}",
-        server.body
-    );
-
-    // Save now refuses (the browser downloads instead) and the file is intact.
-    let saved = handle_web_canvas_request("POST", "/api/file/save", SYNC_BODY, &mut s);
-    assert!(saved.status.starts_with("400"), "{}", saved.body);
-    assert!(saved.body.contains("No file path"), "{}", saved.body);
-    assert_eq!(std::fs::read_to_string(&path).expect("file"), original);
-
-    // Idempotent: a second unbind (or an unbound daemon) is a harmless no-op.
-    let again = handle_web_canvas_request("POST", "/api/file/unbind", "", &mut s);
-    assert!(again.status.starts_with("200"), "{}", again.body);
-    assert!(again.body.contains(r#""unbound":false"#), "{}", again.body);
-    assert_eq!(s.version, 0, "the document is untouched");
-    let _ = std::fs::remove_file(path);
-}
-
-#[test]
 fn post_file_save_writes_current_path_and_embedded_editor_meta() {
     use op_editor_core::PenNodeExt;
 
@@ -761,8 +718,42 @@ fn unknown_route_404s() {
     assert!(r.status.starts_with("404"));
 }
 
-#[path = "web_canvas_server_model_tests.rs"]
-mod model_tests;
+#[test]
+fn get_ai_models_returns_json_array() {
+    let mut state = fresh_state();
+    state
+        .editor
+        .editor_ui
+        .agent_settings
+        .add_builtin_agent_with_defaults("Built-in", "sk-test", "built-in-model");
+    state.editor.chat.discovered_models = vec![op_editor_core::ModelEntry::new(
+        op_editor_core::AgentProvider::ClaudeCode,
+        "cli-model",
+        "CLI model",
+    )];
+    state
+        .editor
+        .editor_ui
+        .agent_settings
+        .apply_provider_connect_outcome(
+            op_editor_core::AgentProvider::ClaudeCode,
+            op_editor_core::ProviderConnectOutcome {
+                connected: true,
+                info: Some("Connected via CLI".into()),
+                ..Default::default()
+            },
+        );
+    state.editor.rebuild_chat_models();
+
+    let r = handle_web_canvas_request("GET", "/api/ai/models", "", &mut state);
+    assert!(r.status.starts_with("200"));
+    let models =
+        serde_json::from_str::<Vec<serde_json::Value>>(&r.body).expect("models body is valid JSON");
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["displayName"], "built-in-model");
+    assert_eq!(models[0]["providerDisplayName"], "Built-in");
+    assert!(models[0]["builtinProviderId"].as_str().is_some());
+}
 
 #[path = "web_canvas_server_export_tests.rs"]
 mod export_tests;

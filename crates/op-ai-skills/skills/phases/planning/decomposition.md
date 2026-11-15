@@ -4,7 +4,7 @@ description: Orchestrator task decomposition — splits UI requests into cohesiv
 phase: [planning]
 trigger: null
 priority: 0
-budget: 3840
+budget: 3704
 category: base
 ---
 
@@ -58,23 +58,25 @@ OTHERWISE classify by purpose:
 CRITICAL — "MOBILE" MEANS MOBILE-SIZED SCREEN, NOT A PHONE MOCKUP:
 When the user says "mobile"/"移动端"/"手机" + a screen type (login, profile, settings, etc.), they want a DIRECT mobile-sized screen (375x812) — NOT a desktop landing page containing a phone mockup frame. A "mobile login page" = type 2 (375x812 login screen). Only use phone mockups when the user explicitly asks for a "mockup"/"展示"/"showcase"/"preview" of an app, or when designing a landing page that promotes a mobile app.
 
+FORMAT:
+{"rootFrame":{"id":"page","name":"Page","width":1200,"height":0,"layout":"vertical","gap":0,"fill":[{"type":"solid","color":"<bg color from selected style guide, shown after bg: in the guide list>"}]},"styleGuideName":"terminal-minimal-dark","subtasks":[{"id":"nav","label":"Navigation Bar","elements":"logo, nav links (Home, Features, Pricing, Blog), sign-in button, get-started CTA button","region":{"width":1200,"height":72}},{"id":"hero","label":"Hero Section","elements":"headline, subtitle, CTA button, hero illustration or phone mockup","region":{"width":1200,"height":560}},{"id":"features","label":"Feature Cards","elements":"section title, 3 feature cards each with icon + title + description","region":{"width":1200,"height":480}}]}
+
 RULES:
 
 - ELEMENT BOUNDARIES: Each subtask MUST have an "elements" field listing the specific UI elements it contains. Elements must NOT overlap between subtasks — each element belongs to exactly ONE subtask. Example: if "Login Form" owns the submit button, "Social Login" must NOT repeat it.
-- COVERS BACKFILL: when the request enumerates sections (e.g. 含英雄、定价三档、页脚), each subtask delivering one MUST carry `"covers": ["<section>"]` with the name copied VERBATIM from the request — never translated or rewritten (e.g. `{"id":"hero","label":"Hero Section","covers":["英雄"]}`). Matched exactly modulo whitespace/punctuation/case; omit when the request names no sections.
 - STYLE SELECTION: Choose light or dark theme based on user intent. Dark: user mentions dark/cyber/terminal/neon/夜间/暗黑/deep/gaming/noir. Light (default): all other cases — SaaS, marketing, education, e-commerce, productivity, social. Never default to dark unless the content clearly calls for it.
 - Detect the design type FIRST, then choose the appropriate structure and subtask count.
 - Multi-section pages (type 1): Navigation Bar is the FIRST subtask — a sticky nav and any scroll progress bar belong INSIDE it, never a separate subtask — then Hero, feature sections, CTA, footer (6-10 subtasks)
 - SIDE PROGRESS RAILS DO NOT EXIST: a page root is a vertical flow, so a "right-side / vertical scroll progress rail" cannot be a subtask — it would render as a full-width empty band. When the user asks for one, plan the progress indicator INSIDE the Navigation Bar subtask as a 4px bar bound to scroll progress, and do not emit a separate rail subtask.
 - REFERENCE SKELETON: when the prompt carries a "REFERENCE SKELETON" block, the section ORDER, COUNT (±1) and column rhythm come from that block — one subtask per skeleton section, in that order, matching each section's role (nav → Navigation Bar, hero → Hero Section, …) and its column count in "elements" (e.g. "3 feature cards" for rhythm 3). Height hints scale from the block's height percentages. Everything else — headlines, copy, brand name, imagery, colors — must be ORIGINAL for the user's product; never reproduce the reference's text or brand. The skeleton is a structure guide, not content.
 - Single-task mobile screens (type 2 — login, signup, profile, settings, a single form/detail view): do NOT include Navigation Bar, Hero, CTA, or footer. Only include the actual UI elements needed (1-5 subtasks).
-- Mobile app HOME / feed / main / discover screens (type 2 but MULTI-section — a food/shopping/social/delivery app homepage, a dashboard feed, etc.): plan the sections that genuinely fit THIS product and prompt. VARY the composition per app — do NOT default to the same header + search + categories + featured-banner + two-card-list stack every time; choose a domain-specific concept and section set. The LAST subtask MUST be "Bottom Navigation Bar" (icon + label tabs, active state on the first) — an app home/feed/main screen always has persistent top-level destinations. Omit it ONLY for single-task flows (login, a form, one detail view), never for a home screen. The number and kind of sections should follow the product, not a fixed template. Food/takeout homes: categories use one icon/illustration family; 九宫格 = nine in 3×3. Use food photos for store/dish rows, not category thumbnails.
+- Mobile app HOME / feed / main / discover screens (type 2 but MULTI-section — a food/shopping/social/delivery app homepage, a dashboard feed, etc.): plan the sections that genuinely fit THIS product and prompt. VARY the composition per app — do NOT default to the same header + search + categories + featured-banner + two-card-list stack every time; choose a domain-specific concept and section set. The LAST subtask MUST be "Bottom Navigation Bar" (icon + label tabs, active state on the first) — an app home/feed/main screen always has persistent top-level destinations. Omit it ONLY for single-task flows (login, a form, one detail view), never for a home screen. The number and kind of sections should follow the product, not a fixed template.
 - FORM INTEGRITY: Keep a form's core elements (inputs + submit button) in the same subtask. Splitting inputs into one subtask and the button into another causes duplicate buttons.
 - Combine related elements: "Hero with title + image + CTA" = ONE subtask, not three.
 - Each subtask generates a meaningful section (~10-30 nodes). Only split if it would exceed 40 nodes.
-- Pick "styleGuideName" from the available guides; its full specifications reach generation. If none fit the requested visual direction, omit it to use defaults.
+- REQUIRED: "styleGuideName" must ALWAYS be included. Pick a name from the available style guides listed by the style-guide-selector skill. If none fit, use the closest match. The system will load the full style specifications automatically.
 - CJK FONT RULE: If the user's request is in Chinese/Japanese/Korean or the product targets CJK audiences, the styleGuide fonts MUST use CJK-compatible fonts: heading="Noto Sans SC" (Chinese) / "Noto Sans JP" (Japanese) / "Noto Sans KR" (Korean), body="Inter". NEVER use "Space Grotesk" or "Manrope" as heading font for CJK content — they have no CJK character support.
-- Root frame fill must use the background color from the selected style guide. Each guide in the list shows its bg color (e.g. bg:#0A0F1C). Use that hex for rootFrame.fill unless the user supplied a different palette; keep canvas, text, and surfaces coherent.
+- Root frame fill must use the background color from the selected style guide. Each guide in the list shows its bg color (e.g. bg:#0A0F1C). Use that exact hex value for the rootFrame fill color.
 - Root frame gap: Landing pages with distinct section backgrounds - gap=0 (sections flush). Mobile screens and dashboards - gap=16-24 (breathing room between sections). Always include "gap" in rootFrame.
 - Root frame height: Mobile default (width=375) - set height=812 (fixed viewport). Desktop default (width=1200) - set height=0 (auto-expands as sections are generated). Deck (width=1920) - set height=1080. Preserve an explicit user-requested root height.
 - Landing page height hints: nav 64-80px, hero 500-600px, feature sections 400-600px, testimonials 300-400px, CTA 200-300px, footer 200-300px.

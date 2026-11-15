@@ -42,9 +42,6 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
     };
     match action {
         FileAction::Home => {
-            // Studio Home over the same document (desktop `run_action`
-            // parity). A live workspace stays active underneath, so Home's
-            // footer offers 回到工作区 and a running generation keeps going.
             let mut b = inner.borrow_mut();
             let ui = &mut b.host_mut().editor_state_mut().editor_ui;
             ui.entry_surface = op_editor_core::EntrySurface::Home;
@@ -101,11 +98,6 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
             // `false`, so this action never reaches a browser. Kept as an
             // explicit no-op branch so the shared action stays
             // exhaustive.
-        }
-        FileAction::Share => {
-            // Gated like the deck rows: web leaves
-            // `deck_html_export_supported` at `false`, so neither the File
-            // menu row nor the workspace button that raise this is shown.
         }
         FileAction::ImportFigma => import_figma(inner),
         FileAction::FinishFigmaImport(_) => {
@@ -168,16 +160,6 @@ pub(super) fn open_recent_document<C: RepaintContext + 'static>(inner: &InnerRc<
         ) {
             return;
         }
-        // An opened document lands on the canvas, never under Home or a
-        // stale generation workspace (the daemon's document arrives through
-        // the next live-sync pull). A pruned stale entry opened nothing.
-        let opened = serde_json::from_str::<serde_json::Value>(&response)
-            .ok()
-            .and_then(|reply| reply.get("ok").and_then(serde_json::Value::as_bool))
-            .unwrap_or(false);
-        if opened {
-            b.host_mut().leave_studio_for_opened_document();
-        }
         b.host_mut().mark_editor_state_dirty();
         let _ = b.repaint();
     });
@@ -198,14 +180,10 @@ pub(super) fn new_document<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
     let mut state = op_editor_core::EditorState::starter();
     file_actions::preserve_app_preferences(b.host().editor_state(), &mut state);
     state.editor_ui.file_name_display = None;
-    // A fresh starter is a blank canvas: Home (when New came from it) hides.
-    state.editor_ui.home.hide();
     b.host_mut().replace_editor_state(state);
     let (w, h) = b.viewport_size();
     b.host_mut().fit_content_to_viewport(w, h);
     let _ = b.repaint();
-    // The new page is untitled: Save must not overwrite the daemon's file.
-    crate::studio_web::unbind_daemon_file(b.host().editor_state().editor_ui.embed);
 }
 
 /// File → Save / Save As. Pick the destination before serializing so the
@@ -573,9 +551,6 @@ fn apply_opened_document<C: RepaintContext + 'static>(
             let (w, h) = b.viewport_size();
             b.host_mut().fit_content_to_viewport(w, h);
             let _ = b.repaint();
-            // A file read in the browser is not the daemon's bound file; its
-            // Save downloads rather than overwriting that file.
-            crate::studio_web::unbind_daemon_file(b.host().editor_state().editor_ui.embed);
         }
         Err(e) => console_error(&format!("[open] {file_name}: {e}")),
     }

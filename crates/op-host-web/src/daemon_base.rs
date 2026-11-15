@@ -238,7 +238,6 @@ mod daemon_url_tests {
         "/api/ai/models",
         "/api/ai/image/search",
         "/api/ai/image/generate",
-        "/api/ai/site-import",
         "/api/collab/state",
         "/api/collab/action",
         "/api/collab/presence",
@@ -251,7 +250,6 @@ mod daemon_url_tests {
         "/api/export/raster",
         "/api/file/save",
         "/api/file/open-recent",
-        "/api/file/unbind",
     ];
 
     #[test]

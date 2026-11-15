@@ -2,9 +2,8 @@
 //! white header (back circle, doc tile, title + subtitle, 导出 /
 //! 专业编辑), the canvas toolbar (chat toggle, view segments, pager,
 //! zoom), the dock background + drag handle, the deck strip's
-//! placeholder plates. The real canvas and the pinned chat panel are
-//! painted by the host between these layers; the canvas banners paint
-//! after them (`workspace_surface_banner.rs`).
+//! placeholder plates, and the failed-phase banner. The real canvas and
+//! the pinned chat panel are painted by the host between these layers.
 
 use super::workspace_enter;
 use super::{StudioPalette, WorkspaceLayout, WorkspaceSurface};
@@ -16,9 +15,9 @@ use op_editor_core::{
     WORKSPACE_TOOLBAR_H,
 };
 
-pub(super) const SANS: &str = "system-ui";
+const SANS: &str = "system-ui";
 
-pub(super) fn text(cx: &mut PaintCx<'_>, content: &str, origin: Point2D, size: f32, color: Color) {
+fn text(cx: &mut PaintCx<'_>, content: &str, origin: Point2D, size: f32, color: Color) {
     let layout = crate::TextLayout::single_run(content, SANS, size, color.to_jian(), Point2D::ZERO);
     cx.backend.draw_text(&layout, origin);
 }
@@ -36,7 +35,7 @@ fn text_weighted(
     cx.backend.draw_text(&layout, origin);
 }
 
-pub(super) fn fade(color: Color, factor: f32) -> Color {
+fn fade(color: Color, factor: f32) -> Color {
     Color {
         a: color.a * factor,
         ..color
@@ -44,11 +43,27 @@ pub(super) fn fade(color: Color, factor: f32) -> Color {
 }
 
 /// Fade every palette token by `factor` (the entrance crossfade).
-pub(super) fn fade_all(palette: StudioPalette, factor: f32) -> StudioPalette {
-    palette.faded(factor)
+fn fade_all(palette: StudioPalette, factor: f32) -> StudioPalette {
+    // StudioPalette is Copy with ~40 fields; fade the handful the
+    // entrance actually washes rather than re-declaring the struct.
+    StudioPalette {
+        page: fade(palette.page, factor),
+        panel: fade(palette.panel, factor),
+        line: fade(palette.line, factor),
+        ink: fade(palette.ink, factor),
+        muted: fade(palette.muted, factor),
+        sub: fade(palette.sub, factor),
+        blue: fade(palette.blue, factor),
+        blue_soft: fade(palette.blue_soft, factor),
+        segment_bg: fade(palette.segment_bg, factor),
+        segment_line: fade(palette.segment_line, factor),
+        button_hover: fade(palette.button_hover, factor),
+        button_hover_line: fade(palette.button_hover_line, factor),
+        ..palette
+    }
 }
 
-pub(super) fn tr(locale: op_i18n::Locale, key: &'static str) -> &'static str {
+fn tr(locale: op_i18n::Locale, key: &'static str) -> &'static str {
     op_i18n::translate(locale, key)
 }
 
@@ -79,7 +94,7 @@ fn options_label(
     }
 }
 
-pub(crate) fn phase_key(phase: WorkspacePhase) -> &'static str {
+fn phase_key(phase: WorkspacePhase) -> &'static str {
     match phase {
         WorkspacePhase::Generating => "workspace.phase.generating",
         WorkspacePhase::Done => "workspace.phase.done",
@@ -88,16 +103,8 @@ pub(crate) fn phase_key(phase: WorkspacePhase) -> &'static str {
     }
 }
 
-pub(crate) fn workspace_phase_key(state: &op_editor_core::WorkspaceState) -> &'static str {
-    if state.phase == WorkspacePhase::Failed && state.page_edit_retry.is_some() {
-        "workspace.editFailed"
-    } else {
-        phase_key(state.phase)
-    }
-}
-
 /// One family's short name through the shared `home.task.*` keys.
-pub(crate) fn family_label(locale: op_i18n::Locale, family: HomeFamily) -> &'static str {
+fn family_label(locale: op_i18n::Locale, family: HomeFamily) -> &'static str {
     let key: &'static str = match family {
         HomeFamily::AppUi => "home.task.app.name",
         HomeFamily::Web => "home.task.web.name",
@@ -110,31 +117,15 @@ pub(crate) fn family_label(locale: op_i18n::Locale, family: HomeFamily) -> &'sta
     tr(locale, key)
 }
 
-pub(crate) fn work_family_label(
-    locale: op_i18n::Locale,
-    work: &op_editor_core::WorkspaceState,
-) -> &'static str {
-    if work.family_known {
-        family_label(locale, work.family)
-    } else {
-        tr(locale, "home.nav.projects")
-    }
-}
-
 /// One view mode's segment label.
-pub(super) fn view_label(
-    locale: op_i18n::Locale,
-    family: HomeFamily,
-    known: bool,
-    view: WorkspaceView,
-) -> &'static str {
+fn view_label(locale: op_i18n::Locale, family: HomeFamily, view: WorkspaceView) -> &'static str {
     match view {
         WorkspaceView::AllBoards => tr(locale, "workspace.view.all"),
         WorkspaceView::Single { .. } => {
-            if family == HomeFamily::AppUi && known {
-                tr(locale, "workspace.view.singleScreen")
-            } else {
+            if family == HomeFamily::Presentation {
                 tr(locale, "workspace.view.singlePage")
+            } else {
+                tr(locale, "workspace.view.singleScreen")
             }
         }
         WorkspaceView::LongPage => tr(locale, "workspace.view.long"),
@@ -144,10 +135,8 @@ pub(super) fn view_label(
 
 pub(super) fn paint_workspace(surface: &WorkspaceSurface<'_>, cx: &mut PaintCx<'_>, rect: Rect) {
     let layout = surface.layout(rect.size.x, rect.size.y);
-    let (_, alpha) = workspace_enter(
-        surface.ui.motion_stamp(surface.state.shown_at_ms),
-        surface.now_ms,
-    );
+    let locale = surface.ui.locale;
+    let (_, alpha) = workspace_enter(surface.state.shown_at_ms, surface.now_ms);
     let palette = fade_all(
         StudioPalette::for_mode(surface.ui.effective_theme_mode()),
         alpha,
@@ -187,8 +176,7 @@ pub(super) fn paint_workspace(surface: &WorkspaceSurface<'_>, cx: &mut PaintCx<'
     paint_header(surface, cx, &layout, palette);
     paint_toolbar(surface, cx, &layout, palette);
     paint_strip(surface, cx, &layout, palette);
-    // The canvas banners paint over the canvas, not here — see
-    // `WorkspaceSurface::paint_canvas_banners`.
+    paint_failed_banner(surface, cx, &layout, palette, locale);
 }
 
 fn paint_header(
@@ -198,11 +186,11 @@ fn paint_header(
     palette: StudioPalette,
 ) {
     let locale = surface.ui.locale;
-    cx.backend.fill_rect(layout.header, palette.topbar);
+    cx.backend.fill_rect(layout.header, palette.panel);
     cx.backend.stroke_line(
         Point2D::new(0.0, layout.header.size.y),
         Point2D::new(layout.header.size.x, layout.header.size.y),
-        palette.topbar_line,
+        palette.line,
         1.0,
     );
 
@@ -214,7 +202,7 @@ fn paint_header(
         if back_hovered {
             palette.button_hover
         } else {
-            palette.raised
+            palette.panel
         },
     );
     cx.backend.stroke_round_rect(
@@ -223,7 +211,7 @@ fn paint_header(
         if back_hovered {
             palette.button_hover_line
         } else {
-            palette.raised_line
+            palette.line
         },
         1.0,
     );
@@ -252,42 +240,28 @@ fn paint_header(
             layout.doc_tile.origin.y + (layout.doc_tile.size.y - 17.0) / 2.0,
         ),
         17.0,
-        palette.link,
+        palette.blue,
         1.6,
     );
 
     // Title + subtitle.
-    let title = crate::util::ellipsize_to_width(&surface.title, layout.title.size.x, |s| {
-        super::super::text_metrics::measure_chrome_weighted(cx.backend, s, 15.0, 650)
-    });
     text_weighted(
         cx,
-        &title,
+        &surface.title,
         Point2D::new(layout.title.origin.x, layout.title.origin.y + 17.0),
         15.0,
         palette.ink,
         650,
     );
-    let options = if surface.state.brief.is_empty() && surface.ui.home.recipe.is_none() {
-        ""
-    } else {
-        options_label(locale, surface.state.family, &surface.state.options)
-    };
-    let phase = tr(locale, workspace_phase_key(surface.state));
-    let mut subtitle = work_family_label(locale, surface.state).to_string();
+    let options = options_label(locale, surface.state.family, &surface.state.options);
+    let phase = tr(locale, phase_key(surface.state.phase));
+    let mut subtitle = family_label(locale, surface.state.family).to_string();
     if !options.is_empty() {
         subtitle.push_str(" · ");
         subtitle.push_str(options);
     }
     subtitle.push_str(" · ");
     subtitle.push_str(phase);
-    let subtitle = crate::widgets::text_metrics::fit_in_family(
-        cx.backend,
-        &subtitle,
-        layout.title.size.x,
-        12.0,
-        SANS,
-    );
     text(
         cx,
         &subtitle,
@@ -296,28 +270,8 @@ fn paint_header(
         palette.muted,
     );
 
-    // 质检 chip (finished runs with an audited report only).
-    super::quality_paint::paint_quality_chip(surface, cx, layout, palette);
-
-    // 分享 / 导出 / 专业编辑 outline buttons (分享 only where the host can
-    // write the share page).
-    let share = surface.share_button(layout).map(|rect| {
-        (
-            rect,
-            WorkspaceHit::Share,
-            tr(locale, "share.button"),
-            Icon::Share,
-        )
-    });
-    let preview = surface.preview_button(layout).map(|button| {
-        (
-            button,
-            WorkspaceHit::Play,
-            tr(locale, "tooltip.topbar.preview"),
-            Icon::Play,
-        )
-    });
-    for (button, hit, label, icon) in preview.into_iter().chain(share).chain([
+    // 导出 / 专业编辑 outline buttons.
+    for (button, hit, label, icon) in [
         (
             layout.export,
             WorkspaceHit::Export,
@@ -330,7 +284,7 @@ fn paint_header(
             tr(locale, "workspace.professional"),
             Icon::ArrowUpRight,
         ),
-    ]) {
+    ] {
         let hovered = surface.state.hover == Some(hit);
         let pressed = surface.state.pressed == Some(hit);
         cx.backend.fill_round_rect(
@@ -339,7 +293,7 @@ fn paint_header(
             if pressed || hovered {
                 palette.button_hover
             } else {
-                palette.raised
+                palette.panel
             },
         );
         cx.backend.stroke_round_rect(
@@ -348,7 +302,7 @@ fn paint_header(
             if hovered {
                 palette.button_hover_line
             } else {
-                palette.raised_line
+                palette.line
             },
             1.0,
         );
@@ -418,8 +372,8 @@ fn paint_toolbar(
         Icon::PanelLeft,
         Point2D::new(toggle.origin.x + 5.0, toggle.origin.y + 5.0),
         18.0,
-        if surface.ui.chat_pinned() {
-            palette.link
+        if surface.ui.sidebar_open {
+            palette.blue
         } else {
             palette.muted
         },
@@ -449,26 +403,22 @@ fn paint_toolbar(
                 palette.segment_bg
             },
         );
-        let label = view_label(
-            locale,
-            surface.state.family,
-            surface.state.family_known,
-            view,
-        );
-        centered_label(
+        let label = view_label(locale, surface.state.family, view);
+        text(
             cx,
             label,
-            *segment,
+            Point2D::new(
+                segment.origin.x,
+                jian_widgets::centered_text_baseline_y(*segment, 12.0),
+            ),
             12.0,
             if selected {
-                palette.link
+                palette.blue
             } else {
                 palette.muted
             },
         );
     }
-
-    surface.paint_history(cx, layout, palette);
 
     // Pager (prev / next) with a position label between when present.
     if let (Some(prev), Some(next)) = (layout.prev, layout.next) {
@@ -537,29 +487,15 @@ fn paint_toolbar(
             fade(palette.panel, 1.0)
         },
     );
-    centered_label(
-        cx,
-        tr(locale, "workspace.fit"),
-        layout.zoom_fit,
-        11.0,
-        palette.sub,
-    );
-}
-
-fn centered_label(cx: &mut PaintCx<'_>, label: &str, rect: Rect, size: f32, color: Color) {
-    let label = crate::util::ellipsize_to_width(label, (rect.size.x - 12.0).max(0.0), |s| {
-        cx.backend.measure_text_family(s, size, SANS)
-    });
-    let width = cx.backend.measure_text_family(&label, size, SANS);
     text(
         cx,
-        &label,
+        tr(locale, "workspace.fit"),
         Point2D::new(
-            rect.origin.x + (rect.size.x - width) / 2.0,
-            jian_widgets::centered_text_baseline_y(rect, size),
+            layout.zoom_fit.origin.x,
+            jian_widgets::centered_text_baseline_y(layout.zoom_fit, 11.0),
         ),
-        size,
-        color,
+        11.0,
+        palette.sub,
     );
 }
 
@@ -607,7 +543,7 @@ fn paint_strip(
         return;
     };
     let locale = surface.ui.locale;
-    cx.backend.fill_rect(strip, palette.topbar);
+    cx.backend.fill_rect(strip, palette.panel);
     cx.backend.stroke_line(
         Point2D::new(strip.origin.x, strip.origin.y),
         Point2D::new(strip.origin.x + strip.size.x, strip.origin.y),
@@ -631,7 +567,7 @@ fn paint_strip(
         },
     );
     if let Some(play) = layout.play {
-        let enabled = surface.play_enabled();
+        let enabled = surface.state.phase == WorkspacePhase::Done && !surface.boards.is_empty();
         paint_strip_tile(
             cx,
             play,
@@ -647,8 +583,7 @@ fn paint_strip(
     }
 
     // Thumbnail plates (the host blits the real rasters on top).
-    for (slot, thumb) in layout.thumbs.iter().enumerate() {
-        let index = layout.thumb_first + slot;
+    for (index, thumb) in layout.thumbs.iter().enumerate() {
         let selected =
             surface.state.selected == index && surface.state.view != WorkspaceView::Overview;
         let plate = Rect::xywh(
@@ -765,4 +700,79 @@ fn paint_strip_tile(
         CAPTION,
         ink,
     );
+}
+
+fn paint_failed_banner(
+    surface: &WorkspaceSurface<'_>,
+    cx: &mut PaintCx<'_>,
+    layout: &WorkspaceLayout,
+    palette: StudioPalette,
+    locale: op_i18n::Locale,
+) {
+    let Some((retry, return_edit)) = surface.banner_buttons(layout) else {
+        return;
+    };
+    // A soft strip behind the actions so they read as one banner.
+    let banner = Rect::xywh(
+        layout.canvas.origin.x,
+        retry.origin.y - 14.0,
+        layout.canvas.size.x,
+        retry.size.y + 28.0,
+    );
+    cx.backend.fill_rect(banner, fade(palette.chip_bg, 0.9));
+    text(
+        cx,
+        tr(locale, "workspace.failed.note"),
+        Point2D::new(
+            banner.origin.x + 18.0,
+            jian_widgets::centered_text_baseline_y(banner, 13.0) - 30.0,
+        ),
+        13.0,
+        palette.sub,
+    );
+    for (button, hit, label, filled) in [
+        (
+            retry,
+            WorkspaceHit::Retry,
+            tr(locale, "workspace.retry"),
+            true,
+        ),
+        (
+            return_edit,
+            WorkspaceHit::ReturnEdit,
+            tr(locale, "workspace.returnEdit"),
+            false,
+        ),
+    ] {
+        let hovered = surface.state.hover == Some(hit);
+        cx.backend.fill_round_rect(
+            button,
+            8.0,
+            if filled {
+                if hovered {
+                    palette.blue_hover
+                } else {
+                    palette.blue
+                }
+            } else if hovered {
+                palette.button_hover
+            } else {
+                palette.panel
+            },
+        );
+        if !filled {
+            cx.backend.stroke_round_rect(button, 8.0, palette.line, 1.0);
+        }
+        let label_w = cx.backend.measure_text_family(label, 13.0, SANS);
+        text(
+            cx,
+            label,
+            Point2D::new(
+                button.origin.x + (button.size.x - label_w) / 2.0,
+                jian_widgets::centered_text_baseline_y(button, 13.0),
+            ),
+            13.0,
+            if filled { palette.panel } else { palette.ink },
+        );
+    }
 }

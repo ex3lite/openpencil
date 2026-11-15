@@ -37,10 +37,7 @@ pub(super) fn collect_row_gap_fixes(
     // `< 8.0`, not `<= 0.0`: a 1-7px authored gap still resolves as touching
     // (the jam proof below requires <3px breathing anyway), and an
     // exactly-1.0 hairline gap slipped through every gate (measured).
-    } else if layout_str(v) == Some("horizontal")
-        && num(v, "gap") < 8.0
-        && !super::geometry_grid_row_fit::is_centered_grid_row(v)
-    {
+    } else if layout_str(v) == Some("horizontal") && num(v, "gap") < 8.0 {
         let kids = children(v);
         let frame_kids: Vec<&Value> = kids
             .iter()
@@ -215,12 +212,7 @@ enum TableCellWidthMode {
 }
 
 fn table_row_signature(row: &Value) -> Option<Vec<TableCellWidthMode>> {
-    if layout_str(row) != Some("horizontal")
-        || children(row).len() < 3
-        || children(row).iter().any(is_elastic_row_spacer)
-        || children(row).iter().all(is_pure_bar_track)
-        || children(row).iter().all(is_intrinsic_chip)
-    {
+    if layout_str(row) != Some("horizontal") || children(row).len() < 3 {
         return None;
     }
     Some(
@@ -241,97 +233,6 @@ fn table_row_signature(row: &Value) -> Option<Vec<TableCellWidthMode>> {
     )
 }
 
-// Independently sized painted chips in adjacent bands have no shared data
-// columns. Reserving a table-text floor for each chip falsely rejects compact
-// metadata and difficulty selectors. Fixed/fill-width cells remain table-like.
-fn is_intrinsic_chip(cell: &Value) -> bool {
-    cell.get("type").and_then(Value::as_str) == Some("frame")
-        && layout_str(cell) == Some("horizontal")
-        && matches!(
-            cell.get("width").and_then(Value::as_str),
-            None | Some("fit_content")
-        )
-        && fixed_width(cell).is_none()
-        && cell
-            .get("height")
-            .and_then(Value::as_f64)
-            .is_some_and(|h| (1.0..=36.0).contains(&h))
-        && num(cell, "cornerRadius") > 0.0
-        && horizontal_padding(cell) >= 16.0
-        && cell
-            .get("fill")
-            .and_then(Value::as_array)
-            .is_some_and(|fill| !fill.is_empty())
-        && children(cell)
-            .iter()
-            .filter(|n| n.get("type").and_then(Value::as_str) == Some("text"))
-            .count()
-            == 1
-        && children(cell).len() <= 2
-        && children(cell).iter().all(|n| {
-            matches!(
-                n.get("type").and_then(Value::as_str),
-                Some("text" | "icon_font")
-            )
-        })
-}
-
-/// A bottom-aligned rectangle inside a fixed-height track encodes a bar, not
-/// a data cell. Otherwise a plot and its label band share the same fill-width
-/// signature and reserve a full table-text floor for every short axis label.
-/// Keep this narrow: text, icons, images and nested content retain row coverage.
-fn is_pure_bar_track(cell: &Value) -> bool {
-    if cell.get("type").and_then(Value::as_str) != Some("frame")
-        || layout_str(cell) != Some("vertical")
-        || cell.get("justifyContent").and_then(Value::as_str) != Some("end")
-    {
-        return false;
-    }
-    let Some(track_height) = cell.get("height").and_then(Value::as_f64) else {
-        return false;
-    };
-    let [bar] = children(cell) else {
-        return false;
-    };
-    track_height > 0.0
-        && bar.get("type").and_then(Value::as_str) == Some("rectangle")
-        && children(bar).is_empty()
-        && bar
-            .get("height")
-            .and_then(Value::as_f64)
-            .is_some_and(|height| height > 0.0 && height <= track_height)
-        && fill_is_non_empty(bar)
-        && [cell, bar].iter().all(|node| {
-            !node
-                .get("fill")
-                .and_then(Value::as_array)
-                .is_some_and(|fills| {
-                    fills
-                        .iter()
-                        .any(|fill| fill.get("type").and_then(Value::as_str) == Some("image"))
-                })
-        })
-}
-
-/// An empty flex spacer aligns the trailing price/actions by absorbing slack;
-/// it is not a data column that needs a readable width reservation.
-fn is_elastic_row_spacer(cell: &Value) -> bool {
-    cell.get("type").and_then(Value::as_str) == Some("frame")
-        && cell.get("width").and_then(Value::as_str) == Some("fill_container")
-        && cell
-            .get("height")
-            .and_then(Value::as_f64)
-            .is_some_and(|h| (0.0..=4.0).contains(&h))
-        && children(cell).is_empty()
-        && ["fill", "effects"].iter().all(|key| {
-            cell.get(*key)
-                .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty))
-        })
-        && ["stroke", "role", "events", "state", "constraints", "x", "y"]
-            .iter()
-            .all(|key| cell.get(*key).is_none_or(Value::is_null))
-}
-
 /// Return the repeated, contiguous row run that gives `v` a table shape.
 ///
 /// A data table has a header and data rows next to each other under one
@@ -341,8 +242,8 @@ fn is_elastic_row_spacer(cell: &Value) -> bool {
 /// business sections. Treating those bands as table rows suppresses the normal
 /// row fixers and can emit an impossible "too many columns" diagnostic.
 ///
-/// The predicate uses layout, cell structure and width-mode facts. Names and
-/// roles are deliberately irrelevant, so unnamed generated tables remain covered.
+/// The predicate uses only layout and width-mode facts. Names and roles are
+/// deliberately irrelevant, so unnamed generated tables remain covered.
 pub(super) fn table_rows(v: &Value) -> Vec<&Value> {
     if layout_str(v) == Some("horizontal") {
         return Vec::new();

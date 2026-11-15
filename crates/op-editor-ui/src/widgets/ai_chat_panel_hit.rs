@@ -31,9 +31,6 @@ impl<'a> AIChatPlaceholder<'a> {
         ) {
             return Some(AIChatHit::ClearModelSearch);
         }
-        if crate::widgets::ai_chat_model_picker::footer_action_hit(picker, point) {
-            return Some(AIChatHit::ConnectMoreModels);
-        }
         match crate::widgets::ai_chat_model_picker::model_picker_hit(
             self.model_picker,
             picker,
@@ -284,13 +281,6 @@ impl<'a> AIChatPlaceholder<'a> {
                 if footer.thinking.size.x > 0.0 && (footer.thinking).contains(point) {
                     return Some(AIChatHit::CycleThinking);
                 }
-                // Live even while streaming for the same reason as thinking:
-                // the toggle sets what the NEXT turn does. Always clickable —
-                // an unconfigured press routes to Settings instead of
-                // toggling (decided in `apply_chat_hit`).
-                if footer.image_gen.size.x > 0.0 && (footer.image_gen).contains(point) {
-                    return Some(AIChatHit::ToggleImageGen);
-                }
                 if (footer.speed).contains(point) {
                     // The ⚡ chip is now the Parallel Agents chip (#32).
                     // While streaming the chip is inert (parity with old effort chip).
@@ -322,7 +312,7 @@ impl<'a> AIChatPlaceholder<'a> {
                     return Some(
                         if can_use_model
                             && !streaming
-                            && (!self.state.input.effective_text().trim().is_empty()
+                            && (!self.state.input.text().trim().is_empty()
                                 || !self.state.pending_attachments.is_empty())
                         {
                             AIChatHit::Send
@@ -622,9 +612,6 @@ impl<'a> AIChatPlaceholder<'a> {
         // Same zero-width guard as the press path — see `hit_test`.
         if footer.thinking.size.x > 0.0 && (footer.thinking).contains(point) {
             return Some(op_editor_core::ChatFooterButton::ThinkingMode);
-        }
-        if footer.image_gen.size.x > 0.0 && (footer.image_gen).contains(point) {
-            return Some(op_editor_core::ChatFooterButton::ImageGen);
         }
         if (footer.speed).contains(point) {
             return Some(op_editor_core::ChatFooterButton::SpeedChip);

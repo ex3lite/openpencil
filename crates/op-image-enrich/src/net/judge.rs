@@ -1,7 +1,5 @@
 //! Visual relevance judging and the provider-independent re-ranking policy.
 
-use std::time::Instant;
-
 /// Coarse visual relevance for one candidate thumbnail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelevanceVerdict {
@@ -19,37 +17,10 @@ pub struct JudgedCandidate {
     pub reason: String,
 }
 
-impl JudgedCandidate {
-    /// Technical failures stay ineligible, but are not completed visual Off
-    /// judgments. This sentinel is owned by the host, never model prose.
-    pub fn is_unavailable(&self) -> bool {
-        self.reason.trim() == "judge unavailable"
-    }
-}
-
 /// Judge a set of thumbnails for one image slot. Implementations may issue
 /// calls concurrently, but must return one entry per input thumbnail.
 pub trait ImageRelevanceJudge: Send + Sync {
     fn judge(&self, query: &str, intent: &str, thumbs_jpeg: &[Vec<u8>]) -> Vec<JudgedCandidate>;
-
-    /// Only opt in when the implementation can stop its transport by the
-    /// deadline, including silent providers and retries. A synchronous judge
-    /// cannot be bounded by wrapping its caller in an async timeout.
-    fn supports_deadline_judging(&self) -> bool {
-        false
-    }
-
-    /// Return completed verdicts by the deadline. Unsupported judges do not
-    /// start an unbounded extra call when a usable Weak fallback exists.
-    fn judge_before(
-        &self,
-        _query: &str,
-        _intent: &str,
-        _thumbs_jpeg: &[Vec<u8>],
-        _deadline: Instant,
-    ) -> Vec<JudgedCandidate> {
-        Vec::new()
-    }
 }
 
 /// The default keeps the pre-judge behavior: every candidate is eligible and
@@ -69,24 +40,6 @@ impl ImageRelevanceJudge for NoJudge {
             })
             .collect()
     }
-
-    fn supports_deadline_judging(&self) -> bool {
-        true
-    }
-
-    fn judge_before(
-        &self,
-        query: &str,
-        intent: &str,
-        thumbs: &[Vec<u8>],
-        deadline: Instant,
-    ) -> Vec<JudgedCandidate> {
-        if Instant::now() >= deadline {
-            Vec::new()
-        } else {
-            self.judge(query, intent, thumbs)
-        }
-    }
 }
 
 /// The accumulated outcome of one or more judge rounds. Candidate indices are
@@ -99,11 +52,6 @@ pub struct JudgeSelection {
     pub on: usize,
     pub weak: usize,
     pub off: usize,
-    /// Returned technical failures, excluded from the semantic Off count.
-    pub unavailable: usize,
-    /// Candidates submitted in a judge call without a returned outcome. This
-    /// does not imply that their transport never started.
-    pub unreported: usize,
     k: usize,
     ordered: Vec<usize>,
 }
@@ -118,22 +66,6 @@ impl JudgeSelection {
     /// already-used content digest wins the visual ranking.
     pub fn ordered_indices(&self) -> &[usize] {
         &self.ordered
-    }
-
-    /// Preserve the winning candidate's grade across provider tiers. An On
-    /// count alone is insufficient when every On image is already used and
-    /// the provider advances to a Weak candidate in the same result set.
-    pub fn verdict_for(&self, index: usize) -> Option<RelevanceVerdict> {
-        self.ordered
-            .iter()
-            .position(|item| *item == index)
-            .map(|rank| {
-                if rank < self.on {
-                    RelevanceVerdict::On
-                } else {
-                    RelevanceVerdict::Weak
-                }
-            })
     }
 }
 
@@ -151,24 +83,12 @@ pub fn select_with_judge(
     intent: &str,
     batches: &[Vec<Vec<u8>>],
 ) -> JudgeSelection {
-    select_with_judge_before(judge, query, intent, batches, None)
-}
-
-pub(crate) fn select_with_judge_before(
-    judge: &dyn ImageRelevanceJudge,
-    query: &str,
-    intent: &str,
-    batches: &[Vec<Vec<u8>>],
-    deadline: Option<Instant>,
-) -> JudgeSelection {
     let mut selection = JudgeSelection {
         picked: None,
         rounds: 0,
         on: 0,
         weak: 0,
         off: 0,
-        unavailable: 0,
-        unreported: 0,
         k: 0,
         ordered: Vec::new(),
     };
@@ -176,9 +96,6 @@ pub(crate) fn select_with_judge_before(
     let mut weak_fallback: Vec<usize> = Vec::new();
 
     for batch in batches {
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            break;
-        }
         if batch.is_empty() {
             continue;
         }
@@ -186,18 +103,13 @@ pub(crate) fn select_with_judge_before(
             selection.k = batch.len();
         }
         selection.rounds += 1;
-        let judged = match deadline {
-            Some(deadline) => judge.judge_before(query, intent, batch, deadline),
-            None => judge.judge(query, intent, batch),
-        };
+        let judged = judge.judge(query, intent, batch);
         let mut on = Vec::new();
         let mut weak = Vec::new();
-        let mut reported = vec![false; batch.len()];
         for candidate in judged {
             if candidate.index >= batch.len() {
                 continue;
             }
-            reported[candidate.index] = true;
             match candidate.verdict {
                 RelevanceVerdict::On => {
                     selection.on += 1;
@@ -207,13 +119,9 @@ pub(crate) fn select_with_judge_before(
                     selection.weak += 1;
                     weak.push(offset + candidate.index);
                 }
-                RelevanceVerdict::Off if candidate.is_unavailable() => {
-                    selection.unavailable += 1;
-                }
                 RelevanceVerdict::Off => selection.off += 1,
             }
         }
-        selection.unreported += reported.iter().filter(|reported| !**reported).count();
 
         if !on.is_empty() {
             selection.picked = on.first().copied();
@@ -236,11 +144,10 @@ pub(crate) fn select_with_judge_before(
 }
 
 /// Format the stable enrichment log line used by the desktop/headless
-/// callers. Verdict counts are ordered On/Weak/semantic Off; technical
-/// failures and missing outcomes are reported separately.
+/// callers. Verdict counts are ordered On/Weak/Off.
 pub fn format_judge_log(selection: &JudgeSelection) -> String {
     format!(
-        "judge: k={} verdicts={}/{}/{} picked={} rounds={} unavailable={} unreported={}",
+        "judge: k={} verdicts={}/{}/{} picked={} rounds={}",
         selection.k,
         selection.on,
         selection.weak,
@@ -248,9 +155,7 @@ pub fn format_judge_log(selection: &JudgeSelection) -> String {
         selection
             .picked
             .map_or_else(|| "none".to_string(), |index| index.to_string()),
-        selection.rounds,
-        selection.unavailable,
-        selection.unreported
+        selection.rounds
     )
 }
 
@@ -375,11 +280,7 @@ mod tests {
 
         assert_eq!(
             format_judge_log(&result),
-            "judge: k=2 verdicts=1/1/0 picked=1 rounds=1 unavailable=0 unreported=0"
+            "judge: k=2 verdicts=1/1/0 picked=1 rounds=1"
         );
     }
 }
-
-#[cfg(test)]
-#[path = "judge_diagnostics_tests.rs"]
-mod diagnostics_tests;

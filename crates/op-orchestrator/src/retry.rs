@@ -3,76 +3,6 @@
 //! 对齐 TS `orchestrator-sub-agent.ts:150-152`(不可重试错误检测)。
 //! 规划阶段的 tier→mode 序列(`attempt_modes`)已随单档规划收敛移除。
 
-/// Provider account/session-quota substrings (motion50 fix 1). These come from
-/// the Claude Code CLI's plain-text quota message —
-/// "You've hit your session limit · resets 2:50pm (Asia/Shanghai)" — which
-/// matched nothing in the old table, so lane1/web-10 burned the full
-/// 3-attempt ladder PLUS the salvage pass on all 13 subtasks and still exited
-/// 0. Unlike a per-request HTTP 429, a quota with a wall-clock reset time
-/// cannot recover within a run's seconds-scale retry window.
-const PROVIDER_LIMIT_SUBSTRINGS: &[&str] = &[
-    "session limit",
-    "hit your session limit", // subsumed by "session limit"; kept greppable
-    "usage limit",
-    // Antigravity (Gemini) account quota, surfaced from the CLI log:
-    // "RESOURCE_EXHAUSTED (code 429): Individual quota reached. ... Resets
-    // in 2h12m". Retrying inside one run cannot outlast that reset.
-    "resource_exhausted",
-    "quota reached",
-    "quota exceeded",
-];
-
-/// Detect provider quota text, including raw planning LlmError messages.
-/// Outcome consumers must use `is_outcome_provider_limit` instead so local
-/// diagnostic data cannot trip the run-level provider circuit breaker.
-pub(crate) fn is_provider_limit(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    // "resets <time>" on its own is too loose (a transport error can say the
-    // connection "resets"); it only counts next to a limit word.
-    PROVIDER_LIMIT_SUBSTRINGS
-        .iter()
-        .any(|needle| lower.contains(needle))
-        || (lower.contains("resets ") && lower.contains("limit"))
-}
-
-// Non-aborted provider messages gain a `stream error: ` envelope at the
-// subagent boundary. Only this locally emitted category may treat provider-like
-// words as diagnostic data; do not apply this exemption to raw LlmError text.
-fn is_local_action_body_rejection(msg: &str) -> bool {
-    msg.starts_with("self-check failed: generated-action-body:")
-}
-
-pub(crate) fn is_outcome_provider_limit(msg: &str) -> bool {
-    !is_local_action_body_rejection(msg) && is_provider_limit(msg)
-}
-
-pub(crate) fn is_provider_access_denied(msg: &str) -> bool {
-    msg.to_ascii_lowercase().contains("model access denied")
-}
-
-/// Only primary, actionable authentication errors qualify. Auxiliary CLI
-/// telemetry saying it is not logged in is not proof a model request failed.
-pub(crate) fn is_provider_authentication_required(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    let primary = lower
-        .trim_start()
-        .strip_prefix("stream error: ")
-        .unwrap_or(lower.trim_start())
-        .trim_start();
-    [
-        "authentication failed",
-        "error: authentication failed",
-        "authentication required",
-        "error: authentication required",
-        "http 401",
-    ]
-    .iter()
-    .any(|prefix| primary.starts_with(prefix))
-        || ["antigravity", "codex", "claude code", "copilot"]
-            .iter()
-            .any(|provider| primary.starts_with(&format!("{provider} is not authenticated")))
-}
-
 /// 判断错误消息是否为不可重试的终止条件。
 ///
 /// Port of `orchestrator-sub-agent.ts:150-152`:
@@ -83,9 +13,6 @@ pub(crate) fn is_provider_authentication_required(msg: &str) -> bool {
 ///
 /// 用简单的 `to_lowercase() + contains` 替代 regex crate,语义完全等价。
 pub(crate) fn is_non_retryable(msg: &str) -> bool {
-    if is_local_action_body_rejection(msg) {
-        return false;
-    }
     let lower = msg.to_lowercase();
     lower.contains("http 400")
         || lower.contains("http 401")
@@ -93,8 +20,6 @@ pub(crate) fn is_non_retryable(msg: &str) -> bool {
         || lower.contains("http 451")
         || lower.contains("content blocked")
         || lower.contains("authentication failed")
-        || is_provider_authentication_required(msg)
-        || is_provider_access_denied(msg)
         || lower.contains("censorship")
         // A CLI's own transport-config failure is deterministic — codex's
         // stream-reconnect rejects the macOS system proxy with "Invalid
@@ -102,10 +27,6 @@ pub(crate) fn is_non_retryable(msg: &str) -> bool {
         // burning the 3-attempt ladder + the salvage pass on it costs
         // minutes and ends the same way. Fail fast with the message intact.
         || lower.contains("invalid proxy configuration")
-        // Provider session/usage quota messages (Claude Code CLI) — a quota
-        // with a wall-clock reset never recovers inside one run's retry
-        // ladder, so fail the subtask fast (motion50 fix 1).
-        || is_provider_limit(msg)
 }
 
 /// True when a subtask failed because our own post-generation self-check
@@ -132,57 +53,7 @@ pub(crate) fn is_self_check_rejection(msg: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn primary_cli_authentication_errors_are_terminal_but_telemetry_is_not() {
-        assert!(is_non_retryable(
-            "Antigravity is not authenticated. Run `agy` once in a terminal."
-        ));
-        assert!(is_non_retryable(
-            "Error: authentication required. Run 'agy' to log in, then retry."
-        ));
-        assert!(!is_provider_authentication_required("Antigravity returned no output — CLI log: Failed to poll ListExperiments: You are not logged into Antigravity."));
-        assert!(!is_non_retryable(
-            "self-check failed: source-copy-missing: Authentication required"
-        ));
-    }
-
-    #[test]
-    fn action_body_data_does_not_become_an_outcome_provider_failure() {
-        for data in ["HTTP 401", "quota exceeded", "authentication failed"] {
-            let local = format!("self-check failed: generated-action-body: {data}");
-            assert!(!is_non_retryable(&local), "{local}");
-            assert!(!is_outcome_provider_limit(&local), "{local}");
-            let provider = format!("stream error: {local}");
-            assert!(is_non_retryable(&provider), "{provider}");
-            assert!(!is_self_check_rejection(&provider));
-        }
-        let raw = "self-check failed: generated-action-body: quota exceeded";
-        assert!(
-            is_provider_limit(raw),
-            "raw planning errors have no local provenance"
-        );
-        assert!(is_outcome_provider_limit(&format!("stream error: {raw}")));
-        assert!(is_non_retryable(
-            "self-check failed: future-category: HTTP 401"
-        ));
-        assert!(is_outcome_provider_limit(
-            "self-check failed: future-category: quota exceeded"
-        ));
-    }
-
     // ── is_non_retryable — true cases ───────────────────────────────────────
-
-    #[test]
-    fn antigravity_quota_exhaustion_is_a_provider_limit() {
-        // What the Antigravity transport now reports once it reads the CLI
-        // log (arena 2026-09-29: 70 retries were burned on this).
-        let msg = "Antigravity returned no output. — CLI log: RESOURCE_EXHAUSTED (code 429): \
-                   Individual quota reached. Please upgrade your subscription to increase \
-                   your limits. Resets in 2h11m18s.";
-        assert!(is_provider_limit(msg));
-        assert!(is_non_retryable(msg));
-        assert!(!is_provider_limit("Antigravity returned no output."));
-    }
 
     #[test]
     fn http_400_is_non_retryable() {
@@ -281,32 +152,5 @@ mod proxy_tests {
         assert!(is_non_retryable(
             "stream disconnected before completion: URL error: Invalid proxy configuration: http://127.0.0.1:7897"
         ));
-    }
-
-    // ── motion50 fix 1: provider session/usage quota exhaustion ─────────────
-
-    /// The exact lane1/web-10 message: every subtask burned the 3-attempt
-    /// ladder + salvage on it because the plain-text CLI quota message matched
-    /// nothing in the old table.
-    #[test]
-    fn claude_cli_session_limit_message_is_non_retryable() {
-        assert!(is_non_retryable(
-            "You've hit your session limit · resets 2:50pm (Asia/Shanghai)"
-        ));
-    }
-
-    #[test]
-    fn usage_limit_and_reset_wording_is_non_retryable() {
-        assert!(is_non_retryable(
-            "You've hit your usage limit · resets 3pm (Asia/Shanghai)"
-        ));
-        assert!(is_non_retryable("session limit reached, resets 09:00"));
-        assert!(is_non_retryable("USAGE LIMIT exceeded"));
-    }
-
-    #[test]
-    fn plain_errors_are_not_provider_limits() {
-        assert!(!is_non_retryable("stream disconnected before completion"));
-        assert!(!is_non_retryable("HTTP 500 upstream"));
     }
 }

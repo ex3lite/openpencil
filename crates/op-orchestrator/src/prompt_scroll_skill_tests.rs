@@ -9,7 +9,6 @@ use crate::plan::{Region, RootFrameSpec};
 
 fn page_plan() -> OrchestratorPlan {
     OrchestratorPlan {
-        shared_context: None,
         root_frame: RootFrameSpec {
             id: "page".into(),
             name: "Page".into(),
@@ -22,7 +21,6 @@ fn page_plan() -> OrchestratorPlan {
         },
         subtasks: vec![],
         style_guide_name: None,
-        palette: None,
     }
 }
 
@@ -42,7 +40,6 @@ fn hero_subtask() -> crate::plan::Subtask {
         screen: None,
         generated_root_id: None,
         existing_section_labels: None,
-        covers: None,
         retry_feedback: None,
     }
 }

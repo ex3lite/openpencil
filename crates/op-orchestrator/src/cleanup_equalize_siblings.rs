@@ -25,11 +25,12 @@
 //!
 //! ## Decorative-container fill alignment (DS P2-d ①)
 //!
-//! Same-position Frame/Rectangle descendants may inherit a missing fill
-//! from a concrete family majority. An authored solid colour is never
-//! overwritten: frequency cannot distinguish drift from chart data, selected
-//! state, or intentional illustration. A retained running chart proved this
-//! pass replaced the current day's green bar with its six grey neighbours.
+//! Measured 0815: after five sibling entries were made structurally
+//! isomorphic, their number-chip FILL colours kept drifting per item
+//! (black/black/red/red/pink) — same-family entries, same decorative
+//! container slot, different colours, which no author intends. Beside the
+//! same-position text votes, same-position Frame/Rectangle descendant nodes
+//! vote on their PRIMARY fill through the same 2/3 mechanism:
 //!
 //! - Only a SOLID primary fill votes; a gradient / image / shader / mesh
 //!   primary fill at any position makes that position unprovable and skips
@@ -360,36 +361,31 @@ fn plan_family_repairs(
     let Some(first_texts) = family.first().map(|member| &member.text_nodes) else {
         return;
     };
-    // The selected / active member of a segmented control, tab row or chip
-    // group paints its OWN surface differently, and its bolder label is part
-    // of that state, not drift: it neither votes nor is edited.
-    let voters = text_voters(family);
     for (position, _text) in first_texts.iter().enumerate() {
-        let font_sizes: Vec<Option<f64>> = voters
+        let font_sizes: Vec<Option<f64>> = family
             .iter()
-            .map(|&i| match family[i].text_nodes.get(position) {
+            .map(|member| match member.text_nodes.get(position) {
                 Some(PenNode::Text(text)) => text.font_size,
                 _ => None,
             })
             .collect();
         if let Some(majority) = majority_of(&font_sizes) {
-            for (k, value) in font_sizes.iter().enumerate() {
+            for (i, value) in font_sizes.iter().enumerate() {
                 if value != &majority {
-                    text_changes[voters[k]][position]
+                    text_changes[i][position]
                         .insert("fontSize", majority.map_or(Value::Null, |v| json!(v)));
                 }
             }
         }
-        let font_weights: Vec<Option<FontWeight>> = voters
+        let font_weights: Vec<Option<FontWeight>> = family
             .iter()
-            .map(|&i| match family[i].text_nodes.get(position) {
+            .map(|member| match member.text_nodes.get(position) {
                 Some(PenNode::Text(text)) => text.font_weight.clone(),
                 _ => None,
             })
             .collect();
         if let Some(majority) = majority_of(&font_weights) {
-            for (k, value) in font_weights.iter().enumerate() {
-                let i = voters[k];
+            for (i, value) in font_weights.iter().enumerate() {
                 if value != &majority {
                     text_changes[i][position].insert(
                         "fontWeight",
@@ -459,7 +455,8 @@ fn plan_family_repairs(
         }
         // A CONCRETE 2/3 majority defines the norm; a majority of "no fill"
         // is never enforced (removing a fill is destructive and out of
-        // scope). Only missing fills join the norm; authored colours carry intent.
+        // scope). Members holding a different value — or none at all — join
+        // the norm.
         let Some(Some(majority)) = majority_of(&votes) else {
             continue;
         };
@@ -467,7 +464,7 @@ fn plan_family_repairs(
             FillVote::Literal(hex) | FillVote::Ref(hex) => hex.clone(),
         };
         for (i, vote) in votes.iter().enumerate() {
-            if vote.is_none() {
+            if vote.as_ref() != Some(&majority) {
                 fill_changes[i][position] = Some(hex.clone());
             }
         }
@@ -480,55 +477,6 @@ fn plan_family_repairs(
             }
         }
     }
-}
-
-/// Indices of the members that vote on (and may be edited by) the text
-/// fontSize / fontWeight alignment.
-///
-/// A member whose OWN fill or stroke differs from the family's 2/3 majority
-/// is a state member (the selected chip, the active tab): its label's weight
-/// or size belongs to that state, so it keeps its authored values and does
-/// not drag the norm either. Without a provable paint majority nobody is
-/// exempt — the pre-existing behaviour. Text colour never exempts: only the
-/// member root's own surface marks a state.
-fn text_voters(family: &[Member]) -> Vec<usize> {
-    let paints: Vec<(Value, Value)> = family.iter().map(|member| own_paint(member.node)).collect();
-    match majority_of(&paints) {
-        Some(norm) => (0..family.len()).filter(|&i| paints[i] == norm).collect(),
-        None => (0..family.len()).collect(),
-    }
-}
-
-/// The member root's own `(fill, stroke)`, normalized so every spelling of
-/// "no paint" compares equal: an absent / null / empty fill list, and a
-/// stroke that is absent, zero-thickness or has no fill.
-fn own_paint(node: &PenNode) -> (Value, Value) {
-    let Ok(v) = serde_json::to_value(node) else {
-        return (Value::Null, Value::Null);
-    };
-    let fill = match v.get("fill") {
-        Some(Value::Array(fills)) if fills.is_empty() => Value::Null,
-        Some(fill) => fill.clone(),
-        None => Value::Null,
-    };
-    let stroke = match v.get("stroke") {
-        Some(stroke) if stroke_paints(stroke) => stroke.clone(),
-        _ => Value::Null,
-    };
-    (fill, stroke)
-}
-
-fn stroke_paints(stroke: &Value) -> bool {
-    let zero_thickness = stroke
-        .get("thickness")
-        .and_then(Value::as_f64)
-        .is_some_and(|t| t <= 0.0);
-    let no_fill = match stroke.get("fill") {
-        Some(Value::Array(fills)) => fills.is_empty(),
-        Some(Value::Null) | None => true,
-        Some(_) => false,
-    };
-    !stroke.is_null() && !zero_thickness && !no_fill
 }
 
 /// The value held by the most members, when it clears the 2/3 bar.
@@ -716,7 +664,3 @@ fn font_weight_json(value: FontWeight) -> Value {
 #[cfg(test)]
 #[path = "cleanup_equalize_siblings_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "cleanup_equalize_state_member_tests.rs"]
-mod state_member_tests;

@@ -62,8 +62,7 @@ pub(super) fn collect_absolute_child_clamp_fixes(
 ) {
     // Only an ABSOLUTE parent pins children by x/y; a flex parent owns its
     // children's placement and the flex overflow fixers own its overflows.
-    if matches!(layout_str(v), None | Some("none")) && crate::text_effect_overlay::pair(v).is_none()
-    {
+    if matches!(layout_str(v), None | Some("none")) {
         if let Some(pr) = v
             .get("id")
             .and_then(Value::as_str)
@@ -71,14 +70,7 @@ pub(super) fn collect_absolute_child_clamp_fixes(
         {
             if pr.w > 1.0 && pr.h > 1.0 {
                 for c in children(v) {
-                    let bottom_room = if crate::map_viewport::is_viewport(v)
-                        && !crate::map_viewport::is_map_background(c)
-                    {
-                        24.0
-                    } else {
-                        0.0
-                    };
-                    push_clamp_command(c, pr, bottom_room, rects, cmds);
+                    push_clamp_command(c, pr, rects, cmds);
                 }
             }
         }
@@ -91,39 +83,19 @@ pub(super) fn collect_absolute_child_clamp_fixes(
 fn push_clamp_command(
     c: &Value,
     pr: &Rect,
-    bottom_room: f64,
     rects: &HashMap<String, Rect>,
     cmds: &mut Vec<EditorCommand>,
 ) {
-    // The child must be absolutely pinned (numeric x/y) with an authored
-    // box to preserve: a fixed numeric size, or a hugging (`fit_content`)
-    // height whose resolved box is its content. A `fill_container` child
-    // spans the parent; there is nothing to shift. Measured, arena-m01
-    // (Opus 5.5, 2026-10-01): the store hero's copy block — 375 wide,
-    // `fit_content` tall — pinned at y=150 in a 270px media stack ran past
-    // the stack's bottom and the subtitle was clipped under the rating row.
-    let (Some(x), Some(y)) = (numeric_prop(c, "x"), numeric_prop(c, "y")) else {
+    // The child must be absolutely pinned (numeric x/y) at a FIXED numeric
+    // size; a keyword-sized child has no authored box to preserve.
+    let (Some(x), Some(y), Some(_), Some(_)) = (
+        numeric_prop(c, "x"),
+        numeric_prop(c, "y"),
+        fixed_width(c),
+        numeric_prop(c, "height"),
+    ) else {
         return;
     };
-    let hugs = |key: &str| c.get(key).and_then(Value::as_str) == Some("fit_content");
-    let full_width_caption = c.get("width").and_then(Value::as_str) == Some("fill_container")
-        && x.abs() <= FIT_EPS
-        && c.get("type").and_then(Value::as_str) == Some("frame")
-        && matches!(layout_str(c), Some("vertical" | "horizontal"))
-        && !children(c).is_empty();
-    if fixed_width(c).is_none() && !hugs("width") && !full_width_caption {
-        return;
-    }
-    // A flex content frame with no height also hugs its children. The model
-    // often omits it on a photo caption; rejecting that resolved box leaves
-    // its title, price and CTA clipped below the hero.
-    let implicit_hug_height = c.get("height").is_none_or(Value::is_null)
-        && c.get("type").and_then(Value::as_str) == Some("frame")
-        && matches!(layout_str(c), Some("vertical" | "horizontal"))
-        && !children(c).is_empty();
-    if numeric_prop(c, "height").is_none() && !hugs("height") && !implicit_hug_height {
-        return;
-    }
     let Some(cid) = c.get("id").and_then(Value::as_str) else {
         return;
     };
@@ -132,11 +104,11 @@ fn push_clamp_command(
     };
     // A child bigger than its parent can never be shifted inside — leave it
     // to the clip fallback untouched.
-    if cr.w > pr.w + FIT_EPS || cr.h > pr.h - bottom_room + FIT_EPS {
+    if cr.w > pr.w + FIT_EPS || cr.h > pr.h + FIT_EPS {
         return;
     }
     let overflows = cr.x + cr.w > pr.x + pr.w + CLAMP_OVERFLOW_EPS
-        || cr.y + cr.h > pr.y + pr.h - bottom_room + CLAMP_OVERFLOW_EPS
+        || cr.y + cr.h > pr.y + pr.h + CLAMP_OVERFLOW_EPS
         || cr.x < pr.x - CLAMP_OVERFLOW_EPS
         || cr.y < pr.y - CLAMP_OVERFLOW_EPS;
     if !overflows {
@@ -146,7 +118,7 @@ fn push_clamp_command(
     // box is the truth about how much room there is, so the fit position is
     // computed from resolved sizes, not the authored `fill_container` strings.
     let fit_x = x.min(pr.w - cr.w).max(0.0);
-    let fit_y = y.min(pr.h - bottom_room - cr.h).max(0.0);
+    let fit_y = y.min(pr.h - cr.h).max(0.0);
     let new_x = ((fit_x - x).abs() > FIT_EPS).then(|| fit_x.round() as i32);
     let new_y = ((fit_y - y).abs() > FIT_EPS).then(|| fit_y.round() as i32);
     if new_x.is_none() && new_y.is_none() {
@@ -223,11 +195,7 @@ pub(super) fn collect_absolute_child_shrink_fixes(
             .and_then(|id| rects.get(id))
         {
             if pr.w > 1.0 {
-                let media_lane = crate::clipped_media_strip::media_lane(v, pr.w);
                 for c in children(v) {
-                    if media_lane.is_some_and(|lane| std::ptr::eq(lane, c)) {
-                        continue;
-                    }
                     push_shrink_command(c, pr, rects, cmds);
                 }
             }

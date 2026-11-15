@@ -189,31 +189,15 @@ impl ChatVisionLlmClient {
     }
 }
 
-impl ChatVisionLlmClient {
-    /// Measure only an entered provider call, including iterator cleanup.
-    /// Request validation failures have no provider duration.
-    pub(crate) fn validate_measured(
-        &self,
-        req: VisionCallRequest,
-    ) -> (VisionResponse, Option<std::time::Duration>) {
-        match self.chat_request(req) {
-            Ok(request) => {
-                let started = std::time::Instant::now();
-                let response = Self::collect_response(self.provider.send(request));
-                (response, Some(started.elapsed()))
-            }
-            Err(skipped) => (skipped, None),
-        }
-    }
-
-    fn chat_request(&self, req: VisionCallRequest) -> Result<ChatRequest, VisionResponse> {
+impl VisionLlmClient for ChatVisionLlmClient {
+    fn validate(&self, req: VisionCallRequest) -> VisionResponse {
         // A malformed / empty screenshot string can't drive a vision
         // call — skip rather than send a text-only critique that would
         // hallucinate against no image.
         let Some(attachment) = Self::screenshot_attachment(&req.image_base64) else {
-            return Err(VisionResponse::Skipped {
+            return VisionResponse::Skipped {
                 reason: Some("screenshot was not valid base64 PNG".to_string()),
-            });
+            };
         };
 
         // Inline the vision system prompt into the user message: the
@@ -227,7 +211,7 @@ impl ChatVisionLlmClient {
             format!("{}\n\n---\n\n{}", req.system, req.message)
         };
 
-        Ok(ChatRequest {
+        let chat_req = ChatRequest {
             system_prompt: String::new(),
             user_message,
             history: Vec::new(),
@@ -241,16 +225,14 @@ impl ChatVisionLlmClient {
             attachments: vec![attachment],
             model: Self::transport_model(self.model.clone())
                 .or_else(|| Self::transport_model(req.model.clone())),
-        })
-    }
+        };
 
-    fn collect_response(deltas: Box<dyn Iterator<Item = ChatDelta> + Send>) -> VisionResponse {
         // `provider.send` is a blocking delta iterator (the same shape the
         // chat session + `ChatProviderLlmClient` drain). Accumulate the
         // text deltas into one reply string. An `Error` delta aborts to
         // `Skipped` so a transport failure can't crash the design turn.
         let mut text = String::new();
-        for delta in deltas {
+        for delta in self.provider.send(chat_req) {
             match delta {
                 ChatDelta::TextDelta(s) => text.push_str(&s),
                 // Thinking tokens are not part of the JSON verdict.
@@ -275,15 +257,6 @@ impl ChatVisionLlmClient {
         }
     }
 }
-
-impl VisionLlmClient for ChatVisionLlmClient {
-    fn validate(&self, req: VisionCallRequest) -> VisionResponse {
-        self.validate_measured(req).0
-    }
-}
-
-#[path = "validation_vision_deadline.rs"]
-mod deadline;
 
 #[cfg(test)]
 mod tests {

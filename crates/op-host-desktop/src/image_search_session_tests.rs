@@ -200,24 +200,11 @@ fn image_fill(url: &str) -> PenFill {
 // module directory.
 #[path = "image_search_session_tests/collection.rs"]
 mod collection;
-#[path = "image_search_session_tests/crop.rs"]
-mod crop;
-#[path = "image_search_session_tests/deadline.rs"]
-mod deadline;
-#[path = "image_search_session_tests/fallback.rs"]
-mod fallback;
 #[path = "image_search_session_tests/judge.rs"]
 mod judge;
 #[path = "image_search_session_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "image_search_session_tests/memo.rs"]
 mod memo;
-#[path = "image_search_session_tests/mode.rs"]
-mod mode;
-#[path = "image_search_session_tests/progress.rs"]
-mod progress;
 #[path = "image_search_session_tests/providers.rs"]
 mod providers;
-
-#[path = "image_search_session_tests/generation_context.rs"]
-mod generation_context;

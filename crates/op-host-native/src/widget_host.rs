@@ -62,15 +62,10 @@ mod chat_design_hover;
 #[cfg(test)]
 mod chat_design_hover_tests;
 #[cfg(test)]
-mod chat_image_gen_tests;
-#[cfg(test)]
 mod chat_input_caret_tests;
 mod chat_model_picker_caret;
 #[cfg(test)]
 mod chat_model_picker_caret_tests;
-mod chat_model_picker_touch;
-#[cfg(test)]
-mod chat_model_picker_touch_tests;
 #[cfg(test)]
 mod chat_send_tests;
 #[cfg(test)]
@@ -124,12 +119,7 @@ mod git_press;
 mod helpers;
 mod history_guard;
 mod home;
-mod home_brand;
-mod home_document_swap;
-mod home_site_import;
-pub use home_document_swap::ReplacedHomeDocument;
 mod home_overlays;
-mod home_quick_start;
 mod home_scroll;
 mod host_lifecycle;
 mod host_requests;
@@ -198,8 +188,6 @@ mod press_helpers;
 mod press_overlay_tiers;
 mod press_property_tiers;
 mod press_surface_tiers;
-#[cfg(all(test, feature = "gl-host", not(target_os = "windows")))]
-mod preview_asset_sync_tests;
 mod preview_edge_swipe;
 #[cfg(all(test, not(target_os = "windows")))]
 mod preview_edge_swipe_tests;
@@ -264,7 +252,6 @@ mod shortcut_surface_tests;
 mod shortcuts;
 mod slides_panel;
 mod slides_panel_thumbs;
-mod studio_focus;
 mod text_edit_press;
 // Windows CI DirectWrite/Skia text layout aborts inside these text-edit
 // fixtures before Rust can report an assertion. macOS + Linux keep coverage.
@@ -278,7 +265,6 @@ mod toolbar_hover;
 mod top_bar_home_tests;
 #[cfg(test)]
 mod top_bar_tooltip_tests;
-mod touch_gesture_cancel;
 mod touch_panel_gesture;
 #[cfg(test)]
 mod touch_panel_gesture_tests;
@@ -296,10 +282,8 @@ mod variables_preset_press;
 mod viewport_fit;
 #[cfg(test)]
 mod window_control_tests;
-mod works_reader;
 mod workspace;
 mod workspace_paint;
-mod workspace_share;
 
 /// Cursor affordance the host suggests for a given screen point — re-exported
 /// from `jian-core` so widgets (via `cursor_at`) and hosts share one vocabulary.
@@ -394,8 +378,6 @@ pub struct WidgetHostNative {
     pub(in crate::widget_host) component_browser_drag: Option<ComponentBrowserDragState>,
     /// Active Icon-picker panel drag.
     pub(in crate::widget_host) icon_picker_drag: Option<IconPickerDragState>,
-    /// What the last Studio Home brief replaced, until the shell drains it.
-    pub(in crate::widget_host) replaced_home_document: Option<ReplacedHomeDocument>,
     /// Active image-fill adjustment slider drag in the floating
     /// property popover.
     pub(in crate::widget_host) image_adjustment_drag: Option<op_editor_core::ImageAdjustmentField>,
@@ -409,8 +391,6 @@ pub struct WidgetHostNative {
     /// Active Search / Generate popover input selection drag.
     pub(in crate::widget_host) image_input_selection_drag:
         Option<image_panel_selection::ImageInputSelectionDragState>,
-    /// Home prompt geometry measured with the real text painter.
-    home_input_geometry: Option<op_editor_ui::widgets::home_surface::HomeInputGeometry>,
     /// Latest Search / Generate input geometry measured by the real painter.
     pub(in crate::widget_host) image_input_geometry:
         Option<op_editor_ui::widgets::property_panel_image_assets::ImagePopoverInputGeometry>,
@@ -641,16 +621,6 @@ pub struct WidgetHostNative {
     /// Live workspace dock-width drag (press on the dock handle →
     /// cursor moves → release). `None` outside the gesture.
     pub(in crate::widget_host) workspace_dock_drag: Option<workspace::WorkspaceDockDrag>,
-    /// Live one-finger drag on the phone works reader's stage.
-    pub(in crate::widget_host) reader_drag: Option<works_reader::ReaderStageDrag>,
-    /// A 作品-list tap asked for the next loaded document to open in the
-    /// reader; the tap's clock stamp bounds how long that intent lives.
-    pub(in crate::widget_host) reader_on_next_open_ms: Option<u64>,
-    /// Home's picker can stay open while the user browses; it has no short TTL.
-    pub(in crate::widget_host) reader_open_from_picker: bool,
-    /// The reader stage the camera was last framed for (rotation, split
-    /// view and the tablet chat resize it; the board is reframed then).
-    pub(in crate::widget_host) reader_framed_stage: Option<(f32, f32, f32, f32)>,
 }
 
 // Transient pointer-drag records that carry no platform types are

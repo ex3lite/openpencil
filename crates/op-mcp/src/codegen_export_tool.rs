@@ -1,22 +1,11 @@
-//! `codegen_export` — deterministic code export, no model involved.
-//!
-//! Runs one of the pure `op-codegen` generators over a node selection and
-//! returns the source text. `react-tailwind` (the default) additionally
-//! returns its theme files (`app/globals.css`, `tailwind.config.ts`) as
-//! separate entries so an agent or the `op codegen:export` CLI can write
-//! them straight to disk. Unlike the `codegen_plan` → `codegen_assemble`
-//! chunk workflow, the output is byte-identical for the same document.
-//!
-//! Target nodes, first match wins: `nodeIds` (anywhere in the document),
-//! `pageId` (that page's roots), the live selection, the active page.
+//! Deterministic source export for the stable editor framework catalog.
 
 use std::collections::BTreeMap;
 
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::PenDocument;
 use op_codegen::{
-    referenced_components, Codegen, Compose, CssVariables, Flutter, Html, React, ReactNative,
-    ReactTailwind, Svelte, SwiftUi, Vue,
+    Codegen, Compose, CssVariables, Flutter, Html, React, ReactNative, Svelte, SwiftUi, Vue,
 };
 use op_editor_core::codegen::Framework;
 use op_editor_core::walkers::find_node;
@@ -28,7 +17,7 @@ use super::{McpTool, ToolErrorCode, ToolOutcome};
 /// Wire token of the variable-table-only target.
 const CSS_VARIABLES: &str = "css-variables";
 /// Target used when the caller names none.
-const DEFAULT_TARGET: &str = "react-tailwind";
+const DEFAULT_TARGET: &str = "react";
 
 pub struct CodegenExport {
     doc: PenDocument,
@@ -89,17 +78,6 @@ impl McpTool for CodegenExport {
 
         let mut files = Map::new();
         let code = match framework {
-            Some(Framework::ReactTailwind) => {
-                let components = referenced_components(&roots, &self.doc);
-                let generated = ReactTailwind.generate_files_with_components(&scoped, &components);
-                files.insert("component.tsx".into(), json!(generated.component));
-                files.insert("app/globals.css".into(), json!(generated.globals_css));
-                files.insert(
-                    "tailwind.config.ts".into(),
-                    json!(generated.tailwind_config),
-                );
-                generated.to_single_file()
-            }
             Some(Framework::React) => React.generate(&scoped),
             Some(Framework::Vue) => Vue.generate(&scoped),
             Some(Framework::Svelte) => Svelte.generate(&scoped),
@@ -110,9 +88,7 @@ impl McpTool for CodegenExport {
             Some(Framework::ReactNative) => ReactNative.generate(&scoped),
             None => CssVariables.generate(&scoped),
         };
-        if files.is_empty() {
-            files.insert(format!("component.{}", extension(framework)), json!(code));
-        }
+        files.insert(format!("component.{}", extension(framework)), json!(code));
         let out = json!({
             "framework": target,
             "nodeCount": roots.len(),
@@ -199,7 +175,7 @@ fn parse_ids(raw: &str) -> Result<Vec<String>, String> {
 
 fn extension(framework: Option<Framework>) -> &'static str {
     match framework {
-        Some(Framework::React | Framework::ReactTailwind | Framework::ReactNative) => "tsx",
+        Some(Framework::React | Framework::ReactNative) => "tsx",
         Some(Framework::Vue) => "vue",
         Some(Framework::Svelte) => "svelte",
         Some(Framework::Html) => "html",

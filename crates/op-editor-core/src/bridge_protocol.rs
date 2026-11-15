@@ -146,13 +146,9 @@ pub fn color_scheme_from_wire(raw: &str) -> Option<ThemeMode> {
     }
 }
 
-/// Strictly parse the two BCP 47 locale values accepted from an embedding host.
+/// Accept every canonical editor locale, preserving the strict wire contract.
 pub fn locale_from_wire(raw: &str) -> Option<Locale> {
-    match raw {
-        "zh-CN" => Some(Locale::ZhCn),
-        "en-US" => Some(Locale::EnUs),
-        _ => None,
-    }
+    Locale::ALL.into_iter().find(|locale| locale.code() == raw)
 }
 
 pub fn event_ready(generation: u64, revision: u64) -> String {
@@ -337,6 +333,24 @@ mod tests {
             r#"{"type":"op-bridge/theme","colorScheme":""}"#,
         ] {
             assert_eq!(BridgeInbound::parse(raw), None, "{raw}");
+        }
+    }
+
+    #[test]
+    fn embedding_accepts_every_canonical_editor_locale() {
+        assert_eq!(locale_from_wire("ru"), Some(Locale::Ru));
+        for locale in Locale::ALL {
+            assert_eq!(
+                locale_from_wire(locale.code()),
+                Some(locale),
+                "{}",
+                locale.code()
+            );
+            let raw = serde_json::json!({"type":"op-bridge/locale", "locale":locale.code()});
+            assert_eq!(
+                BridgeInbound::parse(&raw.to_string()),
+                Some(BridgeInbound::Locale { locale })
+            );
         }
     }
 

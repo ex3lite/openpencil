@@ -185,7 +185,6 @@ pub(super) fn parse_agent_provider(raw: &str) -> Option<op_editor_core::AgentPro
         "antigravity" | "agy" => Some(AgentProvider::Antigravity),
         "grok" | "grokbuild" => Some(AgentProvider::GrokBuild),
         "dsh" | "deepseekharness" => Some(AgentProvider::DeepSeekHarness),
-        "kimi" | "kimicode" => Some(AgentProvider::Kimi),
         _ => None,
     }
 }
@@ -203,7 +202,6 @@ pub(super) fn provider_to_probe(
         AgentProvider::Antigravity => ProbeProvider::Antigravity,
         AgentProvider::GrokBuild => ProbeProvider::GrokBuild,
         AgentProvider::DeepSeekHarness => ProbeProvider::DeepSeekHarness,
-        AgentProvider::Kimi => ProbeProvider::Kimi,
     }
 }
 
@@ -308,6 +306,5 @@ pub(super) fn provider_key(provider: op_editor_core::AgentProvider) -> &'static 
         AgentProvider::Antigravity => "antigravity",
         AgentProvider::GrokBuild => "grok-build",
         AgentProvider::DeepSeekHarness => "deepseek-harness",
-        AgentProvider::Kimi => "kimi",
     }
 }

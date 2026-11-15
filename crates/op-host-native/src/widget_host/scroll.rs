@@ -481,10 +481,16 @@ impl WidgetHostNative {
         viewport_height: f32,
         zoom_intent: bool,
     ) -> bool {
-        if let Some(scrolled) =
-            self.scroll_home_surface(x, y, delta_y, viewport_width, viewport_height)
+        // The Home-anchored model picker hovers above the takeover —
+        // its list scrolls before the Home stack does.
+        if self
+            .wheel_home_model_picker(x, y, delta_y, viewport_width, viewport_height)
+            .is_some()
         {
-            return scrolled;
+            return true;
+        }
+        if self.try_scroll_home(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
         }
         // Workspace LongPage view: the wheel pans the long page
         // vertically only — no zoom, no horizontal drift. A pinch /
@@ -542,8 +548,29 @@ impl WidgetHostNative {
         }
         // Open chat model-picker — a wheel over its dropdown scrolls
         // the model list instead of zooming the canvas.
-        if self.try_scroll_model_picker(x, y, delta_y, viewport_width, viewport_height) {
-            return true;
+        if self.editor_state.editor_ui.chat_model_picker.open {
+            use op_editor_ui::widgets::ai_chat_model_picker::max_picker_scroll;
+            use op_editor_ui::widgets::AIChatPlaceholder;
+            let picker = self
+                .ai_chat_rect(viewport_width, viewport_height)
+                .and_then(|chat_rect| {
+                    AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
+                        .model_picker_bounds(chat_rect)
+                });
+            if let Some(picker) = picker {
+                if (picker).contains(Point2D::new(x, y)) {
+                    let max = max_picker_scroll(
+                        &self.editor_state.chat.available_models,
+                        self.editor_state.editor_ui.chat_model_picker_input.text(),
+                    );
+                    let next = (self.editor_state.editor_ui.chat_model_picker.scroll.offset
+                        - delta_y)
+                        .clamp(0.0, max);
+                    self.editor_state.editor_ui.chat_model_picker.scroll.offset = next;
+                    self.mark_dirty();
+                    return true;
+                }
+            }
         }
         // Chat transcript message list — a wheel over the body scrolls
         // the conversation; the pinned-to-bottom auto-follow resumes once

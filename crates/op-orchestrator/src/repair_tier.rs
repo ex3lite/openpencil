@@ -25,8 +25,6 @@
 //! Intent-tier passes are skipped for a document with template provenance
 //! (see [`crate::template_provenance`]): the template's visual system is
 //! human-authored and audited, so it is the specification, not the defect.
-//! A document imported from a live website counts as the same kind of
-//! authored input (`TemplateEvidence::ImportedSite`).
 //! Contract-tier passes still run — a model filling text into an audited
 //! template overflows a box exactly as readily as it does anywhere else.
 //!
@@ -87,19 +85,6 @@ pub enum TieredPass {
     /// decoration heuristics (redundant section fill strip, nested-card
     /// decoration strip, invisible-band fill).
     TreeHeuristics,
-    /// `hero_bleed::enforce` — pulls a hero's media to the page edges. An
-    /// authored inset hero is a composition choice, not a defect.
-    HeroBleed,
-    /// `motion_recipes::apply` — adds entrance animations to sections and
-    /// cards. It staggers identical cards apart, and authored work ships the
-    /// motion it was designed with.
-    MotionRecipes,
-    /// `cleanup_typography::repair_overbold_text_hierarchy` — lowers heading
-    /// weights to rebuild a hierarchy. An imported site's 700-weight type is
-    /// its brand, not an accident.
-    OverboldTextHierarchy,
-    /// Space between generated reading columns and their vertical separator.
-    EditorialColumnGutters,
 
     // ── Contract ────────────────────────────────────────────────────────
     /// `geometry_validation::geometry_validate_and_fix` — runs the real layout
@@ -124,11 +109,7 @@ impl TieredPass {
             | TieredPass::StructuralWrapperTransparency
             | TieredPass::SurfaceColorDiscipline
             | TieredPass::VariableBinding
-            | TieredPass::TreeHeuristics
-            | TieredPass::HeroBleed
-            | TieredPass::MotionRecipes
-            | TieredPass::OverboldTextHierarchy
-            | TieredPass::EditorialColumnGutters => RepairTier::Intent,
+            | TieredPass::TreeHeuristics => RepairTier::Intent,
             TieredPass::GeometryValidation
             | TieredPass::TextCollision
             | TieredPass::TextContrast

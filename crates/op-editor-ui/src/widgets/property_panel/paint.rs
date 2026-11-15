@@ -242,18 +242,6 @@ impl Widget for PropertyPanel {
                 w,
             );
         }
-        if self.snapshot.generator.is_some() {
-            y = crate::widgets::property_panel_generator::paint_generator_section(
-                cx,
-                &self.theme,
-                &self.snapshot,
-                &edit_ctx,
-                self.locale,
-                x,
-                y,
-                w,
-            );
-        }
         if caps.opacity {
             y = sections::paint_layer_section(
                 cx,

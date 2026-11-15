@@ -31,10 +31,6 @@ pub use error::ImageGenerateError;
 mod atlas;
 pub use atlas::generate_atlas;
 
-#[path = "web_image_generate_workbench.rs"]
-mod workbench;
-pub use workbench::{bypasses_proxy, generate_workbench, test_workbench, WorkbenchPolling};
-
 /// Truncation cap for surfaced provider errors (TS parity).
 const ERROR_MESSAGE_CAP: usize = 200;
 
@@ -46,7 +42,7 @@ const MAX_PROVIDER_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Read a provider response's status + body under
 /// [`MAX_PROVIDER_BODY_BYTES`] (streaming abort, not read-then-check).
-pub(crate) async fn read_provider_body(
+async fn read_provider_body(
     provider: &'static str,
     resp: reqwest::Response,
 ) -> Result<(reqwest::StatusCode, String), ImageGenerateError> {
@@ -115,7 +111,6 @@ fn parse_profile(
         "replicate" => ImageGenProvider::Replicate,
         "atlas" => ImageGenProvider::Atlas,
         "custom" => ImageGenProvider::Custom,
-        "workbench" => ImageGenProvider::Workbench,
         _ => return Err(ImageGenerateError::UnknownProvider),
     };
     let api_key = profile
@@ -155,7 +150,7 @@ fn daemon_active_profile(state: &op_editor_core::EditorState) -> Option<ImageGen
         .iter()
         .find(|p| Some(&p.id) == settings.active_image_gen_profile_id.as_ref())
         .or_else(|| settings.image_gen_profiles.first())
-        .filter(|p| p.usable())
+        .filter(|p| !p.api_key.trim().is_empty())
         .cloned()
 }
 
@@ -230,17 +225,6 @@ async fn run_generate(request: &WebImageGenerateRequest) -> Result<String, Image
                 profile,
                 request.width,
                 request.height,
-            )
-            .await?
-        }
-        ImageGenProvider::Workbench => {
-            generate_workbench(
-                &client,
-                &request.prompt,
-                profile,
-                request.width,
-                request.height,
-                WorkbenchPolling::default(),
             )
             .await?
         }
@@ -334,7 +318,7 @@ fn gemini_aspect_ratio(width: Option<f64>, height: Option<f64>) -> Option<&'stat
     })
 }
 
-pub(crate) fn provider_error(provider: &str, status: reqwest::StatusCode, body: &str) -> String {
+fn provider_error(provider: &str, status: reqwest::StatusCode, body: &str) -> String {
     // TS: prefer the provider's error.message, else status + slice.
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(message) = json
@@ -632,23 +616,6 @@ mod tests {
             test_status: ImageTestStatus::Idle,
         }];
         state
-    }
-
-    #[test]
-    fn manual_web_generation_does_not_inherit_document_context() {
-        let mut state = state_with_profile("persisted", "test-key");
-        state.doc.name = Some("Brand Design Portfolio".into());
-        state.active_children_mut().push(
-            serde_json::from_value(serde_json::json!({
-                "type":"frame", "id":"screen", "name":"Studio Landing", "children":[
-                    {"type":"text", "id":"title", "content":"Selected Work", "fontSize":32}
-                ]
-            }))
-            .unwrap(),
-        );
-        let request =
-            parse_generate_request(r#"{"prompt":"My hand-written prompt"}"#, &state).unwrap();
-        assert_eq!(request.prompt, "My hand-written prompt");
     }
 
     #[test]

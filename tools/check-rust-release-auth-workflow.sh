@@ -74,17 +74,9 @@ unless manual == {
         "default" => false,
         "type" => "boolean",
       },
-      "auth_validation_only" => {
-        "description" => "Only verify locally built Windows Auth candidates",
-        "required" => false, "default" => false, "type" => "boolean",
-      },
-      "auth_validation_manifest_sha256" => {
-        "description" => "Reviewed local candidate manifest SHA-256",
-        "required" => false, "default" => "", "type" => "string",
-      },
     },
   }
-  raise "manual release selectors must be explicit and default-off"
+  raise "manual release must expose only the default-off iOS App Store lane selector"
 end
 raise "workflow permissions must default to contents:read" unless document.fetch("permissions") == {"contents" => "read"}
 expected_vcredist = {
@@ -126,7 +118,6 @@ end
 
 expected_permissions = {
   "version" => {"contents" => "read"},
-  "auth-native-validation" => {"contents" => "read"},
   "ios-app-store" => {"contents" => "read"},
   "android-release" => {"contents" => "read"},
   "build" => {"contents" => "read"},
@@ -146,7 +137,7 @@ expected_permissions.each do |name, permissions|
   raise "#{name} permissions exceed the reviewed minimum" unless jobs.fetch(name).fetch("permissions") == permissions
 end
 raise "secret-free version gate must not request the release environment" if version.key?("environment")
-reusable_jobs = %w[android-release auth-native-validation]
+reusable_jobs = %w[android-release]
 reusable_jobs.each do |name|
   raise "#{name} must not set a caller-side environment" if jobs.fetch(name).key?("environment")
 end
@@ -209,24 +200,11 @@ unless build_steps.index(cargo_bundle) < build_steps.index(certificate_import)
   raise "cargo-bundle must be installed before signing credentials are imported"
 end
 
-angle_steps = build_steps.select { |step| step["name"] == "Stage ANGLE DLLs (windows)" }
-angle_run = <<~'ANGLE'
-  & tools/stage-pinned-angle.ps1 -SelfTest
-  & tools/stage-pinned-angle.ps1 -Architecture '${{ matrix.arch }}' -Target '${{ matrix.target }}'
-ANGLE
-unless angle_steps.length == 1 && angle_steps[0].fetch("if") == "runner.os == 'Windows'" &&
-    angle_steps[0].fetch("shell") == "pwsh" && angle_steps[0].fetch("run") == angle_run
-  raise "ANGLE staging must self-test and pass both matrix arguments in one PowerShell command"
-end
-
 vcredist = build_steps.find do |step|
   step["name"] == "Stage pinned Microsoft Visual C++ Redistributable (windows)"
 end
 nsis_package = build_steps.find { |step| step["name"] == "Package NSIS installer (windows)" }
 raise "missing pinned VC++ Redistributable staging" unless vcredist && nsis_package
-unless build_steps.index(angle_steps[0]) < build_steps.index(nsis_package)
-  raise "ANGLE staging must precede Windows packaging"
-end
 unless vcredist.fetch("if") == "runner.os == 'Windows'" && vcredist.fetch("shell") == "pwsh"
   raise "VC++ Redistributable staging must remain Windows-only PowerShell"
 end
@@ -347,7 +325,7 @@ def depends_on?(jobs, name, target, seen = {})
   needs.include?(target) || needs.any? { |dependency| depends_on?(jobs, dependency, target, seen) }
 end
 
-(jobs.keys - ["version", "auth-native-validation"]).each do |name|
+(jobs.keys - ["version"]).each do |name|
   raise "#{name} can bypass the version/auth gate" unless depends_on?(jobs, name, "version")
 end
 
@@ -402,10 +380,6 @@ unless android.fetch("uses") == "./.github/workflows/android-release.yml" &&
         '${{ secrets.OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN }}',
       "OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL" =>
         '${{ secrets.OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL }}',
-      "ANDROID_RELEASE_KEYSTORE_BASE64" => '${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}',
-      "ANDROID_RELEASE_KEYSTORE_PASSWORD" => '${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}',
-      "ANDROID_RELEASE_KEY_ALIAS" => '${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}',
-      "ANDROID_RELEASE_KEY_PASSWORD" => '${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}',
     } && !android.key?("with")
   raise "formal release must call the exact reusable Android asset lane"
 end
@@ -592,15 +566,11 @@ reject_literal 'docker/setup-buildx-action@' "$workflow"
 require_literal 'docker buildx create --name openpencil-release --driver docker-container' "$workflow"
 require_literal '--driver-opt "image=$buildkit" --use' "$workflow"
 require_literal 'moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' "$workflow"
-require_literal 'snapshot_url=https://snapshot.ubuntu.com/ubuntu/20261027T000000Z/' "$workflow"
+require_literal 'snapshot_url=https://snapshot.ubuntu.com/ubuntu/20260801T000000Z/' "$workflow"
 require_literal 'Dir::Etc::sourcelist=$sources_file' "$workflow"
 require_literal 'Dir::Etc::sourceparts=-' "$workflow"
 require_literal '--print-uris update' "$workflow"
-require_literal 'Acquire::https::Pipeline-Depth=0' "$workflow"
-require_literal 'if sudo apt-get "${apt_options[@]}" --error-on=any update &&' "$workflow"
 require_literal 'if [[ $uri != "$snapshot_url"* ]]' "$workflow"
-require_literal 'install --yes --no-remove "${packages[@]}"' "$workflow"
-reject_literal '--allow-downgrades' "$workflow"
 reject_literal 'ports.ubuntu.com' "$workflow"
 reject_literal 'archive.ubuntu.com' "$workflow"
 require_literal 'tools/pinned-release-tools.sh skia desktop' "$workflow"
@@ -754,5 +724,4 @@ line_count=$(wc -l < "$workflow" | tr -d '[:space:]')
     exit 1
 }
 
-ruby "$repo_root/tools/check-auth-native-validation-workflow.rb" "$workflow"
 printf 'check-rust-release-auth-workflow.sh: release auth gates passed.\n'

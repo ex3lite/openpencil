@@ -242,12 +242,6 @@ impl WidgetHostNative {
                 .and_then(|preview| preview.next_wake_deadline_ms()),
             self.now_ms,
         );
-        // Enter has no runtime animation deadline until the canvas/device
-        // merge settles and begins lifecycle. Exit also needs its final frame
-        // to tear down the runtime, even when the document itself is static.
-        if self.preview_mode_transition.is_some() {
-            next = bookkeeping::earliest(next, self.now_ms.saturating_add(16));
-        }
         // Gesture-end full-quality repaint: wake once the
         // interactive-degrade window closes. Quantized UP to a 50 ms
         // grid so consecutive gesture ticks report the SAME deadline —
@@ -260,20 +254,6 @@ impl WidgetHostNative {
         // visible region is sharp again.
         if self.pan_cache_restore.is_some() {
             next = bookkeeping::earliest(next, self.now_ms.saturating_add(16));
-        }
-        // Home's 加链接 hint erases itself: wake once when it expires.
-        // So does a failed website import's hint over Send.
-        let home = &self.editor_state.editor_ui.home;
-        for at in [
-            home.brand.hint_deadline_ms(),
-            home.site_import.hint_deadline_ms(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if at > self.now_ms && home.visible {
-                next = bookkeeping::earliest(next, at);
-            }
         }
         // Slides-tab thumbnails: the rail renders a bounded batch per
         // frame and waits out an edit before re-rendering, so it asks

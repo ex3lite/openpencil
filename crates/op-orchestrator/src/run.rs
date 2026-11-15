@@ -25,13 +25,12 @@ use crate::cleanup::{descendant_count, finalize_design_with_summary_and_policy, 
 use crate::model_profile::resolve_model_profile;
 use crate::plan::{build_fallback_plan, OrchestratorPlan};
 use crate::plan_normalize::{normalize, NormInfo};
-use crate::plan_repair::parse_fresh_orchestrator_response;
+use crate::plan_repair::parse_orchestrator_response;
 use crate::prompt::build_orchestrator_prompt;
 use crate::scaffold::{build_scaffold_at, build_scaffold_reusing};
 use crate::screen_groups::group_subtasks_by_screen;
 use crate::subagent::{
     apply_command_with_reveal, reveal_now_millis, run_subtask_with_reveal_at_and_outcomes,
-    IntentCheckMode,
 };
 use crate::types::{
     AbortFlag, DesignRequest, DocSink, LlmChunk, LlmClient, OrchestratorError, PlanningMode,
@@ -51,17 +50,6 @@ use run_screen_groups::insert_screen_group_roots;
 // unaffected because the impl is inherent (same type, same crate).
 #[path = "run_orchestrator.rs"]
 mod run_orchestrator;
-
-// Phase 4.4 (end-of-run salvage pass) — extracted from `run_orchestrator.rs`
-// to keep the run driver under the 800-line file budget.
-#[path = "run_salvage_pass.rs"]
-mod run_salvage_pass;
-
-#[path = "run_initial_binding_feedback.rs"]
-mod run_initial_binding_feedback;
-
-#[path = "run_source_copy_plan.rs"]
-mod source_copy_plan;
 
 /// TS `replaceEmptyFrame` parity: detect a single EMPTY top-level frame (the
 /// fresh-canvas starter) that can be REUSED as the design root instead of
@@ -160,9 +148,9 @@ const STREAM_ERROR_LOG_CHARS: usize = 800;
 /// Port of `callOrchestrator` planning stage in `orchestrator.ts:1323-1503`,
 /// simplified to a SINGLE planning mode (`Rich` — the full prompt). The former
 /// tier-driven mode-rotation ladder (Rich→Minimal→Compact) was machinery around
-/// the deterministic core, not part of it. Two bounded attempts precede the
-/// heuristic `build_fallback_plan`; protocol retries repair the rejected plan.
-/// The per-subtask retry ladder (the actual
+/// the deterministic core, not part of it: one LLM call builds the plan, and any
+/// failure (stream error / unparseable) falls straight through to the
+/// heuristic `build_fallback_plan`. The per-subtask retry ladder (the actual
 /// weak-model quality lever) and `build_orchestrator_prompt`'s prompt
 /// construction are untouched.
 ///
@@ -180,13 +168,8 @@ async fn planning_loop(
     // "planning parse failure" → a skeleton fallback design, while the very
     // same prompt parsed fine on retry). The fallback plan stays as the
     // final safety net, not the first response to a hiccup.
-    let mut protocol_feedback: Option<String> = None;
-    let mut rejected: Option<(String, Option<String>)> = None;
     for attempt in 1..=2u8 {
-        let mut pp = build_orchestrator_prompt(request, PlanningMode::Rich, abort.clone());
-        if let Some(feedback) = &protocol_feedback {
-            pp.call_request.user_prompt.push_str(feedback);
-        }
+        let pp = build_orchestrator_prompt(request, PlanningMode::Rich, abort.clone());
         let forced_style_guide_name = pp.forced_style_guide_name.clone();
 
         match collect_text(llm.call(pp.call_request)).await {
@@ -195,23 +178,19 @@ async fn planning_loop(
                 if abort.is_set() {
                     return Err(OrchestratorError::Aborted);
                 }
-                match parse_fresh_orchestrator_response(&raw, request) {
-                    Ok((mut plan, _repaired)) => {
-                        apply_plan_pins(&mut plan, forced_style_guide_name, request);
-                        plan = maybe_replan_for_coverage(request, llm, abort, on_progress, plan)
-                            .await?;
-                        return source_copy_plan::ensure(request, llm, abort, on_progress, plan)
-                            .await;
-                    }
-                    Err(error) => {
-                        let diagnostic = error.feedback();
-                        tracing::warn!(attempt, error = %diagnostic, "planning protocol rejected");
-                        debug_plan_attempt_failed(attempt, "plan protocol", &diagnostic);
-                        protocol_feedback =
-                            Some(crate::plan_fresh_recovery::feedback(&raw, &error));
-                        rejected = Some((raw, forced_style_guide_name));
-                    }
+                if let Some((mut plan, _repaired)) = parse_orchestrator_response(&raw, request) {
+                    apply_plan_pins(&mut plan, forced_style_guide_name, request);
+                    plan =
+                        maybe_replan_for_coverage(request, llm, abort, on_progress, plan).await?;
+                    let norm = normalize(&mut plan, request);
+                    return Ok((plan, norm));
                 }
+                let preview = raw.trim().chars().take(150).collect::<String>();
+                tracing::warn!(
+                    attempt,
+                    preview = %preview,
+                    "planning parse failure"
+                );
             }
             // abort 在流中发生 → 立即返回
             Err(error) if error.aborted => return Err(OrchestratorError::Aborted),
@@ -230,44 +209,13 @@ async fn planning_loop(
                     .take(STREAM_ERROR_LOG_CHARS)
                     .collect::<String>();
                 tracing::warn!(attempt, error = %reason, "planning stream error");
-                // An exhausted account quota does not recover before its reset
-                // (hours, not seconds). Falling back to a heuristic plan only
-                // runs every subtask into the same wall and ships an empty
-                // shell (arena, Gemini via agy, 2026-09-29: 11 runs did).
-                if crate::retry::is_provider_limit(&error.message)
-                    || crate::retry::is_provider_access_denied(&error.message)
-                    || crate::retry::is_provider_authentication_required(&error.message)
-                {
-                    return Err(OrchestratorError::AllFailed(reason));
-                }
-                debug_plan_attempt_failed(attempt, "stream error", &error.message);
             }
         }
         if abort.is_set() {
             return Err(OrchestratorError::Aborted);
         }
     }
-    // sharedContext is optional advisory data. A modelled plan whose only
-    // fault is that block beats the heuristic skeleton, which drops sections
-    // the planner had laid out (calendar header lost, 1019 A/B).
-    if let Some((Some(mut plan), forced)) = rejected.map(|(raw, forced)| {
-        (
-            crate::plan_repair::parse_without_shared_context(&raw, request),
-            forced,
-        )
-    }) {
-        tracing::warn!("planning protocol rejected twice; using plan without sharedContext");
-        if debug_plan_enabled() {
-            eprintln!("[PLAN] sharedContext dropped; modelled plan kept");
-        }
-        apply_plan_pins(&mut plan, forced, request);
-        let plan = maybe_replan_for_coverage(request, llm, abort, on_progress, plan).await?;
-        return source_copy_plan::ensure(request, llm, abort, on_progress, plan).await;
-    }
     tracing::warn!("planning failed twice; using fallback plan");
-    if debug_plan_enabled() {
-        eprintln!("[PLAN] fallback plan in use");
-    }
 
     // 规划失败 → fallback plan(规划不可出错)
     let mut fallback = build_fallback_plan(request);
@@ -275,40 +223,8 @@ async fn planning_loop(
     // without this a pin was lost precisely when planning had already failed
     // twice and the design needed every bit of direction it could get.
     crate::style_guide_context::enforce_pinned_style_guide(&mut fallback, request);
-    source_copy_plan::ensure(request, llm, abort, on_progress, fallback).await
-}
-
-/// Longest model-output / error preview echoed by the debug-plan lines.
-const DEBUG_PLAN_PREVIEW_CHARS: usize = 300;
-
-/// `OPENPENCIL_DEBUG_PLAN` — the same switch `run_orchestrator` reads for its
-/// `[PLAN]` summary. Headless runs (op-smoke, the arena) print no `tracing`
-/// output, so without these lines a fallback plan looked like a planner that
-/// chose to build one anonymous section.
-fn debug_plan_enabled() -> bool {
-    std::env::var_os("OPENPENCIL_DEBUG_PLAN").is_some()
-}
-
-/// Echo one failed planning attempt to stderr when plan debugging is on. The
-/// preview is the model's own output (or the transport's already-redacted
-/// error text), never request credentials.
-fn debug_plan_attempt_failed(attempt: u8, kind: &str, detail: &str) {
-    if !debug_plan_enabled() {
-        return;
-    }
-    eprintln!(
-        "[PLAN] planning attempt {attempt} failed: {kind}: {}",
-        debug_plan_preview(detail)
-    );
-}
-
-fn debug_plan_preview(detail: &str) -> String {
-    detail
-        .trim()
-        .chars()
-        .take(DEBUG_PLAN_PREVIEW_CHARS)
-        .map(|ch| if ch == '\n' || ch == '\r' { ' ' } else { ch })
-        .collect()
+    let norm = normalize(&mut fallback, request);
+    Ok((fallback, norm))
 }
 
 fn apply_plan_pins(
@@ -324,26 +240,8 @@ fn apply_plan_pins(
     crate::style_guide_context::enforce_pinned_style_guide(plan, request);
 }
 
-/// `normalize`, plus a diagnostic when a normalize pass removed the only
-/// subtask covering a brief-required section (e.g. a fold pass).
-fn normalize_logging_coverage_drops(
-    plan: &mut OrchestratorPlan,
-    request: &DesignRequest,
-) -> NormInfo {
-    let required = crate::plan_coverage::required_sections(&request.prompt);
-    let before = crate::plan_coverage::check_coverage(&required, plan);
-    let norm = normalize(plan, request);
-    let dropped = crate::plan_coverage_append::dropped_by_normalize(&before, &required, plan);
-    if !dropped.is_empty() {
-        eprintln!("[PLAN] coverage: normalize dropped {}", dropped.join(", "));
-    }
-    norm
-}
-
 /// After a successful parse, re-request the plan once when the brief named
-/// sections the plan does not cover; sections the re-plan (or a failed
-/// re-plan) still leaves unplanned are appended as subtasks. Fallback plans
-/// never enter this path.
+/// sections the plan does not cover. Fallback plans never enter this path.
 async fn maybe_replan_for_coverage(
     request: &DesignRequest,
     llm: &dyn LlmClient,
@@ -352,55 +250,15 @@ async fn maybe_replan_for_coverage(
     plan: OrchestratorPlan,
 ) -> Result<OrchestratorPlan, OrchestratorError> {
     let required = crate::plan_coverage::required_sections(&request.prompt);
-    let mut plan =
-        replan_once_for_coverage(request, llm, abort, on_progress, plan, &required).await?;
-    let details = crate::plan_coverage::required_section_details(&request.prompt);
-    let outcome =
-        crate::plan_coverage_append::append_missing_sections(&mut plan, &required, &details);
-    if let Some(line) = crate::plan_coverage_append::outcome_log_line(&outcome) {
-        eprintln!("{line}");
-    }
-    Ok(plan)
-}
-
-async fn replan_once_for_coverage(
-    request: &DesignRequest,
-    llm: &dyn LlmClient,
-    abort: &AbortFlag,
-    on_progress: &mut dyn FnMut(Progress),
-    plan: OrchestratorPlan,
-    required: &[String],
-) -> Result<OrchestratorPlan, OrchestratorError> {
-    let check = crate::plan_coverage::check_coverage(required, &plan);
-    if check.missing.is_empty() {
-        // Only log the passing gate when the planner backfilled covers —
-        // legacy plans keep their silent pass, byte for byte.
-        if crate::plan_coverage::plan_has_covers(&plan) {
-            eprintln!(
-                "[PLAN] coverage: ok covered-by: {}",
-                check.covered_by_line()
-            );
-        }
+    let missing = crate::plan_coverage::missing_sections(&required, &plan);
+    if missing.is_empty() {
         return Ok(plan);
     }
-    // The full planned list, not just the covering subtasks: a section the
-    // planner DID plan under a label the gate cannot read (another script,
-    // a paraphrase) looks identical to a truly dropped one otherwise.
-    let planned = plan
-        .subtasks
-        .iter()
-        .map(|st| format!("{}({})", st.id, st.label))
-        .collect::<Vec<_>>()
-        .join(" ");
-    eprintln!(
-        "[PLAN] coverage: missing {} (covered-by: {}) planned: {planned}",
-        check.missing.join(", "),
-        check.covered_by_line()
-    );
+    eprintln!("[PLAN] coverage: missing {}", missing.join(", "));
     on_progress(Progress::PlanCoverageRetry {
-        missing: check.missing.clone(),
+        missing: missing.clone(),
     });
-    let feedback = crate::plan_coverage::coverage_feedback(&check.missing);
+    let feedback = crate::plan_coverage::coverage_feedback(&missing);
     let mut pp = build_orchestrator_prompt(request, PlanningMode::Rich, abort.clone());
     pp.call_request.user_prompt.push_str("\n\n");
     pp.call_request.user_prompt.push_str(&feedback);
@@ -410,24 +268,16 @@ async fn replan_once_for_coverage(
             if abort.is_set() {
                 return Err(OrchestratorError::Aborted);
             }
-            match parse_fresh_orchestrator_response(&raw, request) {
-                Ok((mut retry_plan, _)) => {
-                    crate::plan_palette::preserve_on_replan(&plan, &mut retry_plan, request);
-                    apply_plan_pins(&mut retry_plan, forced_style_guide_name, request);
-                    let retry_check = crate::plan_coverage::check_coverage(required, &retry_plan);
-                    if !retry_check.missing.is_empty() {
-                        eprintln!(
-                            "[PLAN] coverage: still missing {} after retry (covered-by: {})",
-                            retry_check.missing.join(", "),
-                            retry_check.covered_by_line()
-                        );
-                    }
-                    return Ok(retry_plan);
+            if let Some((mut retry_plan, _)) = parse_orchestrator_response(&raw, request) {
+                apply_plan_pins(&mut retry_plan, forced_style_guide_name, request);
+                let still_missing = crate::plan_coverage::missing_sections(&required, &retry_plan);
+                if !still_missing.is_empty() {
+                    eprintln!(
+                        "[PLAN] coverage: still missing {} after retry",
+                        still_missing.join(", ")
+                    );
                 }
-                Err(error) => {
-                    let feedback = error.feedback();
-                    tracing::warn!(error = %feedback, "coverage re-plan protocol rejected");
-                }
+                return Ok(retry_plan);
             }
             Ok(plan)
         }
@@ -456,18 +306,6 @@ async fn collect_text(
 #[cfg(test)]
 #[path = "run_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "run_tests_fresh_plan.rs"]
-mod fresh_plan_tests;
-
-#[cfg(test)]
-#[path = "run_source_copy_tests.rs"]
-mod source_copy_tests;
-
-#[cfg(test)]
-#[path = "run_source_copy_multi_tests.rs"]
-mod source_copy_multi_tests;
 
 #[cfg(test)]
 #[path = "run_tests_pinned_style.rs"]

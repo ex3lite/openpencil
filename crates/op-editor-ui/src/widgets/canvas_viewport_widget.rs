@@ -19,11 +19,8 @@
 use crate::layout_scene::{SceneNode, SceneWidget};
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
-use jian_core::render::widget_metrics::{
-    labelled_checkbox_indicator_side, CHECKBOX_LABEL_GAP, WIDGET_LABEL_FONT_SIZE,
-};
 use jian_core::render::widget_style::{
-    resolve_authored_widget_visual_on_page, with_visual_opacity, AuthoredWidgetVisual,
+    resolve_authored_widget_visual, with_visual_opacity, AuthoredWidgetVisual,
 };
 use std::borrow::Cow;
 
@@ -63,7 +60,7 @@ pub(crate) fn paint_widget_visual(
     if world_rect.size.x <= 0.0 || world_rect.size.y <= 0.0 {
         return false;
     }
-    let visual = authored_widget_visual(node, w);
+    let visual = authored_widget_visual(node);
     match w.kind.as_str() {
         "switch" => paint_switch(cx, node, w, &visual, world_rect, zoom),
         "checkbox" => paint_checkbox(cx, node, w, &visual, world_rect, zoom),
@@ -80,11 +77,10 @@ pub(crate) fn paint_widget_visual(
     true
 }
 
-fn authored_widget_visual(node: &SceneNode, widget: &SceneWidget) -> AuthoredWidgetVisual {
-    let mut visual = resolve_authored_widget_visual_on_page(
+fn authored_widget_visual(node: &SceneNode) -> AuthoredWidgetVisual {
+    let mut visual = resolve_authored_widget_visual(
         node.fill.map(Color::to_jian),
         node.stroke.map(|stroke| stroke.color.to_jian()),
-        widget.label_foreground.map(Color::to_jian),
     );
     // Scene fill/stroke alpha already contains direct-paint node opacity. Only
     // contrast-derived internal colours need it folded in here; applying it to
@@ -105,8 +101,6 @@ fn authored_widget_visual(node: &SceneNode, widget: &SceneWidget) -> AuthoredWid
     visual.label_foreground = with_visual_opacity(visual.label_foreground, node.opacity);
     visual.muted_label_foreground =
         with_visual_opacity(visual.muted_label_foreground, node.opacity);
-    visual.muted_track_foreground =
-        with_visual_opacity(visual.muted_track_foreground, node.opacity);
     visual
 }
 
@@ -184,7 +178,7 @@ fn paint_checkbox(
     // not the box alone. Keep legacy label-less documents unchanged, while a
     // labelled control gets a square box and an in-bounds label region.
     let box_rect = if label.is_some() {
-        let side = labelled_checkbox_indicator_side(ww, h);
+        let side = ww.min(h);
         Rect::xywh(x, y + (h - side) / 2.0, side, side)
     } else {
         r
@@ -210,8 +204,8 @@ fn paint_checkbox(
         cx.backend.stroke_line(p1, p2, check, cw);
     }
     if let Some(label) = label {
-        let fs = WIDGET_LABEL_FONT_SIZE * zoom;
-        let label_x = box_x + box_w + CHECKBOX_LABEL_GAP * zoom;
+        let fs = 14.0 * zoom;
+        let label_x = box_x + box_w + 8.0 * zoom;
         let label_width = (x + ww - label_x).max(0.0);
         if label_width > 0.0 {
             cx.backend.save();
@@ -562,7 +556,7 @@ fn paint_tabs(
         let color = if on {
             ui_color(visual.active_foreground)
         } else {
-            ui_color(visual.muted_track_foreground)
+            ui_color(visual.muted_label_foreground)
         };
         let label_w = cx.backend.measure_text_weighted(label, fs, 400);
         draw_label(

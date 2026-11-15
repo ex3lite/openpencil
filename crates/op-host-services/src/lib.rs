@@ -21,7 +21,6 @@
 pub mod acp_agent_probe_host;
 pub mod ai_proxy;
 pub mod ai_proxy_error;
-pub mod brand_extract;
 pub mod builtin_model_discovery;
 pub mod chat_agent_loop;
 pub mod chat_attachment;
@@ -43,7 +42,6 @@ mod chat_subprocess_antigravity_log;
 mod chat_subprocess_claude_stream;
 mod chat_subprocess_dsh;
 mod chat_subprocess_exit;
-mod chat_subprocess_kimi;
 mod chat_subprocess_lifecycle;
 mod chat_subprocess_parse;
 pub mod chat_subprocess_quirks;
@@ -72,7 +70,6 @@ mod design_md_evidence_roles;
 pub mod design_md_llm;
 pub mod design_md_llm_error;
 pub mod design_session;
-pub mod design_variants;
 pub mod doc_io;
 pub mod export;
 pub mod export_batch;
@@ -82,20 +79,13 @@ mod export_html_template;
 pub mod export_hyperframes;
 pub mod export_pdf;
 pub mod export_pptx;
-pub mod export_share;
-mod export_share_chrome;
-mod export_share_sanitize;
-mod export_share_template;
 mod figma_convert;
 mod figma_convert_error;
-pub mod generator_run_route;
-pub mod hosted_models;
 pub mod hub_auth_client;
 pub mod hub_auth_error;
 pub mod image_relevance_judge;
 mod import_html_url;
 pub mod import_html_url_error;
-pub mod kimi_model_catalog;
 pub mod loop_blocker_ledger;
 pub mod mcp_live;
 pub mod mcp_serve;
@@ -103,14 +93,6 @@ pub mod model_catalog_refresh;
 pub mod model_discovery;
 mod model_probe;
 pub mod pre_validator;
-#[cfg(all(test, not(target_os = "windows")))]
-mod preview_carousel_capture_tests;
-#[cfg(all(test, not(target_os = "windows")))]
-mod preview_local_paging_capture_tests;
-#[cfg(all(test, not(target_os = "windows")))]
-mod preview_mobile_bounds_capture_tests;
-#[cfg(all(test, not(target_os = "windows")))]
-mod preview_table_filter_capture_tests;
 pub mod profile_avatar_fetch;
 mod provider_dial;
 pub mod provider_probe;
@@ -120,14 +102,6 @@ pub mod public_https_client;
 pub mod quality_credential;
 pub mod reference_context;
 pub mod reference_context_error;
-#[cfg(all(test, not(target_os = "windows")))]
-mod retained_mobile_detail_flow_tests;
-pub mod run_quality;
-pub mod site_import;
-pub mod site_import_error;
-pub mod site_import_route;
-#[cfg(all(test, not(target_os = "windows")))]
-mod table_snapshot_export_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
 // Settings persistence moved to op-editor-host-core (feature `settings-io`)

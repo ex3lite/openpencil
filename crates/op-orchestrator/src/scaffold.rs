@@ -50,7 +50,7 @@ impl From<ScaffoldError> for String {
 
 /// Mobile mockup status bar height. Mirrors
 /// `apps/web/src/services/ai/mobile-status-bar.ts`.
-pub(crate) const STATUS_BAR_HEIGHT: f64 = 62.0;
+const STATUS_BAR_HEIGHT: f64 = 62.0;
 
 const CELLULAR_D: &str =
     "M19.2 1.14623c0-0.63304-0.47756-1.14623-1.06667-1.14623l-1.06666 0c-0.5891 0-1.06667 0.51318-1.06667 1.14623l0 9.93396c0 0.63304 0.47756 1.14623 1.06667 1.14622l1.06666 0c0.5891 0 1.06667-0.51318 1.06667-1.14622l0-9.93396z m-7.43411 1.29905l1.06666 0c0.5891 0 1.06667 0.5255 1.06667 1.17374l0 7.43366c0 0.64824-0.47756 1.17374-1.06667 1.17373l-1.06666 0c-0.5891 0-1.06667-0.5255-1.06667-1.17373l0-7.43366c0-0.64824 0.47756-1.17374 1.06667-1.17374z m-4.33178 2.64905l-1.06666 0c-0.5891 0-1.06667 0.53219-1.06667 1.18868l0 4.75472c0 0.65649 0.47756 1.18868 1.06667 1.18867l1.06666 0.00001c0.5891 0 1.06667-0.53219 1.06667-1.18868l0-4.75472c0-0.65649-0.47756-1.18868-1.06667-1.18868z m-5.30078 2.44529l-1.06666 0c-0.5891 0-1.06667 0.52459-1.06667 1.1717l0 2.3434c0 0.64711 0.47756 1.1717 1.06667 1.1717l1.06666 0c0.5891 0 1.06667-0.52459 1.06667-1.1717l0-2.3434c0-0.64711-0.47756-1.1717-1.06667-1.1717z";
@@ -420,7 +420,6 @@ fn build_scaffold_root_node_at(
             rf.height,
             &fill_hex,
             resolve_section_gap(rf.gap),
-            crate::scaffold_right_rail::plan_right_rail_width(plan),
         );
     }
 
@@ -690,8 +689,7 @@ pub(crate) fn plan_is_sidebar_dashboard(plan: &OrchestratorPlan, is_mobile: bool
 
 /// Build the pre-built two-column app-shell root: `horizontal [Sidebar(260,
 /// vertical, clipped) | Main Content(fill, vertical)]`, both columns empty
-/// (subtasks fill them), plus a third `Right Panel` column when the plan
-/// names a right-side region (`scaffold_right_rail`). The sidebar `height: fill_container` stretches it to
+/// (subtasks fill them). The sidebar `height: fill_container` stretches it to
 /// the row (cross-axis) height; `clipContent` keeps a sub-agent's full-width
 /// content from bleeding past the 260 column.
 #[allow(clippy::too_many_arguments)]
@@ -704,7 +702,6 @@ fn build_two_column_root_node(
     height: f64,
     fill_hex: &str,
     gap: f64,
-    right_rail_width: Option<f64>,
 ) -> Result<PenNode, ScaffoldError> {
     let sidebar = serde_json::json!({
         "type": "frame",
@@ -738,7 +735,7 @@ fn build_two_column_root_node(
         "padding": [32, 40],
         "children": [],
     });
-    let mut frame = serde_json::json!({
+    let frame = serde_json::json!({
         "type": "frame",
         "id": root_id,
         "name": name,
@@ -752,14 +749,6 @@ fn build_two_column_root_node(
         "fill": [{ "type": "solid", "color": fill_hex }],
         "children": [sidebar, content],
     });
-    if let (Some(width), Some(columns)) = (
-        right_rail_width,
-        frame.get_mut("children").and_then(|c| c.as_array_mut()),
-    ) {
-        columns.push(crate::scaffold_right_rail::right_rail_column_json(
-            root_id, width, fill_hex, gap,
-        ));
-    }
     serde_json::from_value(frame).map_err(|e| ScaffoldError::TwoColumnRoot {
         root_id: root_id.to_string(),
         detail: e.to_string(),

@@ -4,7 +4,6 @@
 use std::collections::BTreeMap;
 
 mod app_control_cli;
-mod brand_cli;
 mod cli_conversion;
 mod cli_error;
 mod codegen_cli;
@@ -111,10 +110,6 @@ fn run(args: &[String]) -> Result<String, CliError> {
             json_path,
             out_path,
         } => html_cli::run_import_snapshot(&json_path, &out_path)?,
-        Command::BrandExtract {
-            source_path,
-            out_path,
-        } => brand_cli::run_brand_extract(&source_path, &out_path)?,
         Command::ToolCall { tool, args } => post(
             target_port,
             &target_token,
@@ -139,17 +134,6 @@ fn run(args: &[String]) -> Result<String, CliError> {
         }
         Command::ExportFrames { output_dir, format } => {
             export_cli::run_export_frames(target_port, &target_token, &output_dir, &format)?
-        }
-        Command::CodegenExport { args_json, out_dir } => {
-            let response = post(
-                target_port,
-                &target_token,
-                &tool_call_body("codegen_export", &args_json),
-            )?;
-            match out_dir {
-                Some(dir) => codegen_cli::write_codegen_export(&response, &dir)?,
-                None => response,
-            }
         }
         Command::Styles { id, tag, platform } => template_cli::run_styles(
             target_port,
@@ -194,7 +178,6 @@ fn command_needs_server(command: &Command) -> bool {
             | Command::UseTemplate { .. }
             | Command::Styles { .. }
             | Command::Export { .. }
-            | Command::CodegenExport { .. }
     )
 }
 
@@ -250,11 +233,6 @@ enum Command {
         json_path: String,
         out_path: String,
     },
-    /// `op brand:extract <image|page.html> --out kit.optheme` (offline).
-    BrandExtract {
-        source_path: String,
-        out_path: String,
-    },
     ToolCall {
         tool: String,
         args: Vec<(String, String)>,
@@ -289,12 +267,6 @@ enum Command {
     ExportFrames {
         output_dir: String,
         format: String,
-    },
-    /// `op codegen:export`: `codegen_export` tool call, optionally written
-    /// to `out_dir` file by file.
-    CodegenExport {
-        args_json: String,
-        out_dir: Option<String>,
     },
 }
 
@@ -487,9 +459,9 @@ fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Com
         "import:html" => html_cli::map_import_html(positionals, flags),
         "import:snapshot" => html_cli::map_import_snapshot(positionals, flags),
         "import:figma" => figma_cli::map_import_figma(positionals, flags),
-        "brand:extract" => brand_cli::map_brand_extract(positionals, flags),
-        "codegen:plan" | "codegen:submit" | "codegen:assemble" | "codegen:clean"
-        | "codegen:export" => codegen_cli::map_codegen(positionals, flags),
+        "codegen:plan" | "codegen:submit" | "codegen:assemble" | "codegen:clean" => {
+            codegen_cli::map_codegen(positionals, flags)
+        }
         tool => generic_tool_call(tool, &positionals[1..], flags),
     }
 }

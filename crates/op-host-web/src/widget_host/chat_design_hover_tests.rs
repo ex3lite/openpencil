@@ -57,8 +57,6 @@ fn assert_chat_and_lower_hover_cleared(host: &WidgetHost) {
 #[test]
 fn cursor_move_tracks_hovered_design_json_card_for_copy_reveal() {
     let mut host = WidgetHost::new();
-    // The expanded chat panel lives in the rail's Agent tab; anywhere
-    // else the chat is composer-only, so put the rail on its home.
     host.editor_state.editor_ui.enter_chat_tab();
     host.editor_state
         .chat
@@ -268,36 +266,34 @@ fn composer_card_wins_when_overlapping_tall_variables_panel() {
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
-    // The floating panel that could be dragged over the VariablesPanel
-    // is retired; the chat surface that can still overlap it is the
-    // composer card at the canvas floor, under a VariablesPanel the
-    // user stretched tall. The point is derived from BOTH live rects.
     host.editor_state.editor_ui.variables_panel_open = true;
     host.editor_state.editor_ui.variables_panel_size = Some((744.0, 760.0));
     host.editor_state.editor_ui.variables_panel_hover =
         Some(op_editor_core::VariablesPanelButton::Close);
     host.editor_state.editor_ui.canvas_hover_node = Some(NodeId::new("stale-canvas"));
-    let card = host
+
+    let chat = host
         .ai_chat_rect(viewport_w, viewport_h)
-        .expect("composer card");
+        .expect("chat rect");
     let variables = host
         .variables_panel_rect(viewport_w, viewport_h)
         .expect("variables rect");
-    let point = Point2D::new(
-        card.origin.x + card.size.x / 2.0,
-        (variables.origin.y + variables.size.y + card.origin.y) / 2.0,
-    );
+    let left = chat.origin.x.max(variables.origin.x);
+    let top = chat.origin.y.max(variables.origin.y);
+    let right = (chat.origin.x + chat.size.x).min(variables.origin.x + variables.size.x);
+    let bottom = (chat.origin.y + chat.size.y).min(variables.origin.y + variables.size.y);
     assert!(
-        variables.contains(point),
-        "probe must exercise the visual overlap between both surfaces"
+        right > left && bottom > top,
+        "fixtures must visually overlap"
     );
+    let point = Point2D::new((left + right) / 2.0, (top + bottom) / 2.0);
     assert!(
         AIChatPlaceholder::from_editor(&host.editor_state)
             .owned_by(host.chat_panel_owner)
-            .cursor_probe(card, point)
+            .cursor_probe(chat, point)
             .hit
             .is_some(),
-        "the composer card must own the overlap point"
+        "the regular Chat surface must own the overlap point"
     );
 
     assert!(host.apply_cursor_move(point.x, point.y));
@@ -306,15 +302,15 @@ fn composer_card_wins_when_overlapping_tall_variables_panel() {
 }
 
 #[test]
-fn align_toolbar_whole_card_wins_over_chat_surface() {
+fn align_toolbar_padding_clears_stale_chat_hover() {
     let mut host = WidgetHost::new();
-    // The expanded chat panel lives in the rail's Agent tab; anywhere
-    // else the chat is composer-only, so put the rail on its home.
-    host.editor_state.editor_ui.enter_chat_tab();
-    seed_two_selected_rects(&mut host);
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
+    seed_two_selected_rects(&mut host);
+    host.editor_state.chat.maximized = true;
+    host.editor_state.editor_ui.chat_header_hover = Some(op_editor_core::ChatHeaderButton::NewChat);
+    host.editor_state.editor_ui.canvas_hover_node = Some(NodeId::new("stale-canvas"));
 
     let (cx, _, cw, ch) = host.canvas_region(viewport_w, viewport_h);
     let canvas_region = Rect {
@@ -331,29 +327,19 @@ fn align_toolbar_whole_card_wins_over_chat_surface() {
         None,
         "probe must land in opaque toolbar padding, not an action button"
     );
-    // RETIRED PREMISE: the floating chat panel could be dragged under
-    // the toolbar to manufacture an overlap. Both chat surfaces are
-    // docked now (rail body / composer card at the canvas floor), and
-    // neither can reach the toolbar — so the whole-rect guarantee is
-    // asserted where it still bites: blank toolbar padding owns its
-    // point and clears Chat hover state in the same move.
-    let chat_rect = host
+    // Both chat surfaces are docked now; toolbar padding cannot overlap
+    // them, but still owns the point and clears stale lower hover.
+    assert!(!host
         .ai_chat_rect(viewport_w, viewport_h)
-        .expect("chat rect");
-    let chat = AIChatPlaceholder::from_editor(&host.editor_state).owned_by(host.chat_panel_owner);
-    assert_eq!(chat.example_hover_at(chat_rect, point), None);
-    assert!(!chat_rect.contains(point));
-    seed_stale_chat_and_lower_hover(&mut host);
+        .expect("chat")
+        .contains(point));
 
     assert!(host.apply_cursor_move(point.x, point.y));
-    assert_eq!(
-        host.editor_state.editor_ui.chat_header_hover, None,
-        "the blank AlignToolbar card must stop Chat hover dispatch"
-    );
-    assert_chat_and_lower_hover_cleared(&host);
+    assert_eq!(host.editor_state.editor_ui.chat_header_hover, None);
+    assert_eq!(host.editor_state.editor_ui.canvas_hover_node, None);
     assert!(
         !host.apply_cursor_move(point.x, point.y),
-        "stable blank-card hover must not request another repaint"
+        "stable AlignToolbar padding must truncate without repaint"
     );
 }
 
@@ -363,12 +349,7 @@ fn context_menu_footprint_clears_chat_and_lower_hover_in_one_move() {
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
-    // RETIRED PREMISE: the maximized chat panel used to be the surface
-    // under this context menu. Chat is docked now (rail body / composer
-    // card at the canvas floor) and neither surface reaches the menu's
-    // footprint — so the one-event guarantee is asserted where it still
-    // bites: the menu's whole rect owns its point and clears every
-    // stale Chat hover in the same move.
+    host.editor_state.chat.maximized = true;
     host.editor_state.ui.path_anchor_menu = Some(PathAnchorMenuState {
         node_id: NodeId::new("anchor-node"),
         anchor_index: 0,
@@ -388,13 +369,10 @@ fn context_menu_footprint_clears_chat_and_lower_hover_in_one_move() {
     let rect = menu.rect();
     let point = Point2D::new(rect.origin.x + 20.0, rect.origin.y + 20.0);
     assert!(rect.contains(point));
-    assert!(
-        !host
-            .ai_chat_rect(viewport_w, viewport_h)
-            .expect("chat rect")
-            .contains(point),
-        "no chat surface reaches the context menu any more"
-    );
+    assert!(!host
+        .ai_chat_rect(viewport_w, viewport_h)
+        .expect("chat")
+        .contains(point));
 
     assert!(host.apply_cursor_move(point.x, point.y));
     assert_chat_and_lower_hover_cleared(&host);
@@ -427,19 +405,14 @@ fn status_bar_footprint_clears_chat_and_lower_hover_in_one_move() {
 }
 
 #[test]
-fn static_color_picker_owns_its_point_and_clears_covered_chat_hover() {
+fn static_color_picker_clears_stale_chat_hover() {
     let mut host = WidgetHost::new();
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
     host.editor_state = EditorState::sample();
     host.editor_state.set_single_selection(NodeId::new("n13"));
-    // RETIRED PREMISE: the maximized chat panel used to sit under the
-    // color picker to manufacture an overlap. Chat is docked now (rail
-    // body / composer card at the canvas floor) and neither surface
-    // reaches the picker — so the picker's precedence is asserted where
-    // it still bites: it owns its point outright and clears every
-    // stale Chat hover in the same move.
+    host.editor_state.chat.maximized = true;
     assert!(host
         .editor_state
         .open_color_picker(op_editor_core::ui_draft::ColorTarget::Fill, 220.0,));
@@ -457,13 +430,10 @@ fn static_color_picker_owns_its_point_and_clears_covered_chat_hover() {
         rect.origin.x + rect.size.x / 2.0,
         rect.origin.y + rect.size.y / 2.0,
     );
-    assert!(
-        !host
-            .ai_chat_rect(viewport_w, viewport_h)
-            .expect("chat rect")
-            .contains(point),
-        "no chat surface sits under the picker any more"
-    );
+    assert!(!host
+        .ai_chat_rect(viewport_w, viewport_h)
+        .expect("chat")
+        .contains(point));
 
     assert!(host.apply_cursor_move(point.x, point.y));
     assert_chat_and_lower_hover_cleared(&host);
@@ -471,7 +441,7 @@ fn static_color_picker_owns_its_point_and_clears_covered_chat_hover() {
 }
 
 #[test]
-fn image_search_popup_wins_above_chat_picker_and_clears_covered_hover() {
+fn property_image_popup_clears_stale_chat_model_picker_hover() {
     let mut host = WidgetHost::new();
     let (viewport_w, viewport_h) = (1440.0, 900.0);
     host.last_viewport_w = viewport_w;
@@ -479,6 +449,7 @@ fn image_search_popup_wins_above_chat_picker_and_clears_covered_hover() {
     let _ = host
         .editor_state
         .insert_image_node_at_viewport("Hero photo", "https://x/y.png");
+    host.editor_state.chat.maximized = true;
     host.editor_state.editor_ui.image_panel.search_open = true;
     open_model_picker(&mut host);
     host.editor_state.editor_ui.chat_model_picker.hover = Some(0);
@@ -495,16 +466,6 @@ fn image_search_popup_wins_above_chat_picker_and_clears_covered_hover() {
             viewport_h - TOP_BAR_HEIGHT,
         ),
     };
-    // RETIRED PREMISE: the floating chat panel could be parked under
-    // the Image Search popup to manufacture a covered-picker overlap.
-    // The picker now lives over the composer card at the canvas floor
-    // while the popup floats in the right property rail — disjoint
-    // surfaces — so the popup's precedence is asserted where it still
-    // bites: it owns its point outright and clears every Chat hover in
-    // the same move.
-    let card = host
-        .ai_chat_rect(viewport_w, viewport_h)
-        .expect("composer card");
     let mut owned_point = None;
     let mut y = TOP_BAR_HEIGHT;
     while y < viewport_h && owned_point.is_none() {
@@ -519,11 +480,7 @@ fn image_search_popup_wins_above_chat_picker_and_clears_covered_hover() {
         }
         y += 4.0;
     }
-    let point = owned_point.expect("image search popup must own a point in the property rail");
-    assert!(
-        !card.contains(point),
-        "no chat surface sits under the popup any more"
-    );
+    let point = owned_point.expect("image search popup owns a painted point");
 
     assert!(host.apply_cursor_move(point.x, point.y));
     assert!(host.editor_state.editor_ui.image_panel.search_open);
