@@ -312,6 +312,9 @@ impl<'a> SceneTemplatePanel<'a> {
     /// scene the filter row is on. The saved half lives in
     /// [`super::scene_template_user_layout`].
     pub fn filtered(&self) -> Vec<&'static SceneTemplateDefinition> {
+        if op_editor_core::resource_library::available() {
+            return Vec::new();
+        }
         let center = &self.state.editor_ui.scene_template_center;
         let query = center.search.text().trim();
         scene_template_catalogue()
@@ -327,7 +330,9 @@ impl<'a> SceneTemplatePanel<'a> {
     /// The chip row: "All" plus every scene, in catalogue order.
     pub(super) fn filters(&self) -> Vec<SceneFilter> {
         let mut filters = vec![SceneFilter::All];
-        filters.extend(TemplateScene::ALL.map(SceneFilter::Scene));
+        if !op_editor_core::resource_library::available() {
+            filters.extend(TemplateScene::ALL.map(SceneFilter::Scene));
+        }
         filters
     }
 

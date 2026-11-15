@@ -57,6 +57,10 @@ copy_file() {
 }
 
 mkdir -p "${DEST}"
+# Optional source-backed libraries; restricted vendor packs are installed locally.
+if [ -d "${UI_ASSETS}/resource-library" ]; then
+  copy_dir "${UI_ASSETS}/resource-library" "resource-library"
+fi
 copy_dir "${UI_ASSETS}/prompt_center_previews" "prompt_center_previews"
 copy_dir "${UI_ASSETS}/scene_template_previews" "scene_template_previews"
 # Scene-template `.op` documents — fetched when a template is instantiated.

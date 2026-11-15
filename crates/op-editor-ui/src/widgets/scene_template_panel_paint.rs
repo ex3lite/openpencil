@@ -288,7 +288,13 @@ impl SceneTemplatePanel<'_> {
             self.paint_text(
                 cx,
                 if header.is_user {
-                    self.t("assetCenter.template.mine", "我的模板")
+                    if op_editor_core::resource_library::available()
+                        && self.locale == op_i18n::Locale::Ru
+                    {
+                        "Библиотеки и примеры"
+                    } else {
+                        self.t("assetCenter.template.mine", "我的模板")
+                    }
                 } else {
                     self.t("assetCenter.template.builtIn", "内置模板")
                 },

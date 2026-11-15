@@ -137,6 +137,7 @@ pub mod ref_resolve;
 pub mod rename;
 pub mod render_backend;
 pub mod request_snapshot;
+pub mod resource_library;
 pub mod save_name_keyboard;
 pub mod scene_template_append;
 pub mod scene_template_catalog;

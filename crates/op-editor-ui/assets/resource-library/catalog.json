@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "library-shadcn-playground",
+      "document": "library-shadcn-playground.op",
+      "preview": "library-shadcn-playground.jpg",
+      "frames": 1,
+      "frameWidth": 1183,
+      "frameHeight": 865,
+      "source": "https://ui.shadcn.com/examples/playground",
+      "repository": "https://github.com/shadcn-ui/ui",
+      "license": "MIT",
+      "limitations": [
+        "Static editable snapshot; scrolling becomes clipping; no app behavior."
+      ],
+      "name": "shadcn/ui · Playground",
+      "fontSubstitutions": {},
+      "repositoryRevision": "e62c9435fff729a175f38983dee73b2cb4f6a069",
+      "sourceCapturedAt": "2026-11-15",
+      "sourceMethod": "official rendered example"
+    },
+    {
+      "id": "library-shadcn-dashboard",
+      "document": "library-shadcn-dashboard.op",
+      "preview": "library-shadcn-dashboard.jpg",
+      "frames": 1,
+      "frameWidth": 1183,
+      "frameHeight": 1616,
+      "source": "https://ui.shadcn.com/examples/dashboard",
+      "repository": "https://github.com/shadcn-ui/ui",
+      "license": "MIT",
+      "limitations": [
+        "Static editable snapshot; scrolling becomes clipping; no app behavior."
+      ],
+      "name": "shadcn/ui · Аналитика",
+      "fontSubstitutions": {},
+      "repositoryRevision": "e62c9435fff729a175f38983dee73b2cb4f6a069",
+      "sourceCapturedAt": "2026-11-15",
+      "sourceMethod": "official rendered example"
+    },
+    {
+      "id": "library-shadcn-tasks",
+      "document": "library-shadcn-tasks.op",
+      "preview": "library-shadcn-tasks.jpg",
+      "frames": 1,
+      "frameWidth": 1183,
+      "frameHeight": 1522,
+      "source": "https://ui.shadcn.com/examples/tasks",
+      "repository": "https://github.com/shadcn-ui/ui",
+      "license": "MIT",
+      "limitations": [
+        "Static editable snapshot; scrolling becomes clipping; no app behavior."
+      ],
+      "name": "shadcn/ui · Задачи",
+      "fontSubstitutions": {},
+      "repositoryRevision": "e62c9435fff729a175f38983dee73b2cb4f6a069",
+      "sourceCapturedAt": "2026-11-15",
+      "sourceMethod": "official rendered example"
+    },
+    {
+      "id": "library-carbon-button-medium-white-theme",
+      "name": "IBM Carbon · Кнопки",
+      "document": "library-carbon-button-medium-white-theme.op",
+      "preview": "library-carbon-button-medium-white-theme.jpg",
+      "frames": 1,
+      "frameWidth": 1056,
+      "frameHeight": 6550,
+      "source": "https://github.com/carbon-design-system/carbon-design-kit",
+      "sourceSymbol": "Button medium - White theme",
+      "limitations": {},
+      "sourceSha256": "ebf68019a917648118c8ec7d1d0e9d4175bae90488f216509e6174978be73946",
+      "license": "Apache-2.0",
+      "fontSubstitutions": {
+        "IBMPlexSans": "Inter"
+      },
+      "sourceRevision": "ac236dce37a9b98339f89d5ab25c111d86b9f52a"
+    },
+    {
+      "id": "library-carbon-data-table-batch-actions-white-theme",
+      "name": "IBM Carbon · Таблицы",
+      "document": "library-carbon-data-table-batch-actions-white-theme.op",
+      "preview": "library-carbon-data-table-batch-actions-white-theme.jpg",
+      "frames": 1,
+      "frameWidth": 1056,
+      "frameHeight": 3394,
+      "source": "https://github.com/carbon-design-system/carbon-design-kit",
+      "sourceSymbol": "Data table: batch actions - White theme",
+      "limitations": {},
+      "sourceSha256": "ebf68019a917648118c8ec7d1d0e9d4175bae90488f216509e6174978be73946",
+      "license": "Apache-2.0",
+      "fontSubstitutions": {
+        "IBMPlexSans": "Inter"
+      },
+      "sourceRevision": "ac236dce37a9b98339f89d5ab25c111d86b9f52a"
+    },
+    {
+      "id": "library-carbon-form-white-theme",
+      "name": "IBM Carbon · Формы",
+      "document": "library-carbon-form-white-theme.op",
+      "preview": "library-carbon-form-white-theme.jpg",
+      "frames": 1,
+      "frameWidth": 1056,
+      "frameHeight": 3528,
+      "source": "https://github.com/carbon-design-system/carbon-design-kit",
+      "sourceSymbol": "Form - White theme",
+      "limitations": {},
+      "sourceSha256": "ebf68019a917648118c8ec7d1d0e9d4175bae90488f216509e6174978be73946",
+      "license": "Apache-2.0",
+      "fontSubstitutions": {
+        "IBMPlexSans": "Inter",
+        "IBMPlexMono": "JetBrains Mono"
+      },
+      "sourceRevision": "ac236dce37a9b98339f89d5ab25c111d86b9f52a"
+    },
+    {
+      "id": "library-carbon-color-tokens",
+      "name": "IBM Carbon · Цветовые токены",
+      "document": "library-carbon-color-tokens.op",
+      "preview": "library-carbon-color-tokens.jpg",
+      "frames": 1,
+      "frameWidth": 1056,
+      "frameHeight": 2212,
+      "source": "https://github.com/carbon-design-system/carbon-design-kit",
+      "sourceSymbol": "Color tokens",
+      "limitations": {},
+      "sourceSha256": "ebf68019a917648118c8ec7d1d0e9d4175bae90488f216509e6174978be73946",
+      "license": "Apache-2.0",
+      "fontSubstitutions": {
+        "IBMPlexMono": "JetBrains Mono",
+        "IBMPlexSans": "Inter"
+      },
+      "sourceRevision": "ac236dce37a9b98339f89d5ab25c111d86b9f52a"
+    }
+  ]
+}

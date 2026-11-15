@@ -652,7 +652,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.acpPresetAdd" => "Добавить",
         "settings.agents.acpNotInstalled" => "Не установлено",
         "assetCenter.title" => "Центр ресурсов",
-        "assetCenter.tab.templates" => "Шаблоны",
+        "assetCenter.tab.templates" => "Библиотеки",
         "assetCenter.tab.styles" => "Стили",
         "assetCenter.style.empty" => "Подходящих стилей нет",
         "assetCenter.style.pinned" => "Закреплён",

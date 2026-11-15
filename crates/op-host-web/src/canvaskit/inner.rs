@@ -37,6 +37,9 @@ impl CkInner {
         ) {
             self.host.mark_editor_state_dirty();
         }
+        if op_editor_core::resource_library::pump() {
+            self.host.mark_editor_state_dirty();
+        }
         self.backend.drain_pending_decodes(2);
         // Assets the last paint asked for but the bundle does not carry
         // (preview JPEGs, template documents, the icon catalog). Bounded per
