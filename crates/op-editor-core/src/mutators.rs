@@ -159,6 +159,9 @@ impl EditorState {
     /// layouts where that tab is available; a retained Compact Code value is
     /// treated as Design.
     pub fn property_panel_visible(&self) -> bool {
+        if !self.editor_ui.inspector_open {
+            return false;
+        }
         if self.editor_ui.effective_property_tab() == crate::PropertyTab::Code {
             return true;
         }
@@ -745,4 +748,27 @@ pub(crate) fn duplicate_in_children_with_allocator(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod independent_inspector_tests {
+    #[test]
+    fn closing_inspector_preserves_selection_and_layers() {
+        let doc = serde_json::from_value(serde_json::json!({
+            "version":"0.8.5", "children":[{"id":"button","type":"frame","width":100,"height":40}]
+        }))
+        .unwrap();
+        let mut state = crate::EditorState::from_document(doc);
+        state.selection.set.push(crate::NodeId::new("button"));
+        assert!(state.property_panel_visible());
+        state.editor_ui.inspector_open = false;
+        assert!(!state.property_panel_visible());
+        assert!(!state.right_rail_visible());
+        assert!(state.editor_ui.sidebar_open);
+        assert_eq!(state.selection.set.len(), 1);
+        state.editor_ui.sidebar_open = false;
+        state.editor_ui.inspector_open = true;
+        assert!(state.property_panel_visible());
+        assert!(!state.editor_ui.sidebar_open);
+    }
 }

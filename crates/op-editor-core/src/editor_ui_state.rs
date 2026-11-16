@@ -44,6 +44,8 @@ use std::collections::HashSet;
 pub struct EditorUiState {
     // --- Sidebar + panel metrics -----------------------------------
     pub sidebar_open: bool,
+    /// Independent inspector visibility; hiding it preserves selection.
+    pub inspector_open: bool,
     pub layer_panel_width: f32,
     pub property_panel_width: f32,
     /// Whether this session's Chat-tab width bump has run (`CHAT_TAB_MIN_WIDTH`).

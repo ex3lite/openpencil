@@ -15,6 +15,7 @@ enum HostMessage {
     DisplayMode { fullscreen: bool },
     FitContent,
     ToggleSidebar,
+    ToggleInspector,
     TogglePreview,
 }
 
@@ -25,6 +26,7 @@ impl HostMessage {
         }
         let value: serde_json::Value = serde_json::from_str(raw).ok()?;
         match value.get("type")?.as_str()? {
+            "op-bridge/toggle-inspector" => return Some(Self::ToggleInspector),
             "op-bridge/toggle-sidebar" => return Some(Self::ToggleSidebar),
             "op-bridge/toggle-preview" => return Some(Self::TogglePreview),
             _ => {}
@@ -52,6 +54,7 @@ thread_local! {
     static INBOUND: RefCell<Option<MessageHandler>> = const { RefCell::new(None) };
     static SELECTION: RefCell<Option<SelectionHandler>> = const { RefCell::new(None) };
     static NAME: RefCell<Option<NameHandler>> = const { RefCell::new(None) };
+    static LAST_PANELS: RefCell<Option<(bool, bool, bool)>> = const { RefCell::new(None) };
     static LAST_PREVIEW: RefCell<Option<bool>> = const { RefCell::new(None) };
     static EARLY: RefCell<Vec<HostMessage>> = const { RefCell::new(Vec::new()) };
 }
@@ -79,6 +82,8 @@ pub fn codex_on_event(callback: js_sys::Function) -> Result<(), JsValue> {
         return Err(JsValue::from_str("Codex embedding mode required"));
     }
     OUTBOUND.with(|slot| *slot.borrow_mut() = Some(callback));
+    LAST_PANELS.with(|slot| *slot.borrow_mut() = None);
+    LAST_PREVIEW.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 
@@ -135,6 +140,22 @@ pub(crate) fn document_replaced() {
     }
 }
 
+pub(crate) fn panels_state(state: &op_editor_core::EditorState) {
+    if !active() {
+        return;
+    }
+    let next = (
+        state.editor_ui.sidebar_open,
+        state.editor_ui.inspector_open,
+        state.right_rail_visible(),
+    );
+    LAST_PANELS.with(|slot| {
+        if *slot.borrow()==Some(next) { return; }
+        *slot.borrow_mut()=Some(next);
+        emit(&format!(r#"{{"type":"op-shell/panels-state","layers":{},"inspector":{},"inspectorVisible":{}}}"#,next.0,next.1,next.2));
+    });
+}
+
 pub(crate) fn preview_state(active: bool) {
     if !self::active() {
         return;
@@ -187,6 +208,17 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
         HostMessage::ToggleSidebar => {
             if let Ok(mut context) = message_inner.try_borrow_mut() {
                 context.host_mut().editor_state_mut().editor_ui.sidebar_open ^= true;
+                context.host_mut().mark_editor_state_dirty();
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::ToggleInspector => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                context
+                    .host_mut()
+                    .editor_state_mut()
+                    .editor_ui
+                    .inspector_open ^= true;
                 context.host_mut().mark_editor_state_dirty();
                 let _ = context.repaint();
             }

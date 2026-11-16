@@ -16,6 +16,7 @@ impl Default for EditorUiState {
     fn default() -> Self {
         Self {
             sidebar_open: true,
+            inspector_open: true,
             layer_panel_width: 240.0,
             property_panel_width: 256.0,
             chat_tab_width_bumped: false,

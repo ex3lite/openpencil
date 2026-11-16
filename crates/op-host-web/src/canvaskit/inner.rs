@@ -155,6 +155,7 @@ impl CkInner {
         // Paint may finish an exit transition and tear down the preview.
         // Report the settled state, not the pre-paint runtime.
         crate::codex_bridge::preview_state(self.host.is_preview_active());
+        crate::codex_bridge::panels_state(self.host.editor_state());
     }
 
     /// Rebuild the hidden ARIA DOM mirror from a freshly assembled tree.
