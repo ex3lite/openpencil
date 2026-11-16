@@ -262,6 +262,12 @@ impl WidgetHost {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
+        #[cfg(feature = "canvaskit")]
+        if self.editor_state.editor_ui.preview.mode && self.device_mode_active() {
+            self.last_viewport_w = viewport_width;
+            self.last_viewport_h = viewport_height;
+            return self.apply_device_scroll(dy);
+        }
         if self.try_scroll_missing_fonts_picker(x, y, dy, viewport_width, viewport_height) {
             return true;
         }

@@ -492,7 +492,10 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
         add_listener::<WheelEvent, _, _>(&canvas_target, "wheel", &mut listeners, move |evt| {
             use crate::event::pointer::{classify_wheel_intent, WheelIntent};
 
+            // The canvas owns pan/pinch; an embedding host must not also
+            // handle the same bubbling wheel as page navigation or zoom.
             evt.prevent_default();
+            evt.stop_propagation();
             let Ok(mut b) = inner.try_borrow_mut() else {
                 return;
             };
@@ -523,6 +526,14 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             if consumed {
                 crate::repaint_coalescer::request();
             }
+        })?;
+    }
+    // WebKit exposes native magnification in addition to wheel/pinch. Keep
+    // it inside the canvas so the embedding page does not zoom as well.
+    for name in ["gesturestart", "gesturechange", "gestureend"] {
+        add_listener::<web_sys::Event, _, _>(&canvas_target, name, &mut listeners, |evt| {
+            evt.prevent_default();
+            evt.stop_propagation();
         })?;
     }
     // compositionstart/end → IME (#54). The hidden `ime` input captures the

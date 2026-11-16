@@ -37,7 +37,6 @@ pub enum WheelIntent {
 }
 
 const WHEEL_LINE_PX: f32 = 40.0;
-const REGULAR_ZOOM_GAIN: f32 = 1.35;
 const MODIFIED_ZOOM_GAIN: f32 = 4.0;
 /// Caps one browser event to roughly a 30% viewport scale change.
 const MAX_CANVAS_ZOOM_DELTA: f32 = 175.0;
@@ -91,10 +90,11 @@ pub fn map_offset_to_logical(
 
 /// Classify a browser wheel into the editor action the web shell should run.
 ///
-/// Vertical mouse-wheel scroll keeps the existing zoom behavior. Horizontal
-/// trackpad deltas and Shift+wheel are pan gestures, matching desktop's
-/// `apply_pan_gesture` path. Cmd/Ctrl/Alt modified wheels are reserved for
-/// zoom so browser pinch/Cmd-wheel never turns into a pan.
+/// Unmodified wheels pan on both axes, including purely vertical trackpad
+/// packets. Axis values cannot distinguish a mouse wheel from a trackpad;
+/// classifying zero-X packets as zoom switches intent mid-gesture. Shift
+/// maps vertical scrolling horizontally. Cmd/Ctrl/Alt reserve explicit zoom,
+/// including the Ctrl-modified wheel events browsers emit for trackpad pinch.
 pub fn classify_wheel_intent(
     delta_x: f32,
     delta_y: f32,
@@ -107,8 +107,8 @@ pub fn classify_wheel_intent(
     let horizontal_delta_from_y = normalize_wheel_delta(delta_y, delta_mode, page_width);
     let delta_x = normalize_wheel_delta(delta_x, delta_mode, page_width);
     let delta_y = normalize_wheel_delta(delta_y, delta_mode, page_height);
-    if !modified_zoom && (delta_x != 0.0 || modifiers.contains(Modifiers::SHIFT)) {
-        if delta_x != 0.0 {
+    if !modified_zoom {
+        if delta_x != 0.0 || !modifiers.contains(Modifiers::SHIFT) {
             WheelIntent::Pan {
                 dx: -delta_x,
                 dy: -delta_y,
@@ -121,11 +121,7 @@ pub fn classify_wheel_intent(
         }
     } else {
         let scroll_delta_y = -delta_y;
-        let gain = if modified_zoom {
-            MODIFIED_ZOOM_GAIN
-        } else {
-            REGULAR_ZOOM_GAIN
-        };
+        let gain = MODIFIED_ZOOM_GAIN;
         WheelIntent::Zoom {
             scroll_delta_y,
             canvas_delta_y: (scroll_delta_y * gain)

@@ -59,6 +59,26 @@ fn horizontal_trackpad_pan_moves_canvas_viewport() {
     assert_eq!(host.editor_state.viewport.pan_y, 0.0);
 }
 
+#[test]
+fn trackpad_sequence_with_zero_and_nonzero_x_never_changes_zoom() {
+    use crate::event::pointer::{classify_wheel_intent, WheelIntent};
+    use op_editor_ui::Modifiers;
+
+    let mut host = WidgetHost::new();
+    let point = canvas_point(&host, 420.0, 260.0);
+    for (dx, dy) in [(0.0, 30.0), (0.25, 20.0), (0.0, -10.0), (-0.25, 5.0)] {
+        match classify_wheel_intent(dx, dy, 0, VIEWPORT_W, VIEWPORT_H, Modifiers::empty()) {
+            WheelIntent::Pan { dx, dy } => {
+                assert!(host.apply_pan_gesture(point.x, point.y, dx, dy, VIEWPORT_W, VIEWPORT_H));
+            }
+            WheelIntent::Zoom { .. } => panic!("unmodified trackpad packet changed to zoom"),
+        }
+    }
+    assert_eq!(host.editor_state.viewport.zoom, 1.0);
+    assert_eq!(host.editor_state.viewport.pan_x, 0.0);
+    assert_eq!(host.editor_state.viewport.pan_y, -45.0);
+}
+
 fn seed_scrollable_agent_settings(host: &mut WidgetHost) {
     host.editor_state.editor_ui.agent_settings_open = true;
     for index in 0..12 {
@@ -192,16 +212,36 @@ fn trackpad_pan_over_model_menu_scrolls_menu_before_settings_body() {
 }
 
 #[test]
-fn browser_zoom_uses_accelerated_delta_and_keeps_pointer_anchor() {
+fn ctrl_pinch_uses_accelerated_delta_and_keeps_pointer_anchor() {
+    use crate::event::pointer::{classify_wheel_intent, WheelIntent};
     let mut host = WidgetHost::new();
     let point = canvas_point(&host, 420.0, 260.0);
     let (cx0, cy0, _, _) = host.canvas_region(VIEWPORT_W, VIEWPORT_H);
     let local = Point2D::new(point.x - cx0, point.y - cy0);
     let before = host.editor_state.viewport.to_document(local);
 
-    assert!(
-        host.apply_wheel_with_canvas_delta(point.x, point.y, -10.0, -40.0, VIEWPORT_W, VIEWPORT_H,)
-    );
+    let WheelIntent::Zoom {
+        scroll_delta_y,
+        canvas_delta_y,
+    } = classify_wheel_intent(
+        0.0,
+        10.0,
+        0,
+        VIEWPORT_W,
+        VIEWPORT_H,
+        op_editor_ui::Modifiers::CTRL,
+    )
+    else {
+        panic!("Ctrl pinch must zoom");
+    };
+    assert!(host.apply_wheel_with_canvas_delta(
+        point.x,
+        point.y,
+        scroll_delta_y,
+        canvas_delta_y,
+        VIEWPORT_W,
+        VIEWPORT_H,
+    ));
 
     let expected_zoom = (-40.0_f32 * 0.0015).exp();
     assert!((host.editor_state.viewport.zoom - expected_zoom).abs() < 1e-6);
@@ -384,4 +424,39 @@ fn a_dismissed_diagnostics_card_stops_owning_its_rect() {
         .html_import_diagnostics_rect(VIEWPORT_W, VIEWPORT_H)
         .is_none());
     assert!(!host.over_topmost_panel(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+}
+
+#[cfg(feature = "canvaskit")]
+#[test]
+fn vertical_trackpad_scroll_moves_device_preview_without_panning_editor() {
+    let mut host = WidgetHost::new();
+    let doc = jian_ops_schema::load_str(
+        r##"{"version":"1.1","children":[{"type":"frame","id":"screen","width":390,"height":1600}]}"##,
+    ).expect("preview document").value;
+    host.editor_state = op_editor_core::EditorState::from_document(doc);
+    host.editor_state.editor_ui.preview.mode = true;
+    host.preview = Some(
+        op_preview_core::PreviewSession::enter(
+            &host.editor_state.doc,
+            (VIEWPORT_W, VIEWPORT_H),
+            &std::collections::BTreeMap::new(),
+            0,
+            false,
+            false,
+            jian_core::layout::measure::default_backend(),
+            0,
+        )
+        .expect("preview session"),
+    );
+    host.set_preview_device(
+        op_editor_core::PreviewDeviceKind::Phone,
+        VIEWPORT_W,
+        VIEWPORT_H,
+    );
+    let before = host.editor_state.viewport;
+    assert!(host.apply_pan_gesture(500.0, 400.0, 0.0, -80.0, VIEWPORT_W, VIEWPORT_H));
+    assert!(host.preview_scroll_y > 0.0);
+    assert_eq!(host.editor_state.viewport.pan_x, before.pan_x);
+    assert_eq!(host.editor_state.viewport.pan_y, before.pan_y);
+    assert_eq!(host.editor_state.viewport.zoom, before.zoom);
 }

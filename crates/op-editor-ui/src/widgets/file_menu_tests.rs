@@ -429,3 +429,40 @@ fn measured_truncation_stays_inside_its_budget() {
     assert!(measure(&output) <= 98.0, "{output:?}");
     assert_eq!(truncate_to_width_measured("abc", 0.0, measure), "");
 }
+
+#[test]
+fn codex_autosave_hides_manual_save_rows_but_preserves_export_hit_targets() {
+    let mut ui = EditorUiState {
+        embed: op_editor_core::EmbedHost::Codex,
+        ..EditorUiState::default()
+    };
+    let menu = FileMenu::for_editor_ui(&ui, Vec::new());
+    let panel = menu_panel(&menu);
+    assert_eq!(menu.choice_for_row(4), None);
+    assert_eq!(menu.choice_for_row(5), None);
+    let mut capture = TextCaptureBackend::default();
+    let mut cx = PaintCx {
+        backend: &mut capture,
+    };
+    menu.paint(&mut cx, panel);
+    assert!(!capture
+        .texts
+        .iter()
+        .any(|(text, _)| text == t(&ui, "save") || text == t(&ui, "saveAs")));
+    let (_, export_point) = capture
+        .texts
+        .iter()
+        .find(|(text, _)| text == t(&ui, "exportImage"))
+        .expect("export stays visible");
+    assert_eq!(menu.hit(panel, *export_point), MenuHit::Row(6));
+    assert_eq!(menu.choice_for_row(6), Some(FileMenuChoice::ExportImage));
+    for embed in [
+        op_editor_core::EmbedHost::None,
+        op_editor_core::EmbedHost::VsCode,
+    ] {
+        ui.embed = embed;
+        let menu = FileMenu::for_editor_ui(&ui, Vec::new());
+        assert_eq!(menu.choice_for_row(4), Some(FileMenuChoice::Save));
+        assert_eq!(menu.choice_for_row(5), Some(FileMenuChoice::SaveAs));
+    }
+}

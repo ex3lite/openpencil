@@ -94,28 +94,30 @@ impl<'a> Widget for FileMenu<'a> {
         );
         y += ROW_HEIGHT;
         y = paint_divider(cx, &self.theme, rect, y);
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::Save,
-            t(self.ui, "save"),
-            "⌘S",
-            h(4),
-        );
-        y += ROW_HEIGHT;
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::Save,
-            t(self.ui, "saveAs"),
-            "⌘⇧S",
-            h(5),
-        );
-        y += ROW_HEIGHT;
+        if self.has_manual_save_rows() {
+            paint_row(
+                cx,
+                &self.theme,
+                rect.origin.x,
+                y,
+                Icon::Save,
+                t(self.ui, "save"),
+                "⌘S",
+                h(4),
+            );
+            y += ROW_HEIGHT;
+            paint_row(
+                cx,
+                &self.theme,
+                rect.origin.x,
+                y,
+                Icon::Save,
+                t(self.ui, "saveAs"),
+                "⌘⇧S",
+                h(5),
+            );
+            y += ROW_HEIGHT;
+        }
         if self.has_save_as_template_row() {
             paint_row(
                 cx,
@@ -129,7 +131,9 @@ impl<'a> Widget for FileMenu<'a> {
             );
             y += ROW_HEIGHT;
         }
-        y = paint_divider(cx, &self.theme, rect, y);
+        if self.save_rows() > 0 {
+            y = paint_divider(cx, &self.theme, rect, y);
+        }
         let export_image_row = 6 + usize::from(self.has_save_as_template_row());
         paint_row(
             cx,

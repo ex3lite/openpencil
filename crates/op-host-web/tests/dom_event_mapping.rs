@@ -383,12 +383,12 @@ fn shifted_wheel_maps_vertical_delta_to_horizontal_pan() {
 }
 
 #[test]
-fn regular_or_modified_vertical_wheel_stays_zoom_intent() {
+fn vertical_trackpad_wheel_pans_and_ctrl_wheel_zooms() {
     assert_eq!(
         classify_wheel_intent(0.0, 90.0, 0, 1200.0, 800.0, Modifiers::empty()),
-        WheelIntent::Zoom {
-            scroll_delta_y: -90.0,
-            canvas_delta_y: -121.5,
+        WheelIntent::Pan {
+            dx: -0.0,
+            dy: -90.0
         }
     );
     assert_eq!(
@@ -401,12 +401,12 @@ fn regular_or_modified_vertical_wheel_stays_zoom_intent() {
 }
 
 #[test]
-fn wheel_normalizes_line_and_page_units_and_accelerates_pinch() {
+fn wheel_normalizes_pan_units_and_accelerates_pinch() {
     assert_eq!(
         classify_wheel_intent(0.0, 3.0, 1, 1200.0, 800.0, Modifiers::empty()),
-        WheelIntent::Zoom {
-            scroll_delta_y: -120.0,
-            canvas_delta_y: -162.0,
+        WheelIntent::Pan {
+            dx: -0.0,
+            dy: -120.0
         }
     );
     assert_eq!(
@@ -418,9 +418,9 @@ fn wheel_normalizes_line_and_page_units_and_accelerates_pinch() {
     );
     assert_eq!(
         classify_wheel_intent(0.0, 1.0, 2, 1200.0, 800.0, Modifiers::empty()),
-        WheelIntent::Zoom {
-            scroll_delta_y: -800.0,
-            canvas_delta_y: -175.0,
+        WheelIntent::Pan {
+            dx: -0.0,
+            dy: -800.0
         }
     );
 }

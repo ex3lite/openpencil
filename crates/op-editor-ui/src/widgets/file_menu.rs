@@ -167,6 +167,14 @@ impl<'a> FileMenu<'a> {
         export_menu_rows::batch_frame_export_available(self.ui)
     }
 
+    fn has_manual_save_rows(&self) -> bool {
+        self.ui.embed != op_editor_core::EmbedHost::Codex
+    }
+
+    fn save_rows(&self) -> usize {
+        2 * usize::from(self.has_manual_save_rows()) + usize::from(self.has_save_as_template_row())
+    }
+
     fn has_save_as_template_row(&self) -> bool {
         self.ui.scene_template_center.save_current_supported
     }
@@ -220,8 +228,10 @@ impl<'a> FileMenu<'a> {
         let mut h = PAD_Y;
         h += ROW_HEIGHT * 4.0; // Home + New + New from template + Open
         h += DIVIDER_GAP * 2.0 + 1.0; // divider
-        h += ROW_HEIGHT * (2 + usize::from(self.has_save_as_template_row())) as f32;
-        h += DIVIDER_GAP * 2.0 + 1.0;
+        h += ROW_HEIGHT * self.save_rows() as f32;
+        if self.save_rows() > 0 {
+            h += DIVIDER_GAP * 2.0 + 1.0;
+        }
         h += ROW_HEIGHT * self.export_rows() as f32; // Export image (+ all frames)
         h += DIVIDER_GAP * 2.0 + 1.0;
         h += HEADER_HEIGHT; // Recent files header
@@ -258,8 +268,8 @@ impl<'a> FileMenu<'a> {
             1 => Some(FileMenuChoice::NewFile),
             2 => Some(FileMenuChoice::NewFromTemplate),
             3 => Some(FileMenuChoice::OpenFile),
-            4 => Some(FileMenuChoice::Save),
-            5 => Some(FileMenuChoice::SaveAs),
+            4 if self.has_manual_save_rows() => Some(FileMenuChoice::Save),
+            5 if self.has_manual_save_rows() => Some(FileMenuChoice::SaveAs),
             6 if self.has_save_as_template_row() => Some(FileMenuChoice::SaveAsTemplate),
             row if row == 6 + usize::from(self.has_save_as_template_row()) => {
                 Some(FileMenuChoice::ExportImage)
@@ -299,14 +309,19 @@ impl<'a> FileMenu<'a> {
             row += 1;
         }
         y += DIVIDER_GAP * 2.0 + 1.0;
-        for _ in 0..2 + usize::from(self.has_save_as_template_row()) {
+        if !self.has_manual_save_rows() {
+            row += 2;
+        }
+        for _ in 0..self.save_rows() {
             if row_hit(panel.origin.x, y, point) {
                 return MenuHit::Row(row);
             }
             y += ROW_HEIGHT;
             row += 1;
         }
-        y += DIVIDER_GAP * 2.0 + 1.0;
+        if self.save_rows() > 0 {
+            y += DIVIDER_GAP * 2.0 + 1.0;
+        }
         for _ in 0..self.export_rows() {
             if row_hit(panel.origin.x, y, point) {
                 return MenuHit::Row(row);
