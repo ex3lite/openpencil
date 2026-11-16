@@ -329,6 +329,39 @@ fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
     }
 }
 
+/// Keep an unpushed local page choice across a newer remote document. IDs,
+/// unlike indices, survive page reordering. A removed page falls back to the
+/// remote selection; bootstrap and clean views always follow the daemon.
+fn pending_local_page_id(
+    state: &op_editor_core::EditorState,
+    client: &WebSyncClient,
+) -> Option<String> {
+    client
+        .editor_meta_needs_push(
+            state.ui.active_page_index,
+            state.editor_ui.preserve_authored_geometry,
+        )
+        .then(|| {
+            state
+                .doc
+                .pages
+                .as_ref()?
+                .get(state.ui.active_page_index)
+                .map(|p| p.id.clone())
+        })
+        .flatten()
+}
+
+fn page_after_remote_apply(
+    pending_id: Option<&str>,
+    doc: &op_editor_core::PenDocument,
+    remote_index: usize,
+) -> usize {
+    pending_id
+        .and_then(|id| doc.pages.as_ref()?.iter().position(|page| page.id == id))
+        .unwrap_or(remote_index)
+}
+
 /// Apply a `GET /api/mcp/document` response to the live shell.
 /// `WebSyncClient::sync_with_editor_meta` runs the apply closure only for a
 /// newer document and commits that exact version only when the closure returns
@@ -364,6 +397,9 @@ fn apply_document_response<C: RepaintContext + 'static>(
         .try_borrow()
         .map(|s| s.client.initialized())
         .unwrap_or(false);
+    let pending_page =
+        pending_local_page_id(inner_ref.host().editor_state(), &sync.borrow().client);
+    let mut remote_meta = None;
     // The `WebSyncClient::sync_with_editor_meta` closure runs while `sync` is held
     // mutably borrowed (via `s` below) — it must never itself touch `sync`;
     // it only touches `inner_ref`, which is a separate RefCell.
@@ -379,6 +415,12 @@ fn apply_document_response<C: RepaintContext + 'static>(
                      active_page_index,
                      preserve_authored_geometry,
                      wire_scenario| {
+                        remote_meta = Some((active_page_index, preserve_authored_geometry));
+                        let active_page_index = page_after_remote_apply(
+                            pending_page.as_deref(),
+                            &doc,
+                            active_page_index,
+                        );
                         let host = inner_ref.host_mut();
                         host.replace_document_from_sync(doc, undoable);
                         // A daemon new enough to send `scenario` is the
@@ -413,8 +455,10 @@ fn apply_document_response<C: RepaintContext + 'static>(
         // push tick compares apples to apples (serde normalization differs
         // from the daemon's wire bytes).
         let state = inner_ref.host().editor_state();
-        let active_page_index = state.ui.active_page_index;
-        let preserve_authored_geometry = state.editor_ui.preserve_authored_geometry;
+        // Baseline the REMOTE metadata, not the locally retained page. The next
+        // metadata push must still publish the user's unacknowledged choice.
+        let (active_page_index, preserve_authored_geometry) =
+            remote_meta.expect("successful apply captured remote metadata");
         let serialized = serialize_sync_document(&state.doc);
         if let Ok(mut s) = sync.try_borrow_mut() {
             // Always baseline the two scalar fields. Oversized documents skip

@@ -201,3 +201,6 @@ mod tests_widget_states;
 // or `node_rect` either.
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_transition_input;
+
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_authored_prototype;

@@ -1,4 +1,5 @@
 use super::WidgetHost;
+use op_editor_core::PenNodeExt;
 use op_editor_ui::widgets::LayerPanelHit;
 use op_editor_ui::Point2D;
 
@@ -127,4 +128,90 @@ fn clicking_active_page_row_preserves_viewport() {
         host.editor_state.viewport, viewport_before,
         "reselecting the active page must not zoom-to-fit"
     );
+}
+
+#[cfg(feature = "canvaskit")]
+fn start_page_preview(host: &mut WidgetHost) {
+    host.preview = Some(
+        op_preview_core::PreviewSession::enter(
+            &host.editor_state.doc,
+            (VIEWPORT_W, VIEWPORT_H),
+            &std::collections::BTreeMap::new(),
+            host.editor_state.ui.active_page_index,
+            false,
+            false,
+            jian_core::layout::measure::default_backend(),
+            0,
+        )
+        .expect("preview"),
+    );
+    host.editor_state.editor_ui.preview.mode = true;
+}
+
+#[cfg(feature = "canvaskit")]
+#[test]
+fn switching_page_drops_the_previous_pages_preview_scene() {
+    let mut host = page_switch_host();
+    host.refresh_layout_scene();
+    start_page_preview(&mut host);
+    let point = point_for_page_row(&host, 1);
+    assert!(host.apply_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert_eq!(host.editor_state.ui.active_page_index, 1);
+    assert!(
+        host.preview.is_none(),
+        "paint must not keep the previous page's preview scene"
+    );
+    assert!(!host.editor_state.editor_ui.preview.mode);
+    host.refresh_layout_scene();
+    assert!(host
+        .layout_scene
+        .active_page()
+        .unwrap()
+        .find("far")
+        .is_some());
+}
+
+#[cfg(feature = "canvaskit")]
+#[test]
+fn remote_document_replacement_drops_stale_preview() {
+    let mut host = page_switch_host();
+    host.refresh_layout_scene();
+    start_page_preview(&mut host);
+    let replacement = host.editor_state.doc.clone();
+    host.replace_document_from_sync(replacement, true);
+    assert!(
+        host.preview.is_none(),
+        "remote content cannot leave an old runtime painting"
+    );
+    assert!(!host.editor_state.editor_ui.preview.mode);
+}
+
+#[cfg(feature = "canvaskit")]
+#[test]
+#[ignore = "requires OPENBRUSH_PROTOTYPE pointing to an authored .op fixture"]
+fn authored_document_all_pages_have_matching_scene_and_layers() {
+    let source = std::fs::read_to_string(std::env::var("OPENBRUSH_PROTOTYPE").unwrap()).unwrap();
+    let mut host = WidgetHost::new();
+    host.editor_state = op_editor_core::EditorState::from_document(
+        jian_ops_schema::load_str(&source).unwrap().value,
+    );
+    let pages = host.editor_state.doc.pages.as_ref().unwrap().clone();
+    for index in [4, 3, 5, 0, 2, 1, 4, 3, 0] {
+        host.editor_state.editor_ui.layer_pages_scroll.offset = (index as f32 * 32.0).max(0.0);
+        host.mark_editor_state_dirty();
+        host.refresh_layout_scene();
+        let point = point_for_page_row(&host, index);
+        assert!(host.apply_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+        host.refresh_layout_scene();
+        assert_eq!(host.editor_state.ui.active_page_index, index);
+        let scene = host.layout_scene.active_page().unwrap();
+        assert_eq!(scene.id, pages[index].id);
+        for root in &pages[index].children {
+            assert!(
+                scene.find(root.id_str()).is_some(),
+                "missing root on page {index}"
+            );
+        }
+        assert!(host.preview.is_none());
+    }
 }

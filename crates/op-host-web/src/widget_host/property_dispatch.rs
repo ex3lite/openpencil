@@ -36,6 +36,8 @@ impl WidgetHost {
         doc: op_editor_core::PenDocument,
         undoable: bool,
     ) {
+        self.finish_exit_teardown();
+        self.layout_transition = None;
         if undoable {
             self.editor_state.replace_document_with_undo(doc);
         } else {

@@ -12,6 +12,11 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) {
+        // A page switch changes the editor scene; a preview still owns its
+        // old scene and must stop before the new page is painted.
+        #[cfg(feature = "canvaskit")]
+        self.finish_exit_teardown();
+        self.layout_transition = None;
         self.mark_dirty();
         self.zoom_to_fit(viewport_w, viewport_h);
     }
