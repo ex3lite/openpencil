@@ -128,7 +128,7 @@ impl WebSyncClient {
         &self,
         body: &str,
     ) -> Result<Option<WebSyncDocument>, WebSyncError> {
-        let value: serde_json::Value =
+        let mut value: serde_json::Value =
             serde_json::from_str(body).map_err(|e| WebSyncError::ResponseParse(e.to_string()))?;
         let version = value
             .get("version")
@@ -154,7 +154,17 @@ impl WebSyncClient {
             .and_then(serde_json::Value::as_bool)
             .or(nested_meta.preserve_authored_geometry)
             .unwrap_or(false);
-        let doc: PenDocument = serde_json::from_value(document.clone())
+        // Resolve table references while parsing into shared ImageSrc Arcs.
+        // Moving the document avoids cloning the entire large response tree.
+        let mut document = value
+            .get_mut("document")
+            .map(std::mem::take)
+            .ok_or(WebSyncError::MissingDocument)?;
+        let image_table = jian_ops_schema::image_table::take_image_table(&mut document);
+        let doc: PenDocument =
+            jian_ops_schema::node::image_src::intern::with_load_scope(image_table, || {
+                serde_json::from_value(document)
+            })
             .map_err(|e| WebSyncError::DocumentParse(e.to_string()))?;
         let scenario = value
             .get("scenario")
@@ -313,6 +323,29 @@ impl WebSyncClient {
         format!(
             r#"{{"document":{doc_json},"baseVersion":{base_version},"activePageIndex":{active_page_index},"preserveAuthoredGeometry":{preserve_authored_geometry}{metadata_only_field}}}"#
         )
+    }
+
+    /// Send a page/geometry change without copying or hashing the document.
+    /// Older daemons reject the missing document, rather than replacing it.
+    pub fn wrap_editor_meta_push(
+        base_version: u64,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) -> String {
+        format!(
+            r#"{{"baseVersion":{base_version},"activePageIndex":{active_page_index},"preserveAuthoredGeometry":{preserve_authored_geometry},"metadataOnly":true}}"#
+        )
+    }
+
+    /// Advance a scalar acknowledgement while retaining the content hash.
+    pub fn mark_editor_meta_pushed(
+        &mut self,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+        version: u64,
+    ) {
+        self.note_applied_editor_meta(active_page_index, preserve_authored_geometry);
+        self.mark_applied(version);
     }
 
     /// True once the first daemon document has been applied. The push path is

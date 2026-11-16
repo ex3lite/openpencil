@@ -478,6 +478,9 @@ fn opening_a_document_keeps_codex_chat_ownership() {
     previous.editor_ui.embed = op_editor_core::EmbedHost::Codex;
     previous.editor_ui.host_owns_chat = true;
     let ingested = ingest_op_source(r#"{"version":"1.0","children":[]}"#, &previous).unwrap();
-    assert_eq!(ingested.state.editor_ui.embed, op_editor_core::EmbedHost::Codex);
+    assert_eq!(
+        ingested.state.editor_ui.embed,
+        op_editor_core::EmbedHost::Codex
+    );
     assert!(ingested.state.editor_ui.host_owns_chat);
 }

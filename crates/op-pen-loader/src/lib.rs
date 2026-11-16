@@ -213,3 +213,6 @@ mod editor_state_var_table_tests {
         assert!(table.active_theme.is_empty());
     }
 }
+
+mod transport_document;
+pub use transport_document::write_transport_document;

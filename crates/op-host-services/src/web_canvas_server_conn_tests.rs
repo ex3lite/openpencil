@@ -534,3 +534,24 @@ fn document_post_route_409s_on_stale_base_version_without_mutating() {
 /// stream and the `serve` helpers.
 #[path = "web_canvas_server_args_tests.rs"]
 mod args_tests;
+
+#[test]
+fn document_free_page_switch_preserves_all_content_and_pinned_metadata() {
+    let mut state = fresh_state();
+    state.apply_document_push(r#"{"document":{"version":"1.0","children":[],"pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[]}]}}"#, None).unwrap();
+    state.editor.editor_ui.pinned_style_guide = Some("keep-guide".into());
+    let fingerprint = doc_fingerprint(&state);
+    let body =
+        op_editor_core::web_sync::WebSyncClient::wrap_editor_meta_push(state.version, 1, true);
+    assert!(state.apply_document_push(&body, None).unwrap().applied);
+    assert_eq!(doc_fingerprint(&state), fingerprint);
+    assert_eq!(state.editor.ui.active_page_index, 1);
+    assert_eq!(
+        state.editor.editor_ui.pinned_style_guide.as_deref(),
+        Some("keep-guide")
+    );
+    let stale =
+        op_editor_core::web_sync::WebSyncClient::wrap_editor_meta_push(state.version + 1, 0, false);
+    assert!(!state.apply_document_push(&stale, None).unwrap().applied);
+    assert_eq!(state.editor.ui.active_page_index, 1);
+}

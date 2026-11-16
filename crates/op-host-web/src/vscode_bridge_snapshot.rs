@@ -21,9 +21,12 @@ pub(super) struct BridgeDocumentSnapshot {
 
 impl BridgeDocumentSnapshot {
     pub(super) fn capture(state: &EditorState) -> Option<Self> {
+        let mut bytes = Vec::new();
+        op_pen_loader::write_transport_document(&mut bytes, &state.doc).ok()?;
+        let json = String::from_utf8(bytes).ok()?;
         Some(Self {
             pair: (state.document_generation(), state.document_revision()),
-            document_json: serde_json::to_string(&state.doc).ok()?.into(),
+            document_json: json.into(),
             editor_meta: EditorMeta::from_state(state),
         })
     }

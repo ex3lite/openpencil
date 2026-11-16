@@ -19,8 +19,8 @@
 //!   the content hash matches the daemon baseline (re-baselining directly so
 //!   the gate can't deadlock), and POSTs
 //!   `{document, baseVersion, activePageIndex, preserveAuthoredGeometry}` to
-//!   `/api/mcp/document`. Pushes over 2 MiB are skipped with a one-shot
-//!   console warning (TS `SYNC_MAX_BODY_BYTES` parity), baseline untouched. A
+//!   `/api/mcp/document`. Whole documents share the native transport budget;
+//!   page-only changes send a scalar envelope without serializing the document. A
 //!   `version-conflict` response suspends the gate until the host resolves it
 //!   (no silent retry); other failures are dropped best-effort (TS catch{}
 //!   parity) — the next local edit retriggers.
@@ -55,9 +55,8 @@ use crate::repaint_ctx::RepaintContext;
 const POLL_INTERVAL_MS: i32 = 400;
 /// Push cadence — TS `PUSH_DEBOUNCE_MS` (use-mcp-sync.ts:6).
 const PUSH_INTERVAL_MS: i32 = 2000;
-/// TS `SYNC_MAX_BODY_BYTES` (use-mcp-sync.ts:10): documents larger than this
-/// are not pushed (warned once), mirroring the renderer's oversize guard.
-const SYNC_MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// Same document budget as the native HTTP ingress, excluding its envelope.
+const SYNC_MAX_BODY_BYTES: usize = op_util::document_limits::MAX_DOCUMENT_BYTES;
 
 enum SyncDocumentJson {
     Ready(String),
@@ -68,6 +67,7 @@ enum SyncDocumentJson {
 struct CappedJsonWriter {
     bytes: Vec<u8>,
     exceeded: bool,
+    limit: usize,
 }
 
 impl CappedJsonWriter {
@@ -75,13 +75,14 @@ impl CappedJsonWriter {
         Self {
             bytes: Vec::new(),
             exceeded: false,
+            limit: SYNC_MAX_BODY_BYTES,
         }
     }
 }
 
 impl Write for CappedJsonWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.bytes.len().saturating_add(bytes.len()) > SYNC_MAX_BODY_BYTES {
+        if self.bytes.len().saturating_add(bytes.len()) > self.limit {
             self.exceeded = true;
             return Err(io::Error::new(
                 io::ErrorKind::FileTooLarge,
@@ -102,7 +103,7 @@ impl Write for CappedJsonWriter {
 /// cannot send it.
 fn serialize_sync_document(doc: &op_editor_core::PenDocument) -> SyncDocumentJson {
     let mut writer = CappedJsonWriter::new();
-    if serde_json::to_writer(&mut writer, doc).is_err() {
+    if op_pen_loader::write_transport_document(&mut writer, doc).is_err() {
         return if writer.exceeded {
             SyncDocumentJson::Oversize
         } else {
@@ -494,22 +495,28 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         if sync.borrow().oversize_identity == Some(oversize_identity) {
             return;
         }
-        let json = match serialize_sync_document(&b.host().editor_state().doc) {
-            SyncDocumentJson::Ready(json) => json,
-            SyncDocumentJson::Oversize => {
-                sync.borrow_mut().oversize_identity = Some(oversize_identity);
-                if !oversize_warned.replace(true) {
-                    web_sys::console::warn_1(
-                        &format!(
-                            "[mcp-sync] Skip oversized document push: > {:.2}MiB",
-                            SYNC_MAX_BODY_BYTES as f64 / (1024.0 * 1024.0)
-                        )
-                        .into(),
-                    );
-                }
-                return;
-            }
-            SyncDocumentJson::Failed => return,
+        let json = if !reasons.content {
+            None
+        } else {
+            Some(
+                match serialize_sync_document(&b.host().editor_state().doc) {
+                    SyncDocumentJson::Ready(json) => json,
+                    SyncDocumentJson::Oversize => {
+                        sync.borrow_mut().oversize_identity = Some(oversize_identity);
+                        if !oversize_warned.replace(true) {
+                            web_sys::console::warn_1(
+                                &format!(
+                                    "[mcp-sync] Skip oversized document push: > {:.2}MiB",
+                                    SYNC_MAX_BODY_BYTES as f64 / (1024.0 * 1024.0)
+                                )
+                                .into(),
+                            );
+                        }
+                        return;
+                    }
+                    SyncDocumentJson::Failed => return,
+                },
+            )
         };
         (
             pair,
@@ -520,9 +527,9 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         )
     };
 
-    let should_push = if reasons.content {
+    let should_push = if let Some(doc_json) = doc_json.as_deref() {
         sync.borrow().client.should_push_with_editor_meta(
-            &doc_json,
+            doc_json,
             active_page_index,
             preserve_authored_geometry,
         )
@@ -556,7 +563,10 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         sync.gate.note_synced(pair.0, pair.1);
         return;
     }
-    if !SyncGate::periodic_push_allowed(doc_json.len()) {
+    if doc_json
+        .as_ref()
+        .is_some_and(|json| !SyncGate::periodic_push_allowed(json.len()))
+    {
         // TS warns once per oversize streak and skips the push; baseline
         // stays put (the uncapped snapshot channel is the fallback path).
         let warned = oversize_warned.get();
@@ -565,7 +575,7 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
             web_sys::console::warn_1(
                 &format!(
                     "[mcp-sync] Skip oversized document push: {:.2}MiB > {:.2}MiB",
-                    doc_json.len() as f64 / (1024.0 * 1024.0),
+                    doc_json.as_ref().map_or(0, String::len) as f64 / (1024.0 * 1024.0),
                     SYNC_MAX_BODY_BYTES as f64 / (1024.0 * 1024.0)
                 )
                 .into(),
@@ -577,13 +587,19 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
     sync.borrow_mut().oversize_identity = None;
     oversize_warned.set(false);
     let base_version = sync.borrow().client.last_version();
-    let body = WebSyncClient::wrap_push_body_with_base_editor_meta_and_mode(
-        &doc_json,
-        base_version,
-        active_page_index,
-        preserve_authored_geometry,
-        !reasons.content,
-    );
+    let body = match doc_json.as_deref() {
+        Some(json) => WebSyncClient::wrap_push_body_with_base_and_editor_meta(
+            json,
+            base_version,
+            active_page_index,
+            preserve_authored_geometry,
+        ),
+        None => WebSyncClient::wrap_editor_meta_push(
+            base_version,
+            active_page_index,
+            preserve_authored_geometry,
+        ),
+    };
     sync.borrow_mut().push_busy = true;
     let sync_done = sync.clone();
     // The pair captured AT SERIALIZATION TIME (above), not whatever the
@@ -603,12 +619,19 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         let accepted_version = WebSyncClient::parse_push_response(&resp);
         if let Some(version) = accepted_version {
             let mut s = sync_done.borrow_mut();
-            s.client.mark_pushed_with_editor_meta(
-                &doc_json,
-                active_page_index,
-                preserve_authored_geometry,
-                version,
-            );
+            match doc_json.as_deref() {
+                Some(json) => s.client.mark_pushed_with_editor_meta(
+                    json,
+                    active_page_index,
+                    preserve_authored_geometry,
+                    version,
+                ),
+                None => s.client.mark_editor_meta_pushed(
+                    active_page_index,
+                    preserve_authored_geometry,
+                    version,
+                ),
+            }
             s.gate.note_synced(pushed_pair.0, pushed_pair.1);
         }
         // Neither shape recognized (network/parse failure): dropped
@@ -666,85 +689,8 @@ fn push_selection_if_changed<C: RepaintContext + 'static>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unchanged_selection_is_republished_after_document_sync() {
-        let state = op_editor_core::EditorState::starter();
-        assert_eq!(
-            selection_delivery_key(&state, 1),
-            selection_delivery_key(&state, 1)
-        );
-        assert_ne!(
-            selection_delivery_key(&state, 1),
-            selection_delivery_key(&state, 2)
-        );
-    }
-
-    fn minimal_document() -> op_editor_core::PenDocument {
-        serde_json::from_str(r#"{"version":"1.0","children":[]}"#)
-            .expect("minimal document should deserialize")
-    }
-
-    #[test]
-    fn capped_serializer_matches_regular_json_for_small_documents() {
-        let doc = minimal_document();
-        let expected = serde_json::to_string(&doc).expect("regular serialization should succeed");
-
-        match serialize_sync_document(&doc) {
-            SyncDocumentJson::Ready(actual) => assert_eq!(actual, expected),
-            SyncDocumentJson::Oversize => panic!("small document should fit under the cap"),
-            SyncDocumentJson::Failed => panic!("small document should serialize"),
-        }
-    }
-
-    #[test]
-    fn capped_serializer_stops_oversized_documents_at_the_limit() {
-        let mut doc = minimal_document();
-        doc.name = Some("x".repeat(SYNC_MAX_BODY_BYTES));
-
-        assert!(matches!(
-            serialize_sync_document(&doc),
-            SyncDocumentJson::Oversize
-        ));
-    }
-
-    #[test]
-    fn capped_writer_accepts_exact_limit_then_rejects_another_byte() {
-        let mut writer = CappedJsonWriter::new();
-        let exact_limit = vec![b'x'; SYNC_MAX_BODY_BYTES];
-        writer
-            .write_all(&exact_limit)
-            .expect("the exact cap should be accepted");
-        assert_eq!(writer.bytes.len(), SYNC_MAX_BODY_BYTES);
-
-        assert!(writer.write_all(b"x").is_err());
-        assert!(writer.exceeded);
-        assert_eq!(writer.bytes.len(), SYNC_MAX_BODY_BYTES);
-    }
-
-    #[test]
-    fn active_page_only_change_is_push_due_without_a_revision_change() {
-        let mut sync = SyncController::new();
-        let pair = (7, 11);
-        sync.gate.note_synced(pair.0, pair.1);
-        sync.client.mark_applied(3);
-        sync.client.note_applied_snapshot_without_hash(0, true);
-
-        assert!(!push_reasons(&sync, pair, 0, true).any());
-        assert!(
-            push_reasons(&sync, pair, 1, true).editor_meta,
-            "page metadata must bypass the unchanged revision pair"
-        );
-
-        sync.gate.note_conflict(4);
-        assert!(
-            !push_reasons(&sync, pair, 1, true).any(),
-            "metadata pushes must still honor the conflict latch"
-        );
-    }
-}
+#[path = "live_sync_glue_tests.rs"]
+mod tests;
 
 thread_local! {
     /// Raised when the daemon answered a sync request 401/403.

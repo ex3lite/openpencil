@@ -402,10 +402,6 @@ pub struct HttpRequest {
 /// Query strings are stripped from the path before routing.
 pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest, McpServeError> {
     const MAX_HEADER: usize = 64 * 1024;
-    // Whole-document sync can carry embedded images, so retain the 64 MiB
-    // ceiling while reading incrementally to avoid allocating from a claimed
-    // Content-Length alone.
-    const MAX_BODY: usize = 64 * 1024 * 1024;
     let mut head: Vec<u8> = Vec::new();
     let mut byte = [0u8; 1];
     loop {
@@ -575,10 +571,11 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     }
     let authorization = header_value("authorization");
     let cookie = header_value("cookie");
-    if content_length > MAX_BODY {
+    let max_body = op_util::document_limits::document_request_body_limit(&path);
+    if content_length > max_body {
         return Err(McpServeError::Protocol(format!(
             "request body exceeds {} MiB",
-            MAX_BODY / (1024 * 1024)
+            max_body / (1024 * 1024)
         )));
     }
     // Grow the body from bytes actually received, not the declared length;

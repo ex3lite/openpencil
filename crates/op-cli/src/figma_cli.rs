@@ -34,10 +34,9 @@ pub(super) fn run_import_figma(fig_path: &str, out_path: &str) -> Result<String,
     // Dedup shared image payloads into the `images` table — an
     // image-heavy `.fig` references the same bitmap from many fills,
     // and the inline form writes one full copy per reference.
-    let mut value = serde_json::to_value(&import.document)
+    let mut raw = Vec::new();
+    op_pen_loader::write_transport_document(&mut raw, &import.document)
         .map_err(|e| CliError::Payload(format!("serialize {out_path:?}: {e}")))?;
-    jian_ops_schema::image_table::externalize_images(&mut value);
-    let raw = value.to_string();
     std::fs::write(out_path, raw).map_err(|e| CliError::Io(format!("write {out_path:?}: {e}")))?;
     let page_count = import.document.pages.as_ref().map_or(1, Vec::len);
     let node_count = import

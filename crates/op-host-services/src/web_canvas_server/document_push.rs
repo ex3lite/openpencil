@@ -159,3 +159,12 @@ pub(super) fn collab_aware_error_reply(error: &WebCanvasError) -> WebReply {
         },
     }
 }
+
+pub(super) fn serialize_transport_document(
+    document: &op_editor_core::PenDocument,
+) -> std::result::Result<String, serde_json::Error> {
+    let mut bytes = Vec::new();
+    op_pen_loader::write_transport_document(&mut bytes, document)?;
+    // serde_json writes valid UTF-8, including when ImageSrc emits table refs.
+    Ok(String::from_utf8(bytes).expect("JSON serialization emits UTF-8"))
+}

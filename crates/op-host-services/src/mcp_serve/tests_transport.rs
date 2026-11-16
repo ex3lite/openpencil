@@ -678,3 +678,33 @@ fn http_transport_serves_options_preflight() {
     assert!(resp.starts_with("HTTP/1.1 204 No Content"), "{resp}");
     assert!(resp.contains("Access-Control-Allow-Methods"));
 }
+
+#[test]
+fn document_free_metadata_push_preserves_the_document_contract() {
+    let request = parse_document_sync_request(
+        r#"{"metadataOnly":true,"baseVersion":7,"activePageIndex":76,"preserveAuthoredGeometry":true}"#,
+    ).expect("page switches must not carry the full kit");
+    assert!(request.metadata_only);
+    assert_eq!(request.active_page_index, Some(76));
+    assert!(parse_document_sync_request(r#"{"activePageIndex":76}"#).is_err());
+}
+
+#[test]
+fn whole_document_ingress_accepts_above_generic_limit_without_allocating_from_header() {
+    // A bodyless stream proves the route accepts this length before attempting
+    // to read, while unrelated routes reject it without reading any body bytes.
+    for (path, expected) in [
+        (
+            "/api/mcp/document",
+            "connection closed before body completed",
+        ),
+        ("/mcp", "request body exceeds 64 MiB"),
+    ] {
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
+            65 * 1024 * 1024
+        );
+        let error = read_http_request(&mut std::io::Cursor::new(request)).unwrap_err();
+        assert_eq!(error.to_string(), expected);
+    }
+}

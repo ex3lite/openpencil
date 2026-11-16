@@ -24,7 +24,7 @@ pub fn is_document_sync_route(method: &str, path: &str) -> bool {
 /// ignore it without changing the canonical `PenDocument` schema. Each `None`
 /// distinguishes an older sender from an explicit top-level override.
 pub struct DocumentSyncRequest<'a> {
-    /// Exact `document` JSON borrowed from the HTTP request body.
+    /// Exact `document` JSON; empty only for a document-free metadata push.
     pub document_json: &'a str,
     pub base_version: Option<u64>,
     pub active_page_index: Option<usize>,
@@ -209,6 +209,24 @@ pub(crate) fn parse_borrowed_document_envelope(
 pub fn parse_document_sync_request(body: &str) -> Result<DocumentSyncRequest<'_>, McpServeError> {
     let invalid = || McpServeError::Validation("Invalid document format".to_string());
     let envelope = parse_borrowed_document_envelope(body).map_err(|_| invalid())?;
+    if envelope.metadata_only && envelope.document_json.is_none() {
+        // Require a version and both scalars for the document-free form: there
+        // is no embedded metadata from which omitted fields could be merged.
+        let base_version = envelope.base_version.ok_or_else(invalid)?;
+        let active_page_index = envelope
+            .active_page_index
+            .and_then(|index| usize::try_from(index).ok())
+            .ok_or_else(invalid)?;
+        let preserve_authored_geometry = envelope.preserve_authored_geometry.ok_or_else(invalid)?;
+        return Ok(DocumentSyncRequest {
+            document_json: "",
+            base_version: Some(base_version),
+            active_page_index: Some(active_page_index),
+            preserve_authored_geometry: Some(preserve_authored_geometry),
+            metadata_only: true,
+            embedded_editor_meta: None,
+        });
+    }
     let document_json = envelope
         .document_json
         .ok_or_else(|| McpServeError::Validation("Missing document in request body".to_string()))?;

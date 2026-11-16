@@ -9,7 +9,7 @@
 //! cannot reopen and remote state cannot overwrite local edits.
 
 /// Bytes cap for the periodic push channel (see [`SyncGate::periodic_push_allowed`]).
-const PERIODIC_PUSH_CAP_BYTES: usize = 2 * 1024 * 1024;
+const PERIODIC_PUSH_CAP_BYTES: usize = op_util::document_limits::MAX_DOCUMENT_BYTES;
 
 #[derive(Default)]
 pub struct SyncGate {
@@ -171,7 +171,7 @@ impl SyncGate {
         self.conflict
     }
 
-    /// len <= 2 MiB cap.
+    /// Shared whole-document transport budget.
     pub fn periodic_push_allowed(len: usize) -> bool {
         len <= PERIODIC_PUSH_CAP_BYTES
     }
@@ -334,12 +334,19 @@ mod tests {
         g.note_synced(1, 0);
         // edit -> (1,1); periodic tick skipped the push (oversize) — no
         // confirmation, baseline unchanged, gate must stay closed:
-        assert!(!SyncGate::periodic_push_allowed(3 * 1024 * 1024));
+        assert!(!SyncGate::periodic_push_allowed(
+            PERIODIC_PUSH_CAP_BYTES + 1
+        ));
         assert!(!g.pull_allowed((1, 1)));
         // snapshot channel is uncapped; its confirmation advances the baseline:
-        assert!(SyncGate::snapshot_push_allowed(3 * 1024 * 1024));
+        assert!(SyncGate::snapshot_push_allowed(PERIODIC_PUSH_CAP_BYTES + 1));
         g.note_synced(1, 1);
         assert!(g.pull_allowed((1, 1)));
+    }
+
+    #[test]
+    fn full_ui_kit_document_can_push_after_an_edit() {
+        assert!(SyncGate::periodic_push_allowed(55 * 1024 * 1024));
     }
 
     #[test]

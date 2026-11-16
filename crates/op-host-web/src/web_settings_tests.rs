@@ -125,9 +125,7 @@ fn legacy_mcp_flags_drop_gemini_without_shifting_google_antigravity() {
     );
     assert_eq!(
         state.editor_ui.agent_settings.mcp_cli_enabled,
-        [
-            true, false, false, true, false, true, true, false, false, false, false, false, false
-        ]
+        [true, false, false, true, false, true, true, false, false, false, false, false, false]
     );
     let rewritten = writes
         .iter()
@@ -159,11 +157,10 @@ fn separate_settings_and_credential_payloads_round_trip_their_own_fields() {
     profile.provider = ImageGenProvider::Gemini;
     profile.api_key = "image-key".into();
     profile.model = "gemini-image".into();
-    assert!(
-        src.editor_ui
-            .agent_settings
-            .set_active_image_gen_profile(&image_profile_id)
-    );
+    assert!(src
+        .editor_ui
+        .agent_settings
+        .set_active_image_gen_profile(&image_profile_id));
     let settings_json = serde_json::to_string(&to_payload(&src)).expect("settings serialize");
     let credential_json = credentials_json(&src).expect("credentials serialize");
     assert!(!settings_json.contains("acp_agents"));

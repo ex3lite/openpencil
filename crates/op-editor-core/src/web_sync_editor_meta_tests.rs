@@ -108,3 +108,59 @@ fn push_adds_active_page_and_preserve_mode() {
     assert_eq!(value["metadataOnly"], true);
     assert_eq!(value["activePageIndex"], 4);
 }
+
+#[test]
+fn page_switch_envelope_has_no_document_and_preserves_content_baseline() {
+    let body = WebSyncClient::wrap_editor_meta_push(7, 76, true);
+    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(value.get("document").is_none());
+    assert_eq!(value["metadataOnly"], true);
+    assert!(body.len() < 128);
+    let mut client = WebSyncClient::new();
+    client.mark_pushed_with_editor_meta("full-document", 0, true, 7);
+    client.mark_editor_meta_pushed(76, true, 7);
+    assert!(!client.should_push("full-document"));
+    assert!(!client.editor_meta_needs_push(76, true));
+    assert!(!client.wants_version(7));
+}
+
+#[test]
+fn pull_resolves_deduplicated_images_without_leaving_dangling_references() {
+    let payload = format!("data:image/png;base64,{}", "a".repeat(8192));
+    let response = serde_json::json!({
+        "version":1,
+        "document": {"version":"1.0", "children":[
+            {"type":"image","id":"i1","src":"op-image:one","width":10,"height":10},
+            {"type":"image","id":"i2","src":"op-image:one","width":10,"height":10}
+        ], "images":{"one":payload}}
+    })
+    .to_string();
+    let pulled = WebSyncClient::new()
+        .next_document_with_metadata(&response)
+        .unwrap()
+        .unwrap();
+    let value = serde_json::to_value(pulled.document).unwrap();
+    assert_eq!(value["children"][0]["src"], payload);
+    assert_eq!(value["children"][1]["src"], payload);
+}
+
+#[test]
+fn pull_resolves_deduplicated_image_table_references() {
+    let image = format!("data:image/png;base64,{}", "A".repeat(4096));
+    let wire = serde_json::json!({
+        "version": 9,
+        "document": {
+            "version": "1.0", "children": [
+                {"type":"image", "id":"photo", "src":"op-image:shared", "width":10, "height":10}
+            ],
+            "images": {"shared": image}
+        }
+    })
+    .to_string();
+    let loaded = WebSyncClient::new()
+        .next_document_with_metadata(&wire)
+        .expect("image-table sync")
+        .expect("new document");
+    let serialized = serde_json::to_value(&loaded.document).unwrap();
+    assert_eq!(serialized["children"][0]["src"], image);
+}

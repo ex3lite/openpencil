@@ -322,7 +322,12 @@ impl McpLiveServer {
                     outcome.layout_dirty = true;
                     outcome.document_replaced = true;
                 }
-                Ok(UiRequest::UpdateEditorMeta { editor_meta, ack }) => {
+                Ok(UiRequest::UpdateEditorMeta {
+                    mut editor_meta,
+                    ack,
+                }) => {
+                    editor_meta.scenario = state.editor_ui.scenario;
+                    editor_meta.pinned_style_guide = state.editor_ui.pinned_style_guide.clone();
                     op_pen_loader::apply_editor_meta(state, editor_meta);
                     let _ = ack.send(());
                     outcome.repaint = true;

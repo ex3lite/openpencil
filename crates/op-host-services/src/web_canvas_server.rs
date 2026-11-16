@@ -299,7 +299,11 @@ impl WebCanvasState {
         }
         // Taken rather than moved: taking `prepared` is what tells the `Drop`
         // this push reached the install.
-        let editor_meta = push.take_editor_meta();
+        let mut editor_meta = push.take_editor_meta();
+        if push.prepared.is_none() {
+            editor_meta.scenario = self.editor.editor_ui.scenario;
+            editor_meta.pinned_style_guide = self.editor.editor_ui.pinned_style_guide.clone();
+        }
         let Some(prepared) = push.prepared.take() else {
             // Active-page changes do not mutate canonical document content.
             // Apply the scalar pair without replacing the identical document,
@@ -481,28 +485,30 @@ pub fn handle_web_canvas_request(
             ),
         },
         ("POST", "/api/mcp/server") => update_mcp_server_settings(body, state),
-        ("GET", "/api/mcp/document") => match serde_json::to_string(&state.editor.doc) {
-            Ok(doc_json) => WebReply {
-                status: "200 OK",
-                body: format!(
-                    r#"{{"document":{doc_json},"version":{},"activePageIndex":{},"preserveAuthoredGeometry":{},"scenario":{}}}"#,
-                    state.version,
-                    state.editor.ui.active_page_index,
-                    state.editor.editor_ui.preserve_authored_geometry,
-                    // The scene tag rides the same wire as the rest of the
-                    // editor meta: a Slides deck must reach the browser as a
-                    // deck or web preview cannot enter its presentation.
-                    match state.editor.editor_ui.scenario {
-                        Some(scene) => format!("\"{}\"", scene.as_str()),
-                        None => "null".to_string(),
-                    }
-                ),
-            },
-            Err(e) => WebReply {
-                status: "500 Internal Server Error",
-                body: crate::mcp_serve::rest_error_body(&e.to_string()),
-            },
-        },
+        ("GET", "/api/mcp/document") => {
+            match document_push::serialize_transport_document(&state.editor.doc) {
+                Ok(doc_json) => WebReply {
+                    status: "200 OK",
+                    body: format!(
+                        r#"{{"document":{doc_json},"version":{},"activePageIndex":{},"preserveAuthoredGeometry":{},"scenario":{}}}"#,
+                        state.version,
+                        state.editor.ui.active_page_index,
+                        state.editor.editor_ui.preserve_authored_geometry,
+                        // The scene tag rides the same wire as the rest of the
+                        // editor meta: a Slides deck must reach the browser as a
+                        // deck or web preview cannot enter its presentation.
+                        match state.editor.editor_ui.scenario {
+                            Some(scene) => format!("\"{}\"", scene.as_str()),
+                            None => "null".to_string(),
+                        }
+                    ),
+                },
+                Err(e) => WebReply {
+                    status: "500 Internal Server Error",
+                    body: crate::mcp_serve::rest_error_body(&e.to_string()),
+                },
+            }
+        }
         ("POST", "/api/mcp/document") => match state.apply_document_push(body, None) {
             Ok(outcome) if outcome.applied => WebReply {
                 status: "200 OK",

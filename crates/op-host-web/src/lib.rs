@@ -146,9 +146,9 @@ mod web_acp_connect;
 // open, snapshot, save-committed, conflict resolution). DOM wiring only — the
 // wire codec lives in `op_editor_core::bridge_protocol`.
 #[cfg(feature = "canvaskit")]
-mod vscode_bridge;
-#[cfg(feature = "canvaskit")]
 mod codex_bridge;
+#[cfg(feature = "canvaskit")]
+mod vscode_bridge;
 #[cfg(feature = "canvaskit")]
 mod web_storage;
 // Pure web_sys clipboard/download — Ctrl+C/X in inputs + Figma/file paste.
