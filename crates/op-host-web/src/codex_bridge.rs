@@ -13,6 +13,7 @@ use op_editor_core::bridge_protocol::BridgeInbound;
 enum HostMessage {
     Editor(BridgeInbound),
     DisplayMode { fullscreen: bool },
+    FitContent,
 }
 
 impl HostMessage {
@@ -21,6 +22,9 @@ impl HostMessage {
             return Some(Self::Editor(message));
         }
         let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        if value.get("type")?.as_str()? == "op-bridge/fit-content" {
+            return Some(Self::FitContent);
+        }
         if value.get("type")?.as_str()? != "op-bridge/display-mode" {
             return None;
         }
@@ -147,6 +151,13 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
                     context.host_mut().mark_editor_state_dirty();
                     let _ = context.repaint();
                 }
+            }
+        }
+        HostMessage::FitContent => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let (width, height) = context.viewport_size();
+                context.host_mut().fit_content_to_viewport(width, height);
+                let _ = context.repaint();
             }
         }
     });
