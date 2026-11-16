@@ -1,3 +1,4 @@
+import { paintDots } from './op_ck_grid.js';
 // Thin CanvasKit FFI bridge for the Rust web shell.
 //
 // FFI glue only — flat, scalar-argument drawing functions the Rust
@@ -1139,6 +1140,7 @@ export async function opCkInit(canvasId) {
   };
 
   return {
+    fillDots(points, radius, r, g, b, a) { paintDots(CK, canvas, points, radius, [r, g, b, a]); },
     beginFrame() {
       // Discard any leaked save / clip / matrix state from a prior (possibly
       // unbalanced) paint pass, then open a clean frame baseline. This mirrors

@@ -181,6 +181,11 @@ impl RenderBackend for CanvasKitBackend {
     fn fill_oval(&mut self, bounds: Rect, color: Color) {
         ops::fill_oval(&self.ck, bounds, color);
     }
+    fn fill_dots(&mut self, centers: &[Point2D], radius: f32, color: Color) {
+        let points: Vec<f32> = centers.iter().flat_map(|p| [p.x, p.y]).collect();
+        self.ck
+            .fill_dots(&points, radius, color.r, color.g, color.b, color.a);
+    }
     fn stroke_oval(&mut self, bounds: Rect, color: Color, width: f32) {
         ops::stroke_oval(&self.ck, bounds, color, width);
     }

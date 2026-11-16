@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const bridgeUrl = new URL('../src/op_ck_bridge.js', import.meta.url);
-const bridgeSource = await readFile(bridgeUrl, 'utf8');
+const bridgeSource = (await readFile(bridgeUrl, 'utf8')).replace('./op_ck_grid.js', new URL('../src/op_ck_grid.js', import.meta.url).href);
 const bridge = await import(
   `data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`
 );

@@ -89,6 +89,10 @@ cargo build -p op-host-web \
 
 step 4 7 "wasm-bindgen --target web → ${PKG_DIR}/"
 wasm-bindgen --target web --out-dir "${PKG_DIR}" "${TARGET_WASM}" >/dev/null
+# wasm-bindgen stages its declared JS modules, but not their relative imports.
+for bridge in "${PKG_DIR}"/snippets/op-host-web-*/src/op_ck_bridge.js; do
+  cp "${CRATE_DIR}/src/op_ck_grid.js" "$(dirname "${bridge}")/op_ck_grid.js"
+done
 
 step 5 7 "Stage runtime product assets into ${PKG_DIR}/assets/"
 # The wasm bundle no longer embeds the preview JPEGs, template documents, icon

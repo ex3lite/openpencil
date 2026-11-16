@@ -70,6 +70,7 @@ assert(resolved === null,
 
     let mut child = match Command::new("node")
         .args(["--input-type=module"])
+        .current_dir(format!("{}/src", env!("CARGO_MANIFEST_DIR")))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

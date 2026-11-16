@@ -30,6 +30,16 @@ extern "C" {
     pub(super) fn begin_frame(this: &OpCk);
     #[wasm_bindgen(method, js_name = endFrame)]
     pub(super) fn end_frame(this: &OpCk);
+    #[wasm_bindgen(method, js_name = fillDots)]
+    pub(super) fn fill_dots(
+        this: &OpCk,
+        points: &[f32],
+        radius: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    );
     #[wasm_bindgen(method)]
     pub(super) fn clear(this: &OpCk, r: f32, g: f32, b: f32, a: f32);
     #[wasm_bindgen(method, js_name = fillRect)]

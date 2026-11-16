@@ -14,6 +14,7 @@ function createRuntimeFonts(CK) {
   const seen = new Set();
   const provider = CK.TypefaceFontProvider.Make();
   const paragraphs = new Map();
+  const PARAGRAPH_LIMIT = 1024;
   const copyBuffer = (bytes) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   function clearParagraphs() {
     for (const p of paragraphs.values()) p.delete();
@@ -22,7 +23,11 @@ function createRuntimeFonts(CK) {
   function paragraph(entry, text, size, color = [0, 0, 0, 1]) {
     const key = JSON.stringify([entry.key, text, size, color]);
     let p = paragraphs.get(key);
-    if (p) return p;
+    if (p) {
+      paragraphs.delete(key);
+      paragraphs.set(key, p);
+      return p;
+    }
     const style = new CK.ParagraphStyle({
       textStyle: new CK.TextStyle({
         fontFamilies: [entry.face.meta.family], fontSize: size,
@@ -38,7 +43,13 @@ function createRuntimeFonts(CK) {
     builder.delete();
     // A drawText run never wraps; paragraph wrapping is owned by Rust's layout.
     p.layout(1000000);
-    if (paragraphs.size >= 256) clearParagraphs();
+    // A normal page can exceed 256 measured/drawn runs. Clearing the entire
+    // cache there made every repaint reshape the same text from scratch.
+    if (paragraphs.size >= PARAGRAPH_LIMIT) {
+      const oldest = paragraphs.keys().next().value;
+      paragraphs.get(oldest).delete();
+      paragraphs.delete(oldest);
+    }
     paragraphs.set(key, p);
     return p;
   }

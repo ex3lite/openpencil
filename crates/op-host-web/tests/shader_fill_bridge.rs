@@ -15,6 +15,7 @@ fn run_node_module(javascript: &str, context: &str) {
 fn run_node_module_output(javascript: &str, context: &str) -> Option<String> {
     let mut child = match Command::new("node")
         .args(["--input-type=module"])
+        .current_dir(format!("{}/src", env!("CARGO_MANIFEST_DIR")))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

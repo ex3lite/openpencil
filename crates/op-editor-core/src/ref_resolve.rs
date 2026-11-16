@@ -231,6 +231,11 @@ fn expand_ref(
     };
 
     let mut merged = component_map.clone();
+    // A master's board position belongs to its authoring page, not to each
+    // instance. Missing instance coordinates must remain unset so flex parents
+    // can place the instance; explicit root overrides are applied below.
+    merged.remove("x");
+    merged.remove("y");
     // `descendants[ref.target]` carries the instance's TOP-LEVEL
     // overrides (fill / stroke / effects / size, written by the
     // property panel's override router). TS's render flattener never
@@ -507,11 +512,32 @@ fn find_node(doc: &PenDocument, id: &str) -> Option<PenNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PenNodeExt;
 
     fn doc_from(json: &str) -> PenDocument {
         jian_ops_schema::load_str(json)
             .expect("fixture parses")
             .value
+    }
+
+    #[test]
+    fn flow_instances_do_not_inherit_the_masters_board_position() {
+        let doc = doc_from(
+            r#"{"version":"1.0.0","children":[
+          {"type":"frame","id":"master","reusable":true,"x":64,"y":228,"width":190,"height":50},
+          {"type":"frame","id":"row","layout":"horizontal","children":[
+            {"type":"ref","id":"flow","ref":"master"},
+            {"type":"ref","id":"positioned","ref":"master","x":20,"y":30}
+          ]}]}"#,
+        );
+        let resolved = resolve_refs_for_canvas(&doc);
+        let children = resolved.children[1].children().unwrap();
+        assert_eq!(children[0].base().x, None);
+        assert_eq!(children[0].base().y, None);
+        assert_eq!(children[1].base().x, Some(20.0));
+        assert_eq!(children[1].base().y, Some(30.0));
+        assert_eq!(resolved.children[0].base().x, Some(64.0));
+        assert_eq!(resolved.children[0].base().y, Some(228.0));
     }
 
     const DOC_WITH_INSTANCE: &str = r##"{

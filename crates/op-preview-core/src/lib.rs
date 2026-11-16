@@ -179,6 +179,8 @@ mod tests_interaction_state;
 mod tests_motion;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_multi_pointer;
+#[cfg(test)]
+mod tests_openbrush_system;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_page_scroll;
 #[cfg(all(test, not(target_os = "windows")))]
