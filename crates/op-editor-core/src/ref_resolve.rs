@@ -392,6 +392,8 @@ pub(crate) fn materialize_instance(ref_node: &PenNode, component: &PenNode) -> O
     // TS detach (case 2) applies `descendants[node.ref]` onto the
     // source BEFORE the instance's direct props: top-level overrides
     // materialize into the detached tree.
+    merged.remove("x");
+    merged.remove("y");
     apply_top_level_overrides(&mut merged, &ref_map);
     for (key, value) in &ref_map {
         if matches!(
@@ -538,6 +540,10 @@ mod tests {
         assert_eq!(children[1].base().y, Some(30.0));
         assert_eq!(resolved.children[0].base().x, Some(64.0));
         assert_eq!(resolved.children[0].base().y, Some(228.0));
+        let raw_children = doc.children[1].children().unwrap();
+        let detached = materialize_instance(&raw_children[0], &doc.children[0]).unwrap();
+        assert_eq!(detached.base().x, None);
+        assert_eq!(detached.base().y, None);
     }
 
     const DOC_WITH_INSTANCE: &str = r##"{
