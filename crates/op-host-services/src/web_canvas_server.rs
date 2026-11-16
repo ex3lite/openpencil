@@ -76,6 +76,7 @@ impl Drop for ConnGuard {
 /// read/replace it over `/api/mcp/document`.
 pub struct WebCanvasState {
     pub(crate) editor: EditorState,
+    pub(crate) runtime_fonts: crate::runtime_fonts::RuntimeFonts,
     /// Immutable deployment policy for browser-supplied credentials. Public
     /// demo deployments fail closed to browser-only persistence.
     pub(crate) credential_persistence: WebCredentialPersistence,
@@ -88,11 +89,8 @@ pub struct WebCanvasState {
     /// The bound port, reported by `GET /api/mcp/server` (TS `server.get.ts`
     /// parity).
     pub(crate) port: u16,
-    /// Managed-mode per-instance lifecycle token (see
-    /// `ServeWebOptions::managed` / `run_web_canvas`). `None` outside managed
-    /// mode. Ordinary requests are tokenless; `serve_one` consults this only
-    /// for the optional body-authenticated graceful-shutdown compatibility
-    /// path.
+    /// Managed supervisor token: authenticates lifecycle shutdown and new font
+    /// byte registration. Existing ordinary requests remain tokenless.
     pub(crate) managed_token: Option<String>,
     /// Managed-mode `--allow-origin` allowlist. Empty outside managed mode.
     /// Read by `serve_one` (via `cors_origin_for`) to decide which `Origin`
@@ -158,6 +156,7 @@ impl WebCanvasState {
         }
         Self {
             editor,
+            runtime_fonts: crate::runtime_fonts::RuntimeFonts::default(),
             credential_persistence,
             current_path,
             version: 0,
@@ -748,6 +747,7 @@ mod connection;
 mod connection_ai_routes;
 mod doc_routes;
 mod export_routes;
+mod font_routes;
 mod hub_verifier;
 pub mod online_policy;
 mod online_run_loop;

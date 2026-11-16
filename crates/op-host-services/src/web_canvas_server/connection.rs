@@ -227,6 +227,9 @@ pub(super) fn dispatch<S: Read + Write>(
             return Ok(false);
         }
     }
+    if req.path == "/api/mcp/fonts" || req.path.starts_with("/api/mcp/fonts/") {
+        return super::font_routes::serve(stream, req, ctx, cors_origin);
+    }
     // Online account projection. The device-login proxy stays 404 (it drives
     // a process-wide device session), but the shell must be able to learn
     // which account it is showing — without this the identity epoch never

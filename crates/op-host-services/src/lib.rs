@@ -122,3 +122,5 @@ pub mod web_image_generate;
 pub mod web_image_search;
 pub mod web_static;
 pub mod zode_import;
+
+mod runtime_fonts;

@@ -374,9 +374,9 @@ pub struct HttpRequest {
     pub body: String,
     pub host: Option<String>,
     pub origin: Option<String>,
-    /// Legacy `X-OpenPencil-Token` header value, when present. The local and
-    /// managed web-canvas daemons deliberately ignore it; managed lifecycle
-    /// authentication, when used, stays in the `openpencil/shutdown` body.
+    /// Supervisor token header, when present. Managed runtime font registration
+    /// authenticates it; existing ordinary routes remain tokenless. Shutdown
+    /// compatibility authentication stays in the JSON-RPC request body.
     pub token: Option<String>,
     /// `Content-Type` header value, when present. Browser-facing JSON routes
     /// require `application/json` so cross-origin "simple requests" (which
@@ -463,6 +463,21 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
         .iter()
         .find_map(|value| value.parse::<usize>().ok());
     let content_length = declared_length.unwrap_or(0);
+    if path.starts_with("/api/mcp/fonts") {
+        let limit = if method == "POST" && path == "/api/mcp/fonts" {
+            crate::runtime_fonts::MAX_BODY
+        } else if method == "POST" && path == "/api/mcp/fonts/readiness" {
+            64 * 1024
+        } else {
+            0
+        };
+        if content_length > limit {
+            return Err(McpServeError::Framing {
+                status: "413 Payload Too Large",
+                message: "font request body exceeds route limit".into(),
+            });
+        }
+    }
     // Browser-extension snapshot ingress is the large body-carrying scoped
     // route, so it caps its body far below the endpoint-wide `MAX_BODY` — and
     // does it here, before a single body byte is read, so an untokened caller

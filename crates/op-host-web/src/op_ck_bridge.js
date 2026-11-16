@@ -22,6 +22,8 @@ function copyBytes(u8) {
 }
 
 let createWebImageCaches = null;
+let createRuntimeFonts = null;
+export function setRuntimeFontFactory(factory) { createRuntimeFonts = factory; }
 
 const TEXT_SCALE_STEPS_PER_OCTAVE = 4;
 
@@ -317,6 +319,7 @@ export async function opCkInit(canvasId) {
   const el = document.getElementById(canvasId);
   const runtimeEffects = opCkCreateRuntimeEffectCache(CK);
 
+  const runtimeFonts = createRuntimeFonts ? createRuntimeFonts(CK) : null;
   const systemTypefaces = [];
   const systemTypefaceKeys = new Set();
   const systemTypefacesByFamily = new Map();
@@ -493,7 +496,7 @@ export async function opCkInit(canvasId) {
     const name = String(family || '').trim().replace(/["\\]/g, '');
     return name ? `"${name}", ` : '';
   };
-  const browserTextFont = (sz, weight, italic, family) => `${italic ? 'italic ' : ''}${Math.max(100, Math.min(900, Math.round(weight || 400)))} ${Math.max(1, sz)}px ${cssFamilyToken(family)}${browserTextFontStack}`;
+  const browserTextFont = (sz, weight, italic, family) => `${italic ? 'italic ' : ''}${Math.max(100, Math.min(900, Math.round(weight || 400)))} ${Math.max(1, sz)}px ${cssFamilyToken(family)}${runtimeFonts?.families().includes('noto sans') ? '"Noto Sans", ' : ''}${browserTextFontStack}`;
   const shouldUseBrowserTextFallback = (_t, _emojiRun) => Boolean(browserTextCtx);
   // Complex scripts (Arabic and friends — see `op_editor_core::text_script`,
   // which owns the predicate for BOTH hosts). CanvasKit's `canvas.drawText`
@@ -877,8 +880,16 @@ export async function opCkInit(canvasId) {
   };
   // Resolve an explicit imported/system face in authored stack order. Generic
   // candidates intentionally return null and continue through browser text.
-  const familyTypefaceEntry = (family) => {
-    return opCkResolveRegisteredTypeface(family, importedTypefaces, systemTypefacesByFamily, bundledTypefaces);
+  const familyTypefaceEntry = (family, weight = 400, italic = false) => {
+    for (const candidate of opCkParseFontFamilyStack(family)) {
+      const key = normalizedFamily(candidate);
+      if (CSS_GENERIC_FONT_FAMILIES.has(key)) return null;
+      const runtime = runtimeFonts?.resolve(key, weight, italic);
+      if (runtime) return runtime;
+      const known = opCkResolveRegisteredTypeface(candidate, importedTypefaces, systemTypefacesByFamily, bundledTypefaces);
+      if (known) return known;
+    }
+    return null;
   };
   // Shared "typeface + font for (family, sz)" so the family-aware draw and
   // measure paths build the SAME CK.Font and agree to sub-pixel. Cached per
@@ -966,6 +977,10 @@ export async function opCkInit(canvasId) {
   // family-blind path and the uncovered segments of a family-aware run, so the
   // two stay identical. Mirrors `measureTextStyled` advance-for-advance.
   const drawScriptRun = (t, x, y, sz, weight, italic, r, g, b, a) => {
+    const runtime = runtimeFonts?.fallback(t, weight, italic);
+    if (runtime) {
+      return runtime.draw(canvas, t, x, y, sz, [r, g, b, a]);
+    }
     const segs = segments(t);
     if (segs.length === 0) return 0;
     if (allSegmentsUseBrowserTextFallback(segs)) {
@@ -1444,23 +1459,27 @@ export async function opCkInit(canvasId) {
       // keeps the named family where it applies and never renders tofu,
       // matching native. Draw + measure split on the SAME registeredCoverage
       // segments and share drawScriptRun/registeredFamilyFont, so advances agree.
-      const familyEntry = familyTypefaceEntry(family);
+      const familyEntry = familyTypefaceEntry(family, weight, italic);
       const covSegs = familyEntry ? registeredCoverageSegments(familyEntry.key, familyEntry.tf, sz, t) : null;
       if (!covSegs || (covSegs.length === 1 && !covSegs[0].registered)) {
         drawScriptRun(t, x, y, sz, weight, italic, r, g, b, a);
         return;
       }
       const p = fillPaint(r, g, b, a);
-      if (weight >= 600 && isPaintStyle(CK.PaintStyle.StrokeAndFill)) {
+      if (weight >= 600 && familyEntry.source !== 'runtime' && isPaintStyle(CK.PaintStyle.StrokeAndFill)) {
         setPaintStyle(p, CK.PaintStyle.StrokeAndFill);
         p.setStrokeWidth(sz * 0.06);
       }
       let cx = x;
       for (const seg of covSegs) {
         if (seg.registered) {
-          const f = registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic);
-          canvas.drawText(seg.text, cx, y, p, f);
-          cx += runWidth(f, seg.text);
+          if (familyEntry.source === 'runtime') {
+            cx += familyEntry.draw(canvas, seg.text, cx, y, sz, [r, g, b, a]);
+          } else {
+            const f = registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic && !familyEntry.italic);
+            canvas.drawText(seg.text, cx, y, p, f);
+            cx += runWidth(f, seg.text);
+          }
         } else {
           cx += drawScriptRun(seg.text, cx, y, sz, weight, italic, r, g, b, a);
         }
@@ -1468,6 +1487,10 @@ export async function opCkInit(canvasId) {
     },
     drawShapedText(t, family, x, y, sz, weight, italic, r, g, b, a) {
       if (!t) return;
+      if (familyTypefaceEntry(family, weight, italic)?.source === 'runtime') {
+        this.drawText(t, family, x, y, sz, weight, italic, r, g, b, a);
+        return;
+      }
       if (shapedTextUnavailable()) {
         // No 2D context (headless embed / hostile sandbox). The segmented
         // path at least paints glyphs rather than nothing, though it cannot
@@ -1479,6 +1502,9 @@ export async function opCkInit(canvasId) {
     },
     measureShapedText(t, family, sz, weight, italic) {
       if (!t) return 0;
+      if (familyTypefaceEntry(family, weight, italic)?.source === 'runtime') {
+        return this.measureTextFamilyStyled(t, family, sz, weight, italic);
+      }
       // Must mirror `drawShapedText` exactly — measuring on one engine and
       // painting on another is what desyncs wrapping and caret geometry.
       if (shapedTextUnavailable()) {
@@ -1490,7 +1516,8 @@ export async function opCkInit(canvasId) {
       return this.measureTextStyled(t, sz, 400, false);
     },
     textAscent(family, sz, weight) {
-      const familyEntry = familyTypefaceEntry(family);
+      const familyEntry = familyTypefaceEntry(family, weight, false);
+      if (familyEntry?.source === 'runtime') return familyEntry.metrics('M', sz).ascent;
       const font = new CK.Font(familyEntry ? familyEntry.tf : tfFor('M', false), sz);
       let ascent = sz * 0.8;
       if (font.getMetrics) {
@@ -1505,7 +1532,7 @@ export async function opCkInit(canvasId) {
       const firstBreak = String(t || '').search(/[\r\n]/);
       const line = firstBreak < 0 ? String(t || '') : String(t || '').slice(0, firstBreak);
       const sample = line || 'M';
-      const familyEntry = familyTypefaceEntry(family);
+      const familyEntry = familyTypefaceEntry(family, weight, italic);
       const covSegs = familyEntry
         ? registeredCoverageSegments(familyEntry.key, familyEntry.tf, sz, sample)
         : null;
@@ -1536,7 +1563,14 @@ export async function opCkInit(canvasId) {
         if (Number.isFinite(candidateAscent)) ascent = Math.max(ascent, candidateAscent);
         if (Number.isFinite(candidateDescent)) descent = Math.max(descent, candidateDescent);
       };
+      const includeRuntimeMetrics = (entry, text) => {
+        const metrics = entry.metrics(text, sz);
+        ascent = Math.max(ascent, metrics.ascent);
+        descent = Math.max(descent, metrics.descent);
+      };
       const includeFallback = (text) => {
+        const runtime = runtimeFonts?.fallback(text, weight, italic);
+        if (runtime) { includeRuntimeMetrics(runtime, text); return; }
         for (const seg of segments(text)) {
           if (includeBrowserMetrics(seg.text)) continue;
           const font = new CK.Font(tfFor(seg.text, seg.emoji), sz);
@@ -1547,7 +1581,8 @@ export async function opCkInit(canvasId) {
       if (covSegs && covSegs.some((seg) => seg.registered)) {
         for (const seg of covSegs) {
           if (seg.registered) {
-            includeFontMetrics(registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic));
+            if (familyEntry.source === 'runtime') includeRuntimeMetrics(familyEntry, seg.text);
+            else includeFontMetrics(registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic && !familyEntry.italic));
           } else {
             includeFallback(seg.text);
           }
@@ -1563,7 +1598,7 @@ export async function opCkInit(canvasId) {
       return Number.isFinite(baseline) && baseline > 0 ? baseline : sz * 0.8;
     },
     measureTextFamilyStyled(t, family, sz, weight, italic) {
-      const familyEntry = familyTypefaceEntry(family);
+      const familyEntry = familyTypefaceEntry(family, weight, italic);
       const covSegs = familyEntry ? registeredCoverageSegments(familyEntry.key, familyEntry.tf, sz, t) : null;
       if (!covSegs || (covSegs.length === 1 && !covSegs[0].registered)) {
         // No registered family (or it covers nothing): the family-blind
@@ -1573,8 +1608,8 @@ export async function opCkInit(canvasId) {
       let w = 0;
       for (const seg of covSegs) {
         if (seg.registered) {
-          const f = registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic);
-          w += runWidth(f, seg.text);
+          const f = registeredFamilyFont(familyEntry.key, familyEntry.tf, sz, italic && !familyEntry.italic);
+          w += familyEntry.source === 'runtime' ? familyEntry.measure(seg.text, sz) : runWidth(f, seg.text);
         } else {
           w += this.measureTextStyled(seg.text, sz, weight, italic);
         }
@@ -1582,6 +1617,8 @@ export async function opCkInit(canvasId) {
       return w;
     },
     measureTextStyled(t, sz, weight, italic) {
+      const runtime = runtimeFonts?.fallback(t, weight, italic);
+      if (runtime) return runtime.measure(t, sz);
       let w = 0;
       for (const seg of segments(t)) {
         if (shouldUseBrowserTextFallback(seg.text, seg.emoji)) {
@@ -1631,7 +1668,12 @@ export async function opCkInit(canvasId) {
       let descent = 0;
       for (const run of runs) {
         maxSz = Math.max(maxSz, run.sz);
-        if (browserTextCtx) {
+        const runtime = familyTypefaceEntry(run.family, run.weight, run.italic);
+        if (runtime?.source === 'runtime') {
+          const metrics = runtime.metrics('M', run.sz);
+          ascent = Math.max(ascent, metrics.ascent);
+          descent = Math.max(descent, metrics.descent);
+        } else if (browserTextCtx) {
           browserTextCtx.font = browserTextFont(run.sz, run.weight, run.italic, run.family);
           const metrics = browserTextCtx.measureText('M');
           const fontAsc = Number(metrics.fontBoundingBoxAscent);
@@ -1759,6 +1801,11 @@ export async function opCkInit(canvasId) {
       const height = finalLineHeight * lineCount;
 
       return Float32Array.of(width, height, lineCount, baseline);
+    },
+    registerRuntimeFont(bytes, metadata) {
+      const ok = runtimeFonts?.register(bytes, metadata) || false;
+      if (ok) { coverageCache.clear(); clearRegisteredFontCaches(); }
+      return ok;
     },
     registerSystemFont(family, bytes) {
       const key = normalizedFamily(family);

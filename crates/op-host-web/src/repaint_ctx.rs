@@ -41,6 +41,10 @@ pub(crate) trait RepaintContext {
     /// backend so canvas text can shape against it. Returns `true` when the
     /// face was registered. Backends that cannot accept runtime font bytes may
     /// return `false`.
+    fn register_runtime_font(&mut self, bytes: &[u8], metadata: &str) -> bool {
+        let _ = (bytes, metadata);
+        false
+    }
     fn register_system_font(&mut self, family: &str, bytes: &[u8]) -> bool;
     /// Register a user-imported font face so canvas text can shape against it
     /// by family name. Returns `true` when the face was registered; backends

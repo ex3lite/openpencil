@@ -235,6 +235,9 @@ impl crate::repaint_ctx::RepaintContext for CkInner {
     fn viewport_size(&self) -> (f32, f32) {
         self.backend.logical_size()
     }
+    fn register_runtime_font(&mut self, bytes: &[u8], metadata: &str) -> bool {
+        self.backend.ck.register_runtime_font(bytes, metadata)
+    }
     fn register_system_font(&mut self, family: &str, bytes: &[u8]) -> bool {
         self.backend.ck.register_system_font(family, bytes)
     }

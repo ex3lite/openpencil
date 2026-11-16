@@ -132,5 +132,5 @@ pub(super) fn compute_layout(root: &PenNode, out: &mut BTreeMap<String, [f32; 4]
 }
 
 fn layout_measure_backend() -> Rc<dyn MeasureBackend> {
-    LAYOUT_MEASURE_BACKEND.with(Rc::clone)
+    LAYOUT_MEASURE_BACKEND.with(|slot| slot.borrow().clone())
 }

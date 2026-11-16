@@ -592,6 +592,7 @@ impl WidgetHost {
     /// generation instead). So the font paths call this to avoid a stale scene.
     #[cfg(feature = "canvaskit")]
     pub fn invalidate_layout_scene(&mut self) {
+        op_editor_core::runtime_font::invalidate_measurements();
         self.scene_cache.invalidate();
     }
 }

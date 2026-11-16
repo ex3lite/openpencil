@@ -59,6 +59,7 @@ op-acp = { path = "../op-acp" }
 op-i18n = { path = "../op-i18n" }
 # Canonical JSON/HTML string escaping (dependency-free).
 op-util = { path = "../op-util" }
+jian-skia = { path = "../../vendor/jian/crates/jian-skia", default-features = false }
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
 agent = { path = "../../vendor/agent/crates/agent", default-features = false }
 anthropic-agent-sdk = { path = "../../vendor/anthropic-agent-sdk" }

@@ -98,6 +98,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     }
     // Set the OpCk for preview text measurement before any paint.
     host.set_op_ck(backend.op_ck());
+    op_pen_loader::set_layout_measure_backend(Rc::new(super::BrowserMeasure::new(backend.op_ck())));
     host.mark_editor_state_dirty();
     let settings_fingerprint = credential_load.initial_settings_fingerprint(host.editor_state());
     let credential_fingerprint = credential_load.initial_fingerprint(host.editor_state());

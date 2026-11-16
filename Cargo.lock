@@ -4414,6 +4414,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -4658,6 +4659,7 @@ dependencies = [
  "github-copilot-sdk",
  "hmac",
  "jian-ops-schema",
+ "jian-skia",
  "libc",
  "memmap2",
  "op-acp",

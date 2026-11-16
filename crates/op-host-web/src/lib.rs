@@ -215,3 +215,6 @@ pub fn mount(canvas_id: &str) -> Result<WebShell, JsValue> {
 
     Ok(WebShell {})
 }
+
+#[cfg(feature = "canvaskit")]
+mod runtime_fonts_web;

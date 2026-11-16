@@ -15,6 +15,9 @@ extern "C" {
     #[wasm_bindgen(js_name = setImageCacheFactory)]
     pub(super) fn set_image_cache_factory(factory: &js_sys::Function);
 
+    #[wasm_bindgen(js_name = setRuntimeFontFactory)]
+    pub(super) fn set_runtime_font_factory(factory: &js_sys::Function);
+
     /// The bridge object: flat scalar-arg ops over a CanvasKit canvas.
     ///
     /// `Clone` is a JS handle refcount bump, not a canvas copy. Preview's
@@ -524,6 +527,8 @@ extern "C" {
         max_width: f32,
         line_height: f32,
     ) -> js_sys::Float32Array;
+    #[wasm_bindgen(method, js_name = registerRuntimeFont)]
+    pub(super) fn register_runtime_font(this: &OpCk, bytes: &[u8], metadata: &str) -> bool;
     #[wasm_bindgen(method, js_name = registerSystemFont)]
     pub(super) fn register_system_font(this: &OpCk, family: &str, bytes: &[u8]) -> bool;
     /// Register a user-imported font face; the family becomes selectable by
@@ -612,4 +617,10 @@ extern "C" {
 extern "C" {
     #[wasm_bindgen(js_name = webImageCacheFactory)]
     pub(super) fn web_image_cache_factory() -> js_sys::Function;
+}
+
+#[wasm_bindgen(module = "/src/op_ck_runtime_fonts.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = runtimeFontFactory)]
+    pub(super) fn runtime_font_factory() -> js_sys::Function;
 }

@@ -7,7 +7,8 @@ pub(crate) const WEB_ALLOWED_ORIGINS_ENV: &str = "OPENPENCIL_WEB_ALLOWED_ORIGINS
 
 pub(super) fn is_sensitive_browser_post(request: &crate::mcp_serve::HttpRequest) -> bool {
     request.method == "POST"
-        && (request.path == "/api/settings/credentials"
+        && (request.path.starts_with("/api/mcp/fonts")
+            || request.path == "/api/settings/credentials"
             || request.path.starts_with("/api/ai/")
             || request
                 .path

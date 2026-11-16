@@ -106,7 +106,17 @@ thread_local! {
 }
 
 pub(crate) fn drain_font_requests<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
-    if should_query_system_fonts(inner) {
+    if web_sys::window().is_some_and(|window| crate::vscode_bridge::in_iframe(&window)) {
+        // Managed embeds obtain verified font bytes from the supervisor.
+        // Never request OS Local Font Access permission in an iframe.
+        let loaded = inner
+            .try_borrow()
+            .map(|b| b.host().editor_state().editor_ui.system_fonts_loaded)
+            .unwrap_or(true);
+        if !loaded {
+            apply_system_font_families(inner, Vec::new());
+        }
+    } else if should_query_system_fonts(inner) {
         start_system_font_query(inner);
     }
     load_used_system_fonts(inner);
@@ -469,6 +479,7 @@ const MAX_FONT_BYTES: usize = 16 * 1024 * 1024;
 /// otherwise the repaint here re-paints any on-screen text with the newly
 /// available typeface (a one-frame fallback flash is acceptable).
 pub(crate) fn load_imported_fonts_at_mount<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
+    crate::runtime_fonts_web::start(inner);
     let inner = inner.clone();
     crate::font_store_idb::load_all(Box::new(move |fonts| {
         if fonts.is_empty() {

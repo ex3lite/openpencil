@@ -78,7 +78,15 @@ struct TextChildCenterContext {
 }
 
 thread_local! {
-    static LAYOUT_MEASURE_BACKEND: Rc<dyn MeasureBackend> = make_measure_backend();
+    static LAYOUT_MEASURE_BACKEND: std::cell::RefCell<Rc<dyn MeasureBackend>> = std::cell::RefCell::new(make_measure_backend());
+}
+
+/// Install the host's actual text shaper without modifying authored nodes.
+/// Browser hosts call this once CanvasKit is ready; native keeps its default.
+/// Replacing the shaper advances the platform-free measurement generation.
+pub fn set_layout_measure_backend(backend: Rc<dyn MeasureBackend>) {
+    LAYOUT_MEASURE_BACKEND.with(|slot| *slot.borrow_mut() = backend);
+    op_editor_core::runtime_font::invalidate_measurements();
 }
 
 /// Real skia paragraph shaper — native + web-skia builds (`skia-measure`, default).

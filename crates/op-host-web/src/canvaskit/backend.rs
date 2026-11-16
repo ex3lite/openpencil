@@ -722,6 +722,7 @@ pub async fn init_backend(
     logical_w: u32,
     logical_h: u32,
 ) -> Result<CanvasKitBackend, JsValue> {
+    super::bindings::set_runtime_font_factory(&super::bindings::runtime_font_factory());
     let image_cache_factory = web_image_cache_factory();
     set_image_cache_factory(&image_cache_factory);
     let promise = op_ck_init(canvas_id)?;

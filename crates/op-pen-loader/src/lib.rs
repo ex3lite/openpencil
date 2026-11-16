@@ -61,7 +61,7 @@ pub(crate) fn current_font_generation() -> u64 {
 
 #[cfg(not(feature = "skia-measure"))]
 pub(crate) fn current_font_generation() -> u64 {
-    0
+    op_editor_core::runtime_font::generation()
 }
 mod style_payload;
 mod text_style;
@@ -95,7 +95,7 @@ pub use scene_cache::SceneBuildCache;
 // minimally.
 pub use adapter::{
     build_var_table, pen_document_to_payload, pen_document_to_payload_preserving_geometry,
-    root_authored_origin, root_available_size, LoadedDoc,
+    root_authored_origin, root_available_size, set_layout_measure_backend, LoadedDoc,
 };
 pub use editor_meta::{
     apply_editor_meta, apply_editor_meta_or_legacy_fallback, extract_editor_meta,
