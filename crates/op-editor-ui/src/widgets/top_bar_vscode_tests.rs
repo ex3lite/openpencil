@@ -52,3 +52,26 @@ fn vscode_embed_keeps_preview_account_collaboration_and_shared_chrome() {
         assert!(hits.contains(&expect), "missing {expect:?}");
     }
 }
+
+#[test]
+fn codex_embed_has_no_native_chrome_hits_or_tooltips() {
+    let mut bar = TopBar::new("Project").with_traffic_controls(false);
+    bar.embed = op_editor_core::EmbedHost::Codex;
+    bar.account_button_visible = true;
+    bar.collab.visible = true;
+    bar.collab.enabled = true;
+    let rect = Rect::xywh(0.0, 0.0, 1200.0, TOP_BAR_HEIGHT);
+    for x in 0..1200 {
+        assert_eq!(bar.hit_test(rect, Point2D::new(x as f32, 20.0)), None);
+    }
+    for button in [
+        op_editor_core::TopBarButton::ToggleFileMenu,
+        op_editor_core::TopBarButton::OpenImportMenu,
+        op_editor_core::TopBarButton::OpenAgentSettings,
+        op_editor_core::TopBarButton::OpenCollaboration,
+    ] {
+        assert!(bar
+            .button_rect_with_measure(rect, button, |_, _| 10.0)
+            .is_none());
+    }
+}

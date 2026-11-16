@@ -23,7 +23,13 @@ pub(super) fn register_keyboard_listeners(
         add_listener::<KeyboardEvent, _, _>(win_target, "keydown", listeners, move |evt| {
             use op_editor_core::ReorderDirection;
             // In-flight IME composition owns its keystrokes (handled on commit).
-            if evt.is_composing() {
+            // DOM controls own text, Space, arrows and Escape while focused.
+            // Otherwise toolbar navigation would nudge the selected canvas layer.
+            let dom_owned = evt.composed_path().iter().any(|node| {
+                node.dyn_ref::<web_sys::Element>()
+                    .is_some_and(|element| element.has_attribute("data-openbrush-ui"))
+            });
+            if evt.is_composing() || dom_owned {
                 return;
             }
             let Ok(mut b) = inner.try_borrow_mut() else {

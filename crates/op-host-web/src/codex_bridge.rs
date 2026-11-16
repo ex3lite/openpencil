@@ -14,6 +14,8 @@ enum HostMessage {
     Editor(BridgeInbound),
     DisplayMode { fullscreen: bool },
     FitContent,
+    ToggleSidebar,
+    TogglePreview,
 }
 
 impl HostMessage {
@@ -22,6 +24,11 @@ impl HostMessage {
             return Some(Self::Editor(message));
         }
         let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        match value.get("type")?.as_str()? {
+            "op-bridge/toggle-sidebar" => return Some(Self::ToggleSidebar),
+            "op-bridge/toggle-preview" => return Some(Self::TogglePreview),
+            _ => {}
+        }
         if value.get("type")?.as_str()? == "op-bridge/fit-content" {
             return Some(Self::FitContent);
         }
@@ -45,6 +52,7 @@ thread_local! {
     static INBOUND: RefCell<Option<MessageHandler>> = const { RefCell::new(None) };
     static SELECTION: RefCell<Option<SelectionHandler>> = const { RefCell::new(None) };
     static NAME: RefCell<Option<NameHandler>> = const { RefCell::new(None) };
+    static LAST_PREVIEW: RefCell<Option<bool>> = const { RefCell::new(None) };
     static EARLY: RefCell<Vec<HostMessage>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -119,6 +127,21 @@ pub(crate) fn document_replaced() {
     }
 }
 
+pub(crate) fn preview_state(active: bool) {
+    if !self::active() {
+        return;
+    }
+    LAST_PREVIEW.with(|slot| {
+        if *slot.borrow() == Some(active) {
+            return;
+        }
+        *slot.borrow_mut() = Some(active);
+        emit(&format!(
+            r#"{{"type":"op-shell/preview-state","active":{active}}}"#
+        ));
+    });
+}
+
 pub(crate) fn emit(json: &str) {
     let callback = OUTBOUND.with(|slot| slot.borrow().clone());
     if let Some(callback) = callback {
@@ -151,6 +174,20 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
                     context.host_mut().mark_editor_state_dirty();
                     let _ = context.repaint();
                 }
+            }
+        }
+        HostMessage::ToggleSidebar => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                context.host_mut().editor_state_mut().editor_ui.sidebar_open ^= true;
+                context.host_mut().mark_editor_state_dirty();
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::TogglePreview => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let (width, height) = context.viewport_size();
+                context.host_mut().toggle_host_preview(width, height);
+                let _ = context.repaint();
             }
         }
         HostMessage::FitContent => {

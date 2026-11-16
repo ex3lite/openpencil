@@ -479,6 +479,19 @@ impl WidgetHost {
         self.preview_focus(shift)
     }
 
+    /// Toggle the same preview runtime used by the native toolbar.
+    pub fn toggle_host_preview(&mut self, width: f32, height: f32) {
+        if self.is_preview_active() {
+            self.exit_preview(width, height);
+        } else {
+            #[cfg(feature = "canvaskit")]
+            {
+                let op_ck = self.op_ck.clone();
+                let _ = self.enter_preview_from_browser(width, height, op_ck.as_ref());
+            }
+        }
+    }
+
     /// Check if preview is active. Used by keydown handler.
     pub fn is_preview_active(&self) -> bool {
         #[cfg(feature = "canvaskit")]

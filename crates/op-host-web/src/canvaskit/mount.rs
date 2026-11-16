@@ -229,9 +229,18 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     }
     // 3. Only now start the daemon-dependent services — in managed mode the
     //    token is present so their requests carry the auth header.
-    crate::web_credential_sync::start();
-    if let Some(json) = initial_credential_json {
-        crate::web_credential_sync::credential_changed(json);
+    let host_owns_chrome = inner
+        .borrow()
+        .host
+        .editor_state()
+        .editor_ui
+        .embed
+        .host_owns_chrome();
+    if !host_owns_chrome {
+        crate::web_credential_sync::start();
+        if let Some(json) = initial_credential_json {
+            crate::web_credential_sync::credential_changed(json);
+        }
     }
     // Populate the chat model picker from the daemon's `/api/ai/models`
     // catalog (best-effort; async, repaints when the response lands).
@@ -247,12 +256,14 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     // Device-login relay: seed `account_ui_available` + any session the
     // daemon restored (shared with the desktop GUI), then drive login
     // flows through the daemon's `/api/auth/*` proxy.
-    crate::web_auth_sync::start(&inner);
-    // Collaboration relay. Starts here rather than inside the sync-reset
-    // completion because it neither reads nor writes the document — it drives
-    // `editor_ui.collab` only — and the panel should report availability as
-    // soon as the daemon can answer, not one bootstrap later.
-    crate::collab_sync::start(&inner);
+    if !host_owns_chrome {
+        crate::web_auth_sync::start(&inner);
+        // Collaboration relay. Starts here rather than inside the sync-reset
+        // completion because it neither reads nor writes the document — it drives
+        // `editor_ui.collab` only — and the panel should report availability as
+        // soon as the daemon can answer, not one bootstrap later.
+        crate::collab_sync::start(&inner);
+    }
     // 4. Reset the daemon's transient sync document, THEN emit the managed
     //    `ready` reply and start the live-sync ticks. The reset must complete
     //    FIRST for two reasons:

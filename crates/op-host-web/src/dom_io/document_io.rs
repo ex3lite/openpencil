@@ -40,6 +40,19 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
     let Some(action) = action else {
         return;
     };
+    if inner
+        .borrow()
+        .host()
+        .editor_state()
+        .editor_ui
+        .embed
+        .host_owns_chrome()
+    {
+        if matches!(action, FileAction::Save | FileAction::SaveAs) {
+            crate::codex_bridge::emit(r#"{"type":"op-shell/autosave"}"#);
+        }
+        return;
+    }
     match action {
         FileAction::Home => {
             let mut b = inner.borrow_mut();

@@ -36,6 +36,10 @@ pub enum EmbedHost {
 }
 
 impl EmbedHost {
+    pub fn host_owns_chrome(self) -> bool {
+        matches!(self, Self::Codex)
+    }
+
     /// Parse a `window.location.search` value (leading `?` optional).
     pub fn from_query(search: &str) -> Self {
         let trimmed = search.strip_prefix('?').unwrap_or(search);

@@ -363,6 +363,9 @@ impl TopBar {
         mut measure: impl FnMut(&str, f32) -> f32,
     ) -> Option<Rect> {
         use op_editor_core::TopBarButton as B;
+        if self.embed.host_owns_chrome() {
+            return None;
+        }
         let icon_y = top_bar_rect.origin.y + 8.0;
         let right = top_bar_rect.origin.x + top_bar_rect.size.x;
         let rect = match button {

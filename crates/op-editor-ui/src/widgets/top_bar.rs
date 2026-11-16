@@ -408,6 +408,9 @@ impl TopBar {
         point: Point2D,
         git_rect: Rect,
     ) -> Option<TopBarHit> {
+        if self.embed.host_owns_chrome() {
+            return None;
+        }
         if !(rect).contains(point) {
             return None;
         }
@@ -546,6 +549,9 @@ impl Widget for TopBar {
     }
 
     fn paint(&self, cx: &mut PaintCx<'_>, rect: Rect) {
+        if self.embed.host_owns_chrome() {
+            return;
+        }
         // Full composition lives in the `top_bar_paint` sibling (split
         // for the 800-line cap).
         self.paint_chrome(cx, rect);

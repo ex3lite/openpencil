@@ -32,6 +32,7 @@ pub(super) struct CkInner {
 
 impl CkInner {
     pub(super) fn repaint(&mut self) {
+        crate::codex_bridge::preview_state(self.host.is_preview_active());
         if crate::web_asset_fetch::reconcile_pending_locale(
             &mut self.host.editor_state_mut().editor_ui,
         ) {
