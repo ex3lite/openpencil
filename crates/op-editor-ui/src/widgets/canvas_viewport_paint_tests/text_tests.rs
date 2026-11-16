@@ -148,6 +148,34 @@ fn text_node_paint_honors_horizontal_alignment_and_backend_ascent() {
 }
 
 #[test]
+fn wrapping_button_label_paints_with_equal_horizontal_space() {
+    let mut node = SceneNode::leaf("button-label", NodeKind::Text);
+    node.bounds = Rect::xywh(20.0, 13.0, 166.0, 24.0);
+    node.text = Some("Open canvas".to_string());
+    node.font_family = "Inter".to_string();
+    node.font_size = 17.0;
+    node.text_wrap = true;
+    node.text_align = SceneTextAlign::Center;
+    let mut backend = TextCaptureBackend::default();
+    let width = backend.measure_text_weighted("Open canvas", 17.0, 400);
+    paint_text_node(
+        &mut PaintCx {
+            backend: &mut backend,
+        },
+        &node,
+        node.bounds,
+        1.0,
+        &None,
+    );
+    let left = backend.origins[0].x - node.bounds.origin.x;
+    let right = node.bounds.origin.x + node.bounds.size.x - backend.origins[0].x - width;
+    assert!(
+        (left - right).abs() < 0.01,
+        "button label gaps differ: {left} vs {right}"
+    );
+}
+
+#[test]
 fn text_wrap_is_stable_across_canvas_zoom() {
     let mut node = SceneNode::leaf("t", NodeKind::Text);
     node.bounds = Rect::xywh(0.0, 0.0, 100.0, 40.0);

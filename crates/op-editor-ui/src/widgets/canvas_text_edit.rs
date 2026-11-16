@@ -115,7 +115,9 @@ pub fn text_edit_layout(backend: &mut dyn RenderBackend, node: &SceneNode) -> Te
         weight,
         line_h: font_size * line_height,
         letter_spacing,
-        align_width: wrap_width_doc.unwrap_or(node.bounds.size.x),
+        // Extra wrap tolerance may keep a near-fitting word on its line, but
+        // it must not enlarge the authored alignment box or shift labels.
+        align_width: node.bounds.size.x,
         origin: node.bounds.origin,
         text_align: node.text_align,
         lines,
@@ -562,6 +564,25 @@ mod tests {
         // Line width 20 in a 200 box → x starts at 100 + 90.
         assert_eq!(layout.caret_position(&mut b, 0).0, 190.0);
         assert_eq!(layout.offset_at_point(&mut b, Point2D::new(191.0, 55.0)), 0);
+    }
+
+    #[test]
+    fn wrapping_text_aligns_caret_to_authored_box_not_wrap_tolerance() {
+        for (align, expected_x) in [
+            (crate::layout_scene::SceneTextAlign::Center, 190.0),
+            (crate::layout_scene::SceneTextAlign::Right, 280.0),
+        ] {
+            let mut backend = UniformBackend;
+            let mut node = text_node("ab", 200.0);
+            node.text_wrap = true;
+            node.text_align = align;
+            let layout = text_edit_layout(&mut backend, &node);
+            assert_eq!(layout.caret_position(&mut backend, 0).0, expected_x);
+            assert_eq!(
+                layout.offset_at_point(&mut backend, Point2D::new(expected_x + 1.0, 55.0)),
+                0
+            );
+        }
     }
 
     #[test]
