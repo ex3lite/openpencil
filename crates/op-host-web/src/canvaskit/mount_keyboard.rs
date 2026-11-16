@@ -25,11 +25,7 @@ pub(super) fn register_keyboard_listeners(
             // In-flight IME composition owns its keystrokes (handled on commit).
             // DOM controls own text, Space, arrows and Escape while focused.
             // Otherwise toolbar navigation would nudge the selected canvas layer.
-            let dom_owned = evt.composed_path().iter().any(|node| {
-                node.dyn_ref::<web_sys::Element>()
-                    .is_some_and(|element| element.has_attribute("data-openbrush-ui"))
-            });
-            if evt.is_composing() || dom_owned {
+            if evt.is_composing() || crate::codex_bridge::dom_owns_event(evt.as_ref()) {
                 return;
             }
             let Ok(mut b) = inner.try_borrow_mut() else {

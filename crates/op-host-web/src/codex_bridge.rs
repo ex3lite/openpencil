@@ -56,6 +56,14 @@ thread_local! {
     static EARLY: RefCell<Vec<HostMessage>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Host DOM controls own their keyboard and clipboard events.
+pub(crate) fn dom_owns_event(event: &web_sys::Event) -> bool {
+    event.composed_path().iter().any(|node| {
+        node.dyn_ref::<web_sys::Element>()
+            .is_some_and(|element| element.has_attribute("data-openbrush-ui"))
+    })
+}
+
 pub(crate) fn active() -> bool {
     web_sys::window()
         .and_then(|window| window.location().search().ok())

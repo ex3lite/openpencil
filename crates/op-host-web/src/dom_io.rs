@@ -554,6 +554,9 @@ fn handle_paste_event<C: RepaintContext + 'static>(
     inner: &InnerRc<C>,
     evt: &web_sys::ClipboardEvent,
 ) {
+    if crate::codex_bridge::dom_owns_event(evt.as_ref()) {
+        return;
+    }
     let Some(dt) = evt.clipboard_data() else {
         return;
     };
