@@ -38,8 +38,12 @@ impl CkInner {
             self.host.mark_editor_state_dirty();
         }
         let host_owns_chrome = self.host.editor_state().editor_ui.embed.host_owns_chrome();
-        if host_owns_chrome && self.host.editor_state().editor_ui.prompt_center.open {
+        if host_owns_chrome
+            && (self.host.editor_state().editor_ui.prompt_center.open
+                || self.host.editor_state().editor_ui.design_md_panel.open)
+        {
             self.host.editor_state_mut().editor_ui.prompt_center.open = false;
+            self.host.editor_state_mut().editor_ui.design_md_panel.open = false;
             crate::codex_bridge::emit(r#"{"type":"op-shell/library"}"#);
         }
         // Codex uses its project/global library, not the standalone template

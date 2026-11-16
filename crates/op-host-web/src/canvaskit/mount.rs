@@ -138,7 +138,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
         // The CanvasKit backend accepts runtime font bytes, so the browser
         // shell supports user font import — flip the flag the shared picker
         // reads to paint the Imported group + "Import font…" row (#Phase 4).
-        b.host.editor_state_mut().editor_ui.font_import_supported = true;
+        let standalone_file_ui = !b.host.editor_state().editor_ui.embed.host_owns_chrome();
+        b.host.editor_state_mut().editor_ui.font_import_supported = standalone_file_ui;
         // Same for the Styles tab's DESIGN.md import: a hidden `<input
         // type=file>` is a file dialog for this purpose, so the box paints its
         // "choose file" button alongside the paste area rather than offering
@@ -146,7 +147,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
         b.host
             .editor_state_mut()
             .editor_ui
-            .style_import_file_picker_supported = true;
+            .style_import_file_picker_supported = standalone_file_ui;
         // Online / hub-served mode: a `?tenant=` page URL means the hub is
         // serving this editor at its own origin, so its `/mcp-tokens`
         // portal page is reachable. Reveal the "MCP Tokens" row in the
