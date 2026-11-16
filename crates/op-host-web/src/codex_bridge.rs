@@ -9,7 +9,31 @@ use crate::live_sync_glue::SharedSync;
 use crate::repaint_ctx::RepaintContext;
 use op_editor_core::bridge_protocol::BridgeInbound;
 
-type MessageHandler = Rc<dyn Fn(BridgeInbound)>;
+#[derive(Debug, PartialEq)]
+enum HostMessage {
+    Editor(BridgeInbound),
+    DisplayMode { fullscreen: bool },
+}
+
+impl HostMessage {
+    fn parse(raw: &str) -> Option<Self> {
+        if let Some(message) = BridgeInbound::parse(raw) {
+            return Some(Self::Editor(message));
+        }
+        let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        if value.get("type")?.as_str()? != "op-bridge/display-mode" {
+            return None;
+        }
+        let fullscreen = match value.get("mode")?.as_str()? {
+            "inline" => false,
+            "fullscreen" => true,
+            _ => return None,
+        };
+        Some(Self::DisplayMode { fullscreen })
+    }
+}
+
+type MessageHandler = Rc<dyn Fn(HostMessage)>;
 type SelectionHandler = Rc<dyn Fn() -> String>;
 type NameHandler = Rc<dyn Fn(String)>;
 thread_local! {
@@ -17,7 +41,7 @@ thread_local! {
     static INBOUND: RefCell<Option<MessageHandler>> = const { RefCell::new(None) };
     static SELECTION: RefCell<Option<SelectionHandler>> = const { RefCell::new(None) };
     static NAME: RefCell<Option<NameHandler>> = const { RefCell::new(None) };
-    static EARLY: RefCell<Vec<BridgeInbound>> = const { RefCell::new(Vec::new()) };
+    static EARLY: RefCell<Vec<HostMessage>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) fn active() -> bool {
@@ -44,7 +68,7 @@ pub fn codex_host_message(json: String) -> Result<(), JsValue> {
         return Err(JsValue::from_str("Invalid Codex editor message"));
     }
     let message =
-        BridgeInbound::parse(&json).ok_or_else(|| JsValue::from_str("Unknown editor message"))?;
+        HostMessage::parse(&json).ok_or_else(|| JsValue::from_str("Unknown editor message"))?;
     let handler = INBOUND.with(|slot| slot.borrow().clone());
     if let Some(handler) = handler {
         handler(message);
@@ -111,8 +135,20 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
         }))
     });
     let message_inner = inner.clone();
-    let handler: MessageHandler = Rc::new(move |message| {
-        crate::vscode_bridge::route_message(&message_inner, &sync, "codex-mcp-app", message);
+    let handler: MessageHandler = Rc::new(move |message| match message {
+        HostMessage::Editor(message) => {
+            crate::vscode_bridge::route_message(&message_inner, &sync, "codex-mcp-app", message);
+        }
+        HostMessage::DisplayMode { fullscreen } => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let ui = &mut context.host_mut().editor_state_mut().editor_ui;
+                if ui.window_fullscreen != fullscreen {
+                    ui.window_fullscreen = fullscreen;
+                    context.host_mut().mark_editor_state_dirty();
+                    let _ = context.repaint();
+                }
+            }
+        }
     });
     INBOUND.with(|slot| *slot.borrow_mut() = Some(handler.clone()));
     let name_inner = inner.clone();
@@ -131,5 +167,45 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
     });
     for message in EARLY.with(|queue| std::mem::take(&mut *queue.borrow_mut())) {
         handler(message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HostMessage;
+    use op_editor_core::bridge_protocol::BridgeInbound;
+
+    #[test]
+    fn display_mode_accepts_only_the_modes_exposed_by_the_app() {
+        for (mode, fullscreen) in [("inline", false), ("fullscreen", true)] {
+            let raw = format!(r#"{{"type":"op-bridge/display-mode","mode":"{mode}"}}"#);
+            assert_eq!(
+                HostMessage::parse(&raw),
+                Some(HostMessage::DisplayMode { fullscreen })
+            );
+        }
+        for raw in [
+            r#"{"type":"op-bridge/display-mode","mode":"pip"}"#,
+            r#"{"type":"op-bridge/display-mode","mode":"expanded"}"#,
+            r#"{"type":"op-bridge/display-mode","mode":true}"#,
+            r#"{"type":"op-bridge/display-mode"}"#,
+            r#"{"type":"op-shell/display-mode","mode":"fullscreen"}"#,
+            "not json",
+        ] {
+            assert_eq!(HostMessage::parse(raw), None, "{raw}");
+        }
+    }
+
+    #[test]
+    fn display_mode_extension_preserves_the_existing_editor_codec() {
+        assert_eq!(
+            HostMessage::parse(
+                r#"{"type":"op-bridge/snapshot","purpose":"save","requestId":"r1"}"#
+            ),
+            Some(HostMessage::Editor(BridgeInbound::Snapshot {
+                purpose: "save".to_owned(),
+                request_id: "r1".to_owned(),
+            }))
+        );
     }
 }

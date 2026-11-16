@@ -155,18 +155,26 @@ impl CkInner {
     }
 
     pub(super) fn resize_to_window(&mut self, window: &web_sys::Window) -> Result<bool, JsValue> {
-        let css_w = window
+        let mut css_w = window
             .inner_width()?
             .as_f64()
             .unwrap_or_else(|| self.canvas.client_width().max(1) as f64)
             .round()
             .max(1.0) as u32;
-        let css_h = window
+        let mut css_h = window
             .inner_height()?
             .as_f64()
             .unwrap_or_else(|| self.canvas.client_height().max(1) as f64)
             .round()
             .max(1.0) as u32;
+        // Codex owns its surrounding controls; the editor occupies the parent
+        // viewport instead of overwriting the host toolbar and feedback panel.
+        if crate::codex_bridge::active() {
+            if let Some(parent) = self.canvas.parent_element() {
+                css_w = parent.client_width().max(1) as u32;
+                css_h = parent.client_height().max(1) as u32;
+            }
+        }
         let dpr = display_dpr(window.device_pixel_ratio() as f32);
         let dev_w = ((css_w as f32) * dpr).round().max(1.0) as u32;
         let dev_h = ((css_h as f32) * dpr).round().max(1.0) as u32;

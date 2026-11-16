@@ -170,11 +170,11 @@ impl WidgetHost {
                     self.editor_state.editor_ui.git_panel.open ^= true;
                 }
                 TopBarHit::ToggleFullscreen => {
-                    // The web host runs in WASM, so it toggles the browser
-                    // Fullscreen API directly — no runner round-trip and no
-                    // unconsumed intent flag (unlike native, where the host
-                    // can't reach the winit window).
-                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                    // Codex expands the app within its own layout. Browser
+                    // fullscreen would instead change the containing window.
+                    if crate::codex_bridge::active() {
+                        crate::codex_bridge::emit(r#"{"type":"op-shell/display-mode"}"#);
+                    } else if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                         if doc.fullscreen_element().is_some() {
                             doc.exit_fullscreen();
                         } else if let Some(el) = doc.document_element() {
