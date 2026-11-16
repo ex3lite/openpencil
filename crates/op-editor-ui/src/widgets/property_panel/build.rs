@@ -112,6 +112,9 @@ impl PropertyPanel {
     /// millisecond clock through so the focused-input caret can
     /// blink off the same animation timer as the chat input.
     pub fn for_selection_at(state: &EditorState, now_ms: u64) -> Option<Self> {
+        if !state.editor_ui.inspector_open {
+            return None;
+        }
         if let Some(panel) = Self::for_selection_nodes(state, now_ms) {
             return Some(panel);
         }
