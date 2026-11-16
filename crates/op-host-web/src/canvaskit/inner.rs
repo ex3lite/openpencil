@@ -38,7 +38,14 @@ impl CkInner {
         ) {
             self.host.mark_editor_state_dirty();
         }
-        if op_editor_core::resource_library::pump() {
+        let host_owns_chrome = self.host.editor_state().editor_ui.embed.host_owns_chrome();
+        if host_owns_chrome && self.host.editor_state().editor_ui.prompt_center.open {
+            self.host.editor_state_mut().editor_ui.prompt_center.open = false;
+            crate::codex_bridge::emit(r#"{"type":"op-shell/library"}"#);
+        }
+        // Codex uses its project/global library, not the standalone template
+        // catalogue. Avoid eagerly fetching unused template documents/covers.
+        if !host_owns_chrome && op_editor_core::resource_library::pump() {
             self.host.mark_editor_state_dirty();
         }
         self.backend.drain_pending_decodes(2);
@@ -67,11 +74,12 @@ impl CkInner {
         // the sync status below: a corrective edit clears the stale error in
         // the sync state machine here, so the mirror reflects it in the SAME
         // frame instead of leaving the banner up until the next repaint.
-        if crate::web_settings::save_credentials_if_changed(
-            self.host.editor_state(),
-            &mut self.credential_fingerprint,
-        )
-        .is_some()
+        if !self.host.editor_state().editor_ui.embed.host_owns_chrome()
+            && crate::web_settings::save_credentials_if_changed(
+                self.host.editor_state(),
+                &mut self.credential_fingerprint,
+            )
+            .is_some()
         {
             if let Some(json) =
                 crate::web_settings::server_credentials_json(self.host.editor_state())
