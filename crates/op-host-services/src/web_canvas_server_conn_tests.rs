@@ -555,3 +555,6 @@ fn document_free_page_switch_preserves_all_content_and_pinned_metadata() {
     assert!(!state.apply_document_push(&stale, None).unwrap().applied);
     assert_eq!(state.editor.ui.active_page_index, 1);
 }
+
+#[path = "web_canvas_server_managed_edit_tests.rs"]
+mod managed_edit_tests;

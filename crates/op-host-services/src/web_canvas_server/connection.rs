@@ -542,7 +542,12 @@ pub(super) fn dispatch<S: Read + Write>(
                     return false;
                 }
                 let ok = editor.apply(cmd.clone());
-                if ok {
+                // Managed editors preserve the operator's authored document.
+                // Generation-oriented repair passes rewrite unrelated nodes
+                // (including imported status bars and icon geometry), so they
+                // are never an implicit side effect of a precise tool edit.
+                // Explicit generation/finalization tools still apply normally.
+                if ok && ctx.mode != ServeMode::Managed {
                     crate::mcp_serve::run_write_repairs_after_apply(editor);
                 }
                 applied_any |= ok;
