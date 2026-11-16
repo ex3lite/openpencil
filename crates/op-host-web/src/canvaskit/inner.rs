@@ -32,7 +32,6 @@ pub(super) struct CkInner {
 
 impl CkInner {
     pub(super) fn repaint(&mut self) {
-        crate::codex_bridge::preview_state(self.host.is_preview_active());
         if crate::web_asset_fetch::reconcile_pending_locale(
             &mut self.host.editor_state_mut().editor_ui,
         ) {
@@ -149,6 +148,9 @@ impl CkInner {
         if op_editor_ui::image_runtime::has_pending_decodes() {
             crate::repaint_coalescer::request();
         }
+        // Paint may finish an exit transition and tear down the preview.
+        // Report the settled state, not the pre-paint runtime.
+        crate::codex_bridge::preview_state(self.host.is_preview_active());
     }
 
     /// Rebuild the hidden ARIA DOM mirror from a freshly assembled tree.
