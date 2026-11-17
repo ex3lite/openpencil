@@ -46,8 +46,12 @@ fn unobscured_canvas(state: &EditorState, w: f32, h: f32) -> (f32, f32, f32, f32
         let (_, _, cw, ch) = canvas_region(state, w, h);
         return (0.0, 0.0, cw, ch);
     }
-    let toolbar = super::host_canvas_geometry::toolbar_rect_for(state);
-    let left = (toolbar.origin.x + toolbar.size.x + 16.0).min(w);
+    let left = if state.editor_ui.sidebar_open {
+        state.editor_ui.layer_panel_width + 32.0
+    } else {
+        16.0
+    };
+    let left = left.min(w);
     let right = if state.right_rail_visible() {
         super::host_canvas_geometry::property_panel_rect(state, w, h)
             .origin
@@ -56,7 +60,7 @@ fn unobscured_canvas(state: &EditorState, w: f32, h: f32) -> (f32, f32, f32, f32
     } else {
         w - 16.0
     };
-    (left, 88.0, (right - left).max(1.0), (h - 104.0).max(1.0))
+    (left, 88.0, (right - left).max(1.0), (h - 160.0).max(1.0))
 }
 
 pub fn status_bar_zoom(state: &mut EditorState, zoom_in: bool, viewport_w: f32, viewport_h: f32) {

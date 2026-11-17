@@ -25,12 +25,7 @@ impl WidgetHost {
     /// Step the canvas zoom from a StatusBar `[-]` / `[+]` click,
     /// anchored at the canvas-region centre so the visible content
     /// scales in place (≈ ±20 % per click via `Viewport::zoom_at`).
-    pub(in crate::widget_host) fn status_bar_zoom(
-        &mut self,
-        zoom_in: bool,
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
+    pub(crate) fn status_bar_zoom(&mut self, zoom_in: bool, viewport_w: f32, viewport_h: f32) {
         overlay_geometry::status_bar_zoom(&mut self.editor_state, zoom_in, viewport_w, viewport_h);
         self.mark_dirty();
     }

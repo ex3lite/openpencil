@@ -17,6 +17,7 @@ use op_editor_core::editor_ui_state::{EditorUiState, ThemeMode};
 /// Mirrors the old `Document::theme()`.
 pub fn theme_for(ui: &EditorUiState) -> Theme {
     match ui.effective_theme_mode() {
+        ThemeMode::Dark if ui.embed.host_owns_chrome() => Theme::openbrush(),
         ThemeMode::Dark => Theme::dark(),
         ThemeMode::Light => Theme::light(),
     }

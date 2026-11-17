@@ -139,6 +139,40 @@ impl Theme {
         }
     }
 
+    /// Dark editor chrome from the OpenBrush design system.
+    pub const fn openbrush() -> Self {
+        let ink = rgb(0xf0, 0xf1, 0xf3);
+        let surface = rgb(0x1c, 0x1e, 0x22);
+        let raised = rgb(0x25, 0x28, 0x2d);
+        let accent = rgb(0x78, 0x99, 0xff);
+        let hover = rgb(0x30, 0x34, 0x3b);
+        Self {
+            background: surface,
+            foreground: ink,
+            card: surface,
+            card_foreground: ink,
+            popover: surface,
+            popover_foreground: ink,
+            primary: accent,
+            primary_foreground: rgb(0x11, 0x18, 0x20),
+            muted: raised,
+            muted_foreground: rgb(0xad, 0xb1, 0xba),
+            border: rgb(0x35, 0x39, 0x40),
+            accent: hover,
+            accent_foreground: ink,
+            destructive: rgb(0xf1, 0x9a, 0x9a),
+            secondary: raised,
+            secondary_foreground: ink,
+            input: raised,
+            ring: accent,
+            button_hover: hover,
+            row_selected: raised,
+            row_selected_primary: rgb(0x2b, 0x38, 0x5b),
+            canvas_surface: rgb(0x14, 0x16, 0x19),
+            ..Self::dark()
+        }
+    }
+
     /// Light palette stub. Step 4 boots the editor in dark; light is
     /// kept so the TopBar's theme toggle has somewhere to land in
     /// Step 5 without another schema change.

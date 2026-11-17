@@ -4,7 +4,11 @@
 use super::WidgetHost;
 
 impl WidgetHost {
-    pub(in crate::widget_host) fn dispatch_toolbar_action(
+    pub(crate) fn commit_codex_inputs(&mut self) {
+        self.blur_text_inputs_on_blank_press();
+    }
+
+    pub(crate) fn dispatch_toolbar_action(
         &mut self,
         action: op_editor_ui::widgets::ToolbarAction,
     ) -> bool {

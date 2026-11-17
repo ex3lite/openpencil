@@ -482,15 +482,7 @@ pub fn mobile_sheet_close_rect(sheet: Rect) -> Rect {
 /// slots are live), which is why it is a parameter rather than derived.
 pub fn toolbar_rect(state: &EditorState, toolbar_h: f32) -> Rect {
     if state.editor_ui.embed.host_owns_chrome() {
-        let x = if state.editor_ui.sidebar_open {
-            state.editor_ui.layer_panel_width + 32.0
-        } else {
-            16.0
-        };
-        return Rect {
-            origin: Point2D::new(x, 88.0),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
+        return Rect::xywh(-1.0, -1.0, 0.0, 0.0);
     }
     let (canvas_left, canvas_top) = canvas_origin(state);
     Rect {
@@ -531,17 +523,15 @@ pub fn toolbar_rect_for(state: &EditorState) -> Rect {
 /// narrow to float it — the hosts' paint guard and their event-time
 /// hit-test must agree, so both read this one answer.
 pub fn status_bar_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Option<Rect> {
+    if state.editor_ui.embed.host_owns_chrome() {
+        return None;
+    }
     let (canvas_left, canvas_top, canvas_w, canvas_h) =
         canvas_region(state, viewport_w, viewport_h);
     if canvas_w <= STATUS_BAR_WIDTH + STATUS_INSET * 2.0 {
         return None;
     }
-    let canvas_right = canvas_left + canvas_w
-        - if state.editor_ui.embed.host_owns_chrome() && state.right_rail_visible() {
-            state.editor_ui.property_panel_width + 32.0
-        } else {
-            0.0
-        };
+    let canvas_right = canvas_left + canvas_w;
     Some(Rect {
         origin: Point2D::new(
             canvas_right - STATUS_BAR_WIDTH - STATUS_INSET,

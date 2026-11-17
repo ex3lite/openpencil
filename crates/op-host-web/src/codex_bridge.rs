@@ -17,6 +17,9 @@ enum HostMessage {
     ToggleSidebar,
     ToggleInspector,
     TogglePreview,
+    SelectTool(op_editor_core::Tool),
+    Zoom(bool),
+    Toolbar(op_editor_ui::widgets::ToolbarAction),
 }
 
 impl HostMessage {
@@ -26,6 +29,25 @@ impl HostMessage {
         }
         let value: serde_json::Value = serde_json::from_str(raw).ok()?;
         match value.get("type")?.as_str()? {
+            "op-bridge/tool" => {
+                let ident = value.get("tool")?.as_str()?;
+                return op_editor_core::Tool::ALL
+                    .into_iter()
+                    .find(|tool| tool.ident() == ident)
+                    .map(Self::SelectTool);
+            }
+            "op-bridge/zoom" => return Some(Self::Zoom(value.get("in")?.as_bool()?)),
+            "op-bridge/editor-action" => {
+                use op_editor_ui::widgets::ToolbarAction::*;
+                let action = match value.get("action")?.as_str()? {
+                    "undo" => Undo,
+                    "redo" => Redo,
+                    "variables" => ToggleVariablesPanel,
+                    "resources" => ToggleDesignPanel,
+                    _ => return None,
+                };
+                return Some(Self::Toolbar(action));
+            }
             "op-bridge/toggle-inspector" => return Some(Self::ToggleInspector),
             "op-bridge/toggle-sidebar" => return Some(Self::ToggleSidebar),
             "op-bridge/toggle-preview" => return Some(Self::TogglePreview),
@@ -55,6 +77,7 @@ thread_local! {
     static SELECTION: RefCell<Option<SelectionHandler>> = const { RefCell::new(None) };
     static NAME: RefCell<Option<NameHandler>> = const { RefCell::new(None) };
     static LAST_PANELS: RefCell<Option<(bool, bool, bool)>> = const { RefCell::new(None) };
+    static LAST_DOCK: RefCell<Option<(op_editor_core::Tool, i32)>> = const { RefCell::new(None) };
     static LAST_PREVIEW: RefCell<Option<bool>> = const { RefCell::new(None) };
     static EARLY: RefCell<Vec<HostMessage>> = const { RefCell::new(Vec::new()) };
 }
@@ -84,6 +107,7 @@ pub fn codex_on_event(callback: js_sys::Function) -> Result<(), JsValue> {
     OUTBOUND.with(|slot| *slot.borrow_mut() = Some(callback));
     LAST_PANELS.with(|slot| *slot.borrow_mut() = None);
     LAST_PREVIEW.with(|slot| *slot.borrow_mut() = None);
+    LAST_DOCK.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 
@@ -144,6 +168,18 @@ pub(crate) fn panels_state(state: &op_editor_core::EditorState) {
     if !active() {
         return;
     }
+    let dock = (state.tool, (state.viewport.zoom * 100.0).round() as i32);
+    LAST_DOCK.with(|slot| {
+        if *slot.borrow() == Some(dock) {
+            return;
+        }
+        *slot.borrow_mut() = Some(dock);
+        emit(&format!(
+            r#"{{"type":"op-shell/dock-state","tool":"{}","zoom":{}}}"#,
+            dock.0.ident(),
+            dock.1
+        ));
+    });
     let next = (
         state.editor_ui.sidebar_open,
         state.editor_ui.inspector_open,
@@ -227,6 +263,27 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
             if let Ok(mut context) = message_inner.try_borrow_mut() {
                 let (width, height) = context.viewport_size();
                 context.host_mut().toggle_host_preview(width, height);
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::SelectTool(tool) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                context.host_mut().commit_codex_inputs();
+                context.host_mut().apply_set_tool(tool);
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::Zoom(zoom_in) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let (width, height) = context.viewport_size();
+                context.host_mut().status_bar_zoom(zoom_in, width, height);
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::Toolbar(action) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                context.host_mut().commit_codex_inputs();
+                context.host_mut().dispatch_toolbar_action(action);
                 let _ = context.repaint();
             }
         }

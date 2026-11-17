@@ -224,18 +224,15 @@ fn codex_panels_float_above_one_full_canvas_with_symmetric_gaps() {
 }
 
 #[test]
-fn codex_fit_region_and_shape_picker_clear_floating_panels() {
+fn codex_fit_region_clears_floating_panels_and_host_dock() {
     use crate::widgets::host_canvas_geometry as g;
     let mut state = EditorState::default();
     state.editor_ui.embed = op_editor_core::EmbedHost::Codex;
     state.editor_ui.sidebar_open = true;
-    let toolbar = g::toolbar_rect_for(&state);
     let (x, y, w, h) = unobscured_canvas(&state, VIEWPORT_W, VIEWPORT_H);
-    assert_eq!(x, toolbar.origin.x + toolbar.size.x + 16.0);
+    assert_eq!(x, state.editor_ui.layer_panel_width + 32.0);
     assert_eq!(y, 88.0);
     assert!(w > 0.0);
-    assert_eq!(h, VIEWPORT_H - 104.0);
-    let picker = shape_picker_rect(&state, VIEWPORT_W, VIEWPORT_H);
-    assert!(picker.origin.x >= toolbar.origin.x + toolbar.size.x);
-    assert!(picker.origin.y >= toolbar.origin.y);
+    assert_eq!(h, VIEWPORT_H - 160.0);
+    assert!(g::status_bar_rect(&state, VIEWPORT_W, VIEWPORT_H).is_none());
 }
