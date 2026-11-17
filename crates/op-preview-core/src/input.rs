@@ -527,8 +527,8 @@ impl PreviewSession {
 
     /// The (scene rect, runtime rect) pair of the deepest visible scene
     /// node containing the point that also has a runtime layout rect.
-    /// Children win over parents; later siblings (painted on top) win
-    /// over earlier ones.
+    /// Children win over parents; first siblings are painted on top
+    /// by the design renderer and must win over later ones.
     fn deepest_mapped_rects(&self, x: f32, y: f32) -> Option<(Rect, Rect)> {
         self.deepest_mapped_hit(x, y)
             .map(|(scene, runtime, _)| (scene, runtime))
@@ -540,7 +540,7 @@ impl PreviewSession {
     pub(crate) fn deepest_mapped_hit(&self, x: f32, y: f32) -> Option<(Rect, Rect, String)> {
         let scene = self.overlay_runtime_state(&self.scene);
         let page = scene.active_page()?;
-        for node in page.children.iter().rev() {
+        for node in page.children.iter() {
             if let Some(hit) = self.deepest_mapped_in(node, x, y) {
                 return Some(hit);
             }
@@ -561,7 +561,7 @@ impl PreviewSession {
         {
             return None;
         }
-        for child in self.mapped_children(node).iter().rev() {
+        for child in self.mapped_children(node).iter() {
             if let Some(hit) = self.deepest_mapped_in(child, x, y) {
                 return Some(hit);
             }

@@ -198,3 +198,44 @@ fn a_closed_prompt_center_has_no_rect() {
     state.editor_ui.prompt_center.open = false;
     assert!(prompt_center_panel_rect(&state, VIEWPORT_W, VIEWPORT_H).is_none());
 }
+
+#[test]
+fn codex_panels_float_above_one_full_canvas_with_symmetric_gaps() {
+    use crate::widgets::host_canvas_geometry as g;
+    let mut state = EditorState::default();
+    state.editor_ui.embed = op_editor_core::EmbedHost::Codex;
+    let left = g::layer_panel_rect(&state, 900.0);
+    let right = g::property_panel_rect(&state, 1600.0, 900.0);
+    assert_eq!(left.origin, Point2D::new(16.0, 88.0));
+    assert_eq!(right.origin.y, 88.0);
+    assert_eq!(900.0 - left.origin.y - left.size.y, 16.0);
+    assert_eq!(1600.0 - right.origin.x - right.size.x, 16.0);
+    assert_eq!(
+        g::canvas_region(&state, 1600.0, 900.0),
+        (0.0, 0.0, 1600.0, 900.0)
+    );
+    assert_eq!(
+        g::canvas_doc_point_unclamped(&state, 10.0, 20.0),
+        Point2D::new(
+            (10.0 - state.viewport.pan_x) / state.viewport.zoom,
+            (20.0 - state.viewport.pan_y) / state.viewport.zoom
+        )
+    );
+}
+
+#[test]
+fn codex_fit_region_and_shape_picker_clear_floating_panels() {
+    use crate::widgets::host_canvas_geometry as g;
+    let mut state = EditorState::default();
+    state.editor_ui.embed = op_editor_core::EmbedHost::Codex;
+    state.editor_ui.sidebar_open = true;
+    let toolbar = g::toolbar_rect_for(&state);
+    let (x, y, w, h) = unobscured_canvas(&state, VIEWPORT_W, VIEWPORT_H);
+    assert_eq!(x, toolbar.origin.x + toolbar.size.x + 16.0);
+    assert_eq!(y, 88.0);
+    assert!(w > 0.0);
+    assert_eq!(h, VIEWPORT_H - 104.0);
+    let picker = shape_picker_rect(&state, VIEWPORT_W, VIEWPORT_H);
+    assert!(picker.origin.x >= toolbar.origin.x + toolbar.size.x);
+    assert!(picker.origin.y >= toolbar.origin.y);
+}

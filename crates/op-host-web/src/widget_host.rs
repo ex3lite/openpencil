@@ -36,7 +36,6 @@
 //! in this file (per spec §1.4). Phase B4 boundary check enforces.
 
 use op_editor_ui::widgets::host_frame_bookkeeping as bookkeeping;
-use op_editor_ui::widgets::TOP_BAR_HEIGHT;
 use op_editor_ui::{Point2D, Rect, Theme};
 
 mod a11y_bridge;

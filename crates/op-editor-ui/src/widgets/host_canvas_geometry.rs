@@ -280,6 +280,9 @@ pub fn pinned_chat(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Opt
 /// which is the LEFT PANEL's edge (`layer_panel_width`, 0 when the
 /// panel is closed) — below the workspace header + toolbar.
 pub fn canvas_origin(state: &EditorState) -> (f32, f32) {
+    if state.editor_ui.embed.host_owns_chrome() {
+        return (0.0, 0.0);
+    }
     if workspace_docked(state) {
         let dock_x = if state.editor_ui.sidebar_open {
             state.editor_ui.layer_panel_width
@@ -320,6 +323,9 @@ pub fn canvas_region(
     viewport_w: f32,
     viewport_h: f32,
 ) -> (f32, f32, f32, f32) {
+    if state.editor_ui.embed.host_owns_chrome() {
+        return (0.0, 0.0, viewport_w.max(0.0), viewport_h.max(0.0));
+    }
     let (canvas_left, canvas_top) = canvas_origin(state);
     if workspace_docked(state) {
         let workspace = &state.editor_ui.workspace;
@@ -367,6 +373,15 @@ pub fn canvas_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rec
 /// Left rail. Callers gate on `editor_ui.sidebar_open` themselves — this
 /// returns the rect the panel WOULD occupy.
 pub fn layer_panel_rect(state: &EditorState, viewport_h: f32) -> Rect {
+    if state.editor_ui.embed.host_owns_chrome() {
+        return Rect {
+            origin: Point2D::new(16.0, 88.0),
+            size: Point2D::new(
+                state.editor_ui.layer_panel_width,
+                (viewport_h - 104.0).max(0.0),
+            ),
+        };
+    }
     if state.editor_ui.medium_layout() {
         let top = touch_app_bar_height(state) + 8.0;
         let height = (viewport_h - top - TABLET_PANEL_INSET).max(0.0);
@@ -397,6 +412,15 @@ pub fn layer_panel_rect(state: &EditorState, viewport_h: f32) -> Rect {
 /// viewport height, anchored to the bottom edge.
 pub fn property_panel_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rect {
     let width = state.editor_ui.property_panel_width;
+    if state.editor_ui.embed.host_owns_chrome() {
+        return Rect {
+            origin: Point2D::new((viewport_w - width - 16.0).max(16.0), 88.0),
+            size: Point2D::new(
+                width.min((viewport_w - 32.0).max(0.0)),
+                (viewport_h - 104.0).max(0.0),
+            ),
+        };
+    }
     if state.editor_ui.compact_layout() {
         let max_h = (viewport_h - touch_app_bar_height(state)).max(0.0);
         let min_h = 280.0_f32.min(max_h);
@@ -457,6 +481,17 @@ pub fn mobile_sheet_close_rect(sheet: Rect) -> Rect {
 /// comes from the widget's own layout pass (it depends on how many tool
 /// slots are live), which is why it is a parameter rather than derived.
 pub fn toolbar_rect(state: &EditorState, toolbar_h: f32) -> Rect {
+    if state.editor_ui.embed.host_owns_chrome() {
+        let x = if state.editor_ui.sidebar_open {
+            state.editor_ui.layer_panel_width + 32.0
+        } else {
+            16.0
+        };
+        return Rect {
+            origin: Point2D::new(x, 88.0),
+            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
+        };
+    }
     let (canvas_left, canvas_top) = canvas_origin(state);
     Rect {
         origin: Point2D::new(canvas_left + TOOLBAR_INSET_X, canvas_top + TOOLBAR_INSET_Y),
@@ -501,7 +536,12 @@ pub fn status_bar_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) ->
     if canvas_w <= STATUS_BAR_WIDTH + STATUS_INSET * 2.0 {
         return None;
     }
-    let canvas_right = canvas_left + canvas_w;
+    let canvas_right = canvas_left + canvas_w
+        - if state.editor_ui.embed.host_owns_chrome() && state.right_rail_visible() {
+            state.editor_ui.property_panel_width + 32.0
+        } else {
+            0.0
+        };
     Some(Rect {
         origin: Point2D::new(
             canvas_right - STATUS_BAR_WIDTH - STATUS_INSET,

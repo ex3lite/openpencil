@@ -12,36 +12,32 @@ impl WidgetHost {
     /// Returns true if hover state changed (caller should
     /// repaint). Mirrors the native host.
     pub fn update_layer_hover(&mut self, x: f32, y: f32, viewport_h: f32) -> bool {
-        use op_editor_ui::widgets::{LayerPanelHit, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::LayerPanelHit;
         let sidebar_open = self.editor_state.editor_ui.sidebar_open;
-        let panel_w = self.editor_state.editor_ui.layer_panel_width;
+        let panel_rect = self.layer_panel_rect(viewport_h);
         let blocked_by_overlay = self
             .chat_model_picker_rect(self.last_viewport_w, viewport_h)
             .is_some()
             || self.over_topmost_panel(x, y, self.last_viewport_w, viewport_h)
             || self.over_dropdown_overlay(x, y, self.last_viewport_w, viewport_h);
-        let (new_layer, new_page) = if sidebar_open
-            && !blocked_by_overlay
-            && y >= TOP_BAR_HEIGHT
-            && x >= 0.0
-            && x <= panel_w
-        {
-            self.refresh_layout_scene();
-            let layer_rect = self.layer_panel_rect(viewport_h);
-            let panel = self.layer_panel();
-            match panel.hit_test(layer_rect, Point2D::new(x, y)) {
-                Some(LayerPanelHit::Layer(id))
-                | Some(LayerPanelHit::ToggleHidden(id))
-                | Some(LayerPanelHit::ToggleLocked(id))
-                | Some(LayerPanelHit::ToggleCollapsed(id)) => (Some(id), None),
-                Some(LayerPanelHit::Page(idx)) | Some(LayerPanelHit::DeletePage(idx)) => {
-                    (None, Some(idx))
+        let (new_layer, new_page) =
+            if sidebar_open && !blocked_by_overlay && panel_rect.contains(Point2D::new(x, y)) {
+                self.refresh_layout_scene();
+                let layer_rect = self.layer_panel_rect(viewport_h);
+                let panel = self.layer_panel();
+                match panel.hit_test(layer_rect, Point2D::new(x, y)) {
+                    Some(LayerPanelHit::Layer(id))
+                    | Some(LayerPanelHit::ToggleHidden(id))
+                    | Some(LayerPanelHit::ToggleLocked(id))
+                    | Some(LayerPanelHit::ToggleCollapsed(id)) => (Some(id), None),
+                    Some(LayerPanelHit::Page(idx)) | Some(LayerPanelHit::DeletePage(idx)) => {
+                        (None, Some(idx))
+                    }
+                    _ => (None, None),
                 }
-                _ => (None, None),
-            }
-        } else {
-            (None, None)
-        };
+            } else {
+                (None, None)
+            };
         // shell-core hit-test returns shell-core `NodeId`s; translate
         // to op-editor-core ids for storage on `editor_ui`.
         let new_layer_ec = new_layer.clone();

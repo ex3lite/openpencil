@@ -482,6 +482,7 @@ impl PreviewSession {
         let mut runtime = Runtime::new_from_document(loaded.value)
             .map_err(|e| PreviewEnterError::BuildRuntime(e.to_string()))?;
         runtime.set_action_observer(Rc::new(debug.trace.clone()));
+        runtime.front_to_back_hit_test = true;
         binding_overlay.set_runtime_document(
             runtime
                 .document

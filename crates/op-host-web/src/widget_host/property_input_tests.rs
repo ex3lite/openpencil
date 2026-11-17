@@ -5,8 +5,8 @@ use jian_ops_schema::variable::{VariableKind, VariableScalar};
 use op_editor_core::editor_ui_state::EffectParamFocus;
 use op_editor_core::ui_draft::PropertyFocus;
 use op_editor_core::{own_bounds, EffectField, NodeId, PropertyTab, Tool};
-use op_editor_ui::widgets::{PropertyPanel, PropertyPanelAction, Toolbar, TOP_BAR_HEIGHT};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::widgets::{PropertyPanel, PropertyPanelAction, Toolbar};
+use op_editor_ui::Point2D;
 
 const W: f32 = 1280.0;
 const H: f32 = 900.0;
@@ -58,11 +58,8 @@ fn web_move_fill_action_dispatches_as_one_undoable_edit() {
 fn point_for_property_focus(host: &WidgetHost, want: PropertyFocus) -> (f32, f32) {
     let panel = PropertyPanel::for_selection(&host.editor_state)
         .expect("fixture selection shows property panel");
-    let pw = host.editor_state.editor_ui.property_panel_width;
-    let rect = Rect {
-        origin: Point2D::new(W - pw, TOP_BAR_HEIGHT),
-        size: Point2D::new(pw, H - TOP_BAR_HEIGHT),
-    };
+    let rect =
+        op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(&host.editor_state, W, H);
     let mut y = rect.origin.y + 2.0;
     while y < rect.origin.y + rect.size.y {
         let mut x = rect.origin.x + 2.0;
@@ -83,11 +80,8 @@ fn point_for_property_action(
 ) -> (f32, f32) {
     let panel = PropertyPanel::for_selection(&host.editor_state)
         .expect("fixture selection shows property panel");
-    let pw = host.editor_state.editor_ui.property_panel_width;
-    let rect = Rect {
-        origin: Point2D::new(W - pw, TOP_BAR_HEIGHT),
-        size: Point2D::new(pw, H - TOP_BAR_HEIGHT),
-    };
+    let rect =
+        op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(&host.editor_state, W, H);
     let mut y = rect.origin.y + 2.0;
     while y < rect.origin.y + rect.size.y {
         let mut x = rect.origin.x + 2.0;
@@ -567,4 +561,31 @@ fn web_property_escape_clears_text_input_state() {
 
     assert!(host.editor_state.ui.property_focus.is_none());
     assert!(host.editor_state.ui.property_input.text().is_empty());
+}
+
+#[test]
+fn codex_floating_inspector_press_and_scroll_follow_painted_rect() {
+    let mut host = WidgetHost::new();
+    seed(
+        &mut host,
+        r##"{"version":"1.0.0","children":[{"type":"rectangle","id":"r","width":180,"height":120,"fill":[{"type":"solid","color":"#123456"}]}]}"##,
+    );
+    host.editor_state.editor_ui.embed = op_editor_core::EmbedHost::Codex;
+    host.editor_state.set_single_selection(NodeId::new("r"));
+    host.last_viewport_w = W;
+    host.last_viewport_h = H;
+    let (x, y) = point_for_property_focus(&host, PropertyFocus::SizeW);
+    assert!(host.apply_press(x, y, W, H));
+    assert_eq!(
+        host.editor_state.ui.property_focus,
+        Some(PropertyFocus::SizeW)
+    );
+    assert!(
+        !host.try_scroll_property_panel_2d(W - 8.0, 400.0, 0.0, -40.0, W, H),
+        "outside gutter belongs to canvas"
+    );
+    assert!(
+        host.try_scroll_property_panel_2d(W - 40.0, 400.0, 0.0, -40.0, W, H),
+        "inside floating inspector owns scroll"
+    );
 }

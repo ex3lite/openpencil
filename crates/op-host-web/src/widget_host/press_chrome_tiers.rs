@@ -10,7 +10,7 @@ use super::press_ctx::PressCtx;
 use super::WidgetHost;
 use op_editor_ui::widgets::press_flow::{self, TopBarPress};
 use op_editor_ui::widgets::{PropertyPanel, TopBarHit, TOP_BAR_HEIGHT};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::Point2D;
 
 impl WidgetHost {
     /// `None` — no rail overlay claimed the press.
@@ -27,16 +27,12 @@ impl WidgetHost {
         // refusal, while an outside press still commits and closes the popup.
         if self.editor_state.editor_ui.image_fill_popover_open {
             if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        viewport_width - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
+                let property_rect =
+                    op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
+                        &self.editor_state,
+                        viewport_width,
+                        viewport_height,
+                    );
                 let point = Point2D::new(x, y);
                 if panel.image_fill_popover_contains(property_rect, point) {
                     if let Some(focus) = panel.image_fill_popover_input_at(property_rect, point) {

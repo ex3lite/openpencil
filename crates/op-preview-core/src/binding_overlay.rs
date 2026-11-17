@@ -447,9 +447,10 @@ impl BindingOverlay {
                 translate_for_scroll(child, -values.offset, &inner.pinned_nodes);
             }
         }
+        // First siblings paint on top in the design scene.
         node.children.sort_by_key(|child| {
-            inner.pinned_nodes.contains(&child.id)
-                || sticky.is_some_and(|ids| ids.contains(&child.id))
+            !(inner.pinned_nodes.contains(&child.id)
+                || sticky.is_some_and(|ids| ids.contains(&child.id)))
         });
     }
 }

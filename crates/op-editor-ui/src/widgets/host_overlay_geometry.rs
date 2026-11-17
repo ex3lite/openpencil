@@ -17,9 +17,7 @@
 use op_editor_core::EditorState;
 
 use crate::layout_scene::LayoutScene;
-use crate::widgets::host_canvas_geometry::{
-    canvas_rect, canvas_region, TOOLBAR_INSET_X, TOOLBAR_INSET_Y,
-};
+use crate::widgets::host_canvas_geometry::{canvas_rect, canvas_region};
 use crate::widgets::{
     ExportQuickMenu, ImportMenu, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar, Widget,
     COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W,
@@ -43,6 +41,24 @@ pub fn top_bar_rect(viewport_w: f32) -> Rect {
 /// at the canvas-region centre so the visible content scales in place.
 /// `zoom_in` picks the sign; the magnitude maps to ≈ ±20 % per click
 /// through `Viewport::zoom_at`.
+fn unobscured_canvas(state: &EditorState, w: f32, h: f32) -> (f32, f32, f32, f32) {
+    if !state.editor_ui.embed.host_owns_chrome() {
+        let (_, _, cw, ch) = canvas_region(state, w, h);
+        return (0.0, 0.0, cw, ch);
+    }
+    let toolbar = super::host_canvas_geometry::toolbar_rect_for(state);
+    let left = (toolbar.origin.x + toolbar.size.x + 16.0).min(w);
+    let right = if state.right_rail_visible() {
+        super::host_canvas_geometry::property_panel_rect(state, w, h)
+            .origin
+            .x
+            - 16.0
+    } else {
+        w - 16.0
+    };
+    (left, 88.0, (right - left).max(1.0), (h - 104.0).max(1.0))
+}
+
 pub fn status_bar_zoom(state: &mut EditorState, zoom_in: bool, viewport_w: f32, viewport_h: f32) {
     // `zoom_at`'s factor is `exp(delta * 0.0015)`; ±120 ≈ ±20 %.
     const STEP: f32 = 120.0;
@@ -50,8 +66,8 @@ pub fn status_bar_zoom(state: &mut EditorState, zoom_in: bool, viewport_w: f32, 
     // call feeds it `window_pt - canvas_origin`), so the anchor is the
     // canvas-region centre relative to the canvas origin — NOT the
     // window-space centre.
-    let (_cx0, _cy0, cw, ch) = canvas_region(state, viewport_w, viewport_h);
-    let center = Point2D::new(cw / 2.0, ch / 2.0);
+    let (x, y, cw, ch) = unobscured_canvas(state, viewport_w, viewport_h);
+    let center = Point2D::new(x + cw / 2.0, y + ch / 2.0);
     state
         .viewport
         .zoom_at(center, if zoom_in { STEP } else { -STEP });
@@ -62,10 +78,12 @@ pub fn status_bar_zoom(state: &mut EditorState, zoom_in: bool, viewport_w: f32, 
 /// Callers refresh the scene first and `mark_dirty` after.
 pub fn zoom_to_fit(state: &mut EditorState, scene: &LayoutScene, viewport_w: f32, viewport_h: f32) {
     if let Some(content) = scene.content_bounds() {
-        let (_l, _t, canvas_w, canvas_h) = canvas_region(state, viewport_w, viewport_h);
+        let (left, top, canvas_w, canvas_h) = unobscured_canvas(state, viewport_w, viewport_h);
         state
             .viewport
             .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
+        state.viewport.pan_x += left;
+        state.viewport.pan_y += top;
     }
 }
 
@@ -90,11 +108,13 @@ pub fn zoom_to_fit_node(
     else {
         return false;
     };
-    let (_l, _t, canvas_w, canvas_h) = canvas_region(state, viewport_w, viewport_h);
+    let (left, top, canvas_w, canvas_h) = unobscured_canvas(state, viewport_w, viewport_h);
     let before = state.viewport;
     state
         .viewport
         .fit_to_with_max_zoom(bounds, canvas_w, canvas_h, 48.0, 1.0);
+    state.viewport.pan_x += left;
+    state.viewport.pan_y += top;
     state.viewport != before
 }
 
@@ -125,10 +145,8 @@ pub fn shape_picker_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) 
     }
     let (cx0, _cy, cw, _ch) = canvas_region(state, viewport_w, viewport_h);
     let toolbar = Toolbar::for_editor(state);
-    let toolbar_rect = Rect {
-        origin: Point2D::new(cx0 + TOOLBAR_INSET_X, TOP_BAR_HEIGHT + TOOLBAR_INSET_Y),
-        size: Point2D::new(TOOLBAR_WIDTH, toolbar_height(&toolbar, 1.0)),
-    };
+    let toolbar_rect =
+        super::host_canvas_geometry::toolbar_rect(state, toolbar_height(&toolbar, 1.0));
     let slot = toolbar
         .shape_slot_rect(toolbar_rect)
         .unwrap_or(toolbar_rect);

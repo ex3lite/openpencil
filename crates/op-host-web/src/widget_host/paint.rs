@@ -13,7 +13,7 @@ use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::variables_panel::VariablesPanel;
 use op_editor_ui::widgets::{
     AIChatPlaceholder, CanvasViewport, LayerPanel, LayoutCx, LocalePicker, PaintCx, PropertyPanel,
-    ShapePicker, StatusBar, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    ShapePicker, StatusBar, Toolbar, Widget, TOOLBAR_WIDTH,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
@@ -188,6 +188,103 @@ impl WidgetHost {
             top_bar.paint(&mut cx, top_bar_rect);
         }
 
+        let (canvas_left, canvas_y, canvas_w, canvas_h) =
+            self.canvas_region(viewport_width, viewport_height);
+        let canvas_rect = Rect {
+            origin: Point2D::new(canvas_left, canvas_y),
+            size: Point2D::new(canvas_w, canvas_h),
+        };
+        if canvas_w > 0.0 && canvas_h > 0.0 {
+            // Check if preview mode is active and we have a session
+            #[cfg(feature = "canvaskit")]
+            if self.editor_state.editor_ui.preview.mode && self.preview.is_some() {
+                // PREVIEW PAINT path. Clear first: neither presentation
+                // necessarily covers the whole canvas rect, and the previous
+                // frame's design content must not show through around it.
+                backend.fill_rect(canvas_rect, self.theme.canvas_surface);
+
+                // Slideshow presentation paints the board letterboxed in the full viewport.
+                if self.preview_slideshow_active() {
+                    let viewport_rect = Rect {
+                        origin: Point2D::new(0.0, 0.0),
+                        size: Point2D::new(viewport_width, viewport_height),
+                    };
+                    self.paint_slideshow(backend, viewport_rect);
+                } else if self.device_mode_active() {
+                    // Phone / Desktop — present inside the device silhouette,
+                    // with the screen's bottom nav and top status bar pinned
+                    // out of the scroll flow.
+                    self.paint_device_frame(backend, canvas_rect);
+                } else if let Some(session) = self.preview.as_ref() {
+                    // Canvas segment — the raw scene at the editor's own
+                    // pan/zoom. Painting at a hard-coded identity transform
+                    // would draw the document at its own origin instead of
+                    // where the user is looking.
+                    let viewport = self.editor_state.viewport;
+                    session.paint_scene(
+                        backend,
+                        canvas_rect,
+                        (viewport.pan_x, viewport.pan_y),
+                        viewport.zoom,
+                        self.now_ms,
+                    );
+                }
+                // Chrome paints over the presentation in every segment.
+                self.paint_preview_switcher(backend, canvas_rect);
+                self.paint_screen_switcher(backend, canvas_rect);
+            } else {
+                // NORMAL PAINT path — the canvas reads editor state + the
+                // layout-resolved render scene (`refresh_layout_scene`).
+                let mut transition_scene = None;
+                if let Some(transition) = self.layout_transition.as_ref() {
+                    if transition.is_active(self.now_ms) {
+                        let mut scene = self.layout_scene.clone();
+                        transition.apply_to_scene(&mut scene, self.now_ms);
+                        transition_scene = Some(scene);
+                    }
+                }
+                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
+                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
+                canvas.now_ms = self.now_ms;
+                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
+                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
+                let mut cx = PaintCx {
+                    backend: &mut *backend,
+                };
+                canvas.paint(&mut cx, canvas_rect);
+            }
+
+            #[cfg(not(feature = "canvaskit"))]
+            {
+                // NORMAL PAINT path (non-canvaskit build)
+                let mut transition_scene = None;
+                if let Some(transition) = self.layout_transition.as_ref() {
+                    if transition.is_active(self.now_ms) {
+                        let mut scene = self.layout_scene.clone();
+                        transition.apply_to_scene(&mut scene, self.now_ms);
+                        transition_scene = Some(scene);
+                    }
+                }
+                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
+                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
+                canvas.now_ms = self.now_ms;
+                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
+                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
+                let mut cx = PaintCx {
+                    backend: &mut *backend,
+                };
+                canvas.paint(&mut cx, canvas_rect);
+            }
+        }
+
+        let floating_chrome = self.editor_state.editor_ui.embed.host_owns_chrome();
+        if floating_chrome && rail_open {
+            backend.save();
+            backend.clip_round_rect(
+                canvas_geometry::layer_panel_rect(&self.editor_state, viewport_height),
+                16.0,
+            );
+        }
         // 3a. Slides tab — the same rail showing the deck's page
         //     navigator instead of the layer tree.
         if let Some(slides) = &slides_panel {
@@ -280,93 +377,8 @@ impl WidgetHost {
             }
         }
 
-        let (canvas_left, _canvas_y, canvas_w, canvas_h) =
-            self.canvas_region(viewport_width, viewport_height);
-        let canvas_rect = Rect {
-            origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
-            size: Point2D::new(canvas_w, canvas_h),
-        };
-        if canvas_w > 0.0 && canvas_h > 0.0 {
-            // Check if preview mode is active and we have a session
-            #[cfg(feature = "canvaskit")]
-            if self.editor_state.editor_ui.preview.mode && self.preview.is_some() {
-                // PREVIEW PAINT path. Clear first: neither presentation
-                // necessarily covers the whole canvas rect, and the previous
-                // frame's design content must not show through around it.
-                backend.fill_rect(canvas_rect, self.theme.canvas_surface);
-
-                // Slideshow presentation paints the board letterboxed in the full viewport.
-                if self.preview_slideshow_active() {
-                    let viewport_rect = Rect {
-                        origin: Point2D::new(0.0, 0.0),
-                        size: Point2D::new(viewport_width, viewport_height),
-                    };
-                    self.paint_slideshow(backend, viewport_rect);
-                } else if self.device_mode_active() {
-                    // Phone / Desktop — present inside the device silhouette,
-                    // with the screen's bottom nav and top status bar pinned
-                    // out of the scroll flow.
-                    self.paint_device_frame(backend, canvas_rect);
-                } else if let Some(session) = self.preview.as_ref() {
-                    // Canvas segment — the raw scene at the editor's own
-                    // pan/zoom. Painting at a hard-coded identity transform
-                    // would draw the document at its own origin instead of
-                    // where the user is looking.
-                    let viewport = self.editor_state.viewport;
-                    session.paint_scene(
-                        backend,
-                        canvas_rect,
-                        (viewport.pan_x, viewport.pan_y),
-                        viewport.zoom,
-                        self.now_ms,
-                    );
-                }
-                // Chrome paints over the presentation in every segment.
-                self.paint_preview_switcher(backend, canvas_rect);
-                self.paint_screen_switcher(backend, canvas_rect);
-            } else {
-                // NORMAL PAINT path — the canvas reads editor state + the
-                // layout-resolved render scene (`refresh_layout_scene`).
-                let mut transition_scene = None;
-                if let Some(transition) = self.layout_transition.as_ref() {
-                    if transition.is_active(self.now_ms) {
-                        let mut scene = self.layout_scene.clone();
-                        transition.apply_to_scene(&mut scene, self.now_ms);
-                        transition_scene = Some(scene);
-                    }
-                }
-                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
-                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
-                canvas.now_ms = self.now_ms;
-                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
-                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
-                let mut cx = PaintCx {
-                    backend: &mut *backend,
-                };
-                canvas.paint(&mut cx, canvas_rect);
-            }
-
-            #[cfg(not(feature = "canvaskit"))]
-            {
-                // NORMAL PAINT path (non-canvaskit build)
-                let mut transition_scene = None;
-                if let Some(transition) = self.layout_transition.as_ref() {
-                    if transition.is_active(self.now_ms) {
-                        let mut scene = self.layout_scene.clone();
-                        transition.apply_to_scene(&mut scene, self.now_ms);
-                        transition_scene = Some(scene);
-                    }
-                }
-                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
-                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
-                canvas.now_ms = self.now_ms;
-                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
-                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
-                let mut cx = PaintCx {
-                    backend: &mut *backend,
-                };
-                canvas.paint(&mut cx, canvas_rect);
-            }
+        if floating_chrome && rail_open {
+            backend.restore();
         }
 
         let property_panel = PropertyPanel::for_selection_at_with_scene(
@@ -383,7 +395,14 @@ impl WidgetHost {
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
+            if floating_chrome {
+                cx.backend.save();
+                cx.backend.clip_round_rect(property_rect, 16.0);
+            }
             panel.paint(&mut cx, property_rect);
+            if floating_chrome {
+                cx.backend.restore();
+            }
         }
 
         // 5b. VariablesPanel — mirrors TS' `{}` toolbar toggle as a
@@ -454,7 +473,7 @@ impl WidgetHost {
         {
             use op_editor_ui::widgets::AlignToolbar;
             let canvas_region = Rect {
-                origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
+                origin: Point2D::new(canvas_left, canvas_y),
                 size: Point2D::new(canvas_w, canvas_h),
             };
             if let Some(tb) = AlignToolbar::for_canvas_region(canvas_region, &self.editor_state) {

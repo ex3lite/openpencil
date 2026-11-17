@@ -309,16 +309,11 @@ impl WidgetHost {
         }
         let over_dropdown =
             self.over_dropdown_overlay(x, y, self.last_viewport_w, self.last_viewport_h);
-        let property_rect = op_editor_ui::Rect {
-            origin: Point2D::new(
-                self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                op_editor_ui::widgets::TOP_BAR_HEIGHT,
-            ),
-            size: Point2D::new(
-                self.editor_state.editor_ui.property_panel_width,
-                (self.last_viewport_h - op_editor_ui::widgets::TOP_BAR_HEIGHT).max(0.0),
-            ),
-        };
+        let property_rect = op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
+            &self.editor_state,
+            self.last_viewport_w,
+            self.last_viewport_h,
+        );
         let over_property_dropdown = property_panel.is_some_and(|panel| {
             (self.editor_state.editor_ui.fill_type_picker.open
                 && !matches!(
@@ -556,19 +551,14 @@ impl WidgetHost {
             }
         }
         if self.editor_state.editor_ui.fill_type_picker.open {
-            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
             self.refresh_layout_scene();
             if let Some(panel) = property_panel {
-                let property_rect = op_editor_ui::Rect {
-                    origin: Point2D::new(
-                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (self.last_viewport_h - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
+                let property_rect =
+                    op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
+                        &self.editor_state,
+                        self.last_viewport_w,
+                        self.last_viewport_h,
+                    );
                 let new_hover = panel.fill_type_picker_row_at(property_rect, Point2D::new(x, y));
                 if new_hover != self.editor_state.editor_ui.fill_type_picker.hover {
                     self.editor_state.editor_ui.fill_type_picker.hover = new_hover;
@@ -578,19 +568,14 @@ impl WidgetHost {
             }
         }
         if self.editor_state.editor_ui.compositing_picker.open {
-            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
             self.refresh_layout_scene();
             if let Some(panel) = property_panel {
-                let property_rect = op_editor_ui::Rect {
-                    origin: Point2D::new(
-                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (self.last_viewport_h - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
+                let property_rect =
+                    op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
+                        &self.editor_state,
+                        self.last_viewport_w,
+                        self.last_viewport_h,
+                    );
                 let new_hover = panel.compositing_picker_row_at(property_rect, Point2D::new(x, y));
                 if new_hover != self.editor_state.editor_ui.compositing_picker.hover {
                     self.editor_state.editor_ui.compositing_picker.hover = new_hover;
@@ -600,19 +585,14 @@ impl WidgetHost {
             }
         }
         if self.editor_state.editor_ui.effect_add_picker_open {
-            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
             self.refresh_layout_scene();
             if let Some(panel) = property_panel {
-                let property_rect = op_editor_ui::Rect {
-                    origin: Point2D::new(
-                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (self.last_viewport_h - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
+                let property_rect =
+                    op_editor_ui::widgets::host_canvas_geometry::property_panel_rect(
+                        &self.editor_state,
+                        self.last_viewport_w,
+                        self.last_viewport_h,
+                    );
                 let new_hover = panel.effect_add_menu_row_at(property_rect, Point2D::new(x, y));
                 if new_hover != self.editor_state.editor_ui.effect_add_menu_hover {
                     self.editor_state.editor_ui.effect_add_menu_hover = new_hover;
