@@ -24,7 +24,7 @@ struct GridMetrics {
 /// so it scrolls with the document content. Dots get sparser as
 /// zoom decreases (skipping every other dot at low zoom) so they
 /// stay visually airy.
-pub(super) fn paint_grid(
+pub fn paint_grid(
     cx: &mut PaintCx<'_>,
     rect: Rect,
     viewport: &DocViewport,

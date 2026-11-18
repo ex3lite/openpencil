@@ -187,7 +187,25 @@ pub fn compute_frame_geometry(
     nav_scene: Option<Rect>,
     status_scene: Option<Rect>,
 ) -> DeviceFrame {
-    let (frame_w, frame_h) = frame_size(kind);
+    compute_sized_frame_geometry(
+        kind,
+        frame_size(kind),
+        canvas,
+        root_scene,
+        nav_scene,
+        status_scene,
+    )
+}
+
+/// Fit an explicitly sized presentation surface, using the same geometry for painting and input.
+pub fn compute_sized_frame_geometry(
+    kind: PreviewDeviceKind,
+    (frame_w, frame_h): (f32, f32),
+    canvas: Rect,
+    root_scene: Rect,
+    nav_scene: Option<Rect>,
+    status_scene: Option<Rect>,
+) -> DeviceFrame {
     let fit = (canvas.size.x / frame_w)
         .min(canvas.size.y / frame_h)
         .min(1.0);

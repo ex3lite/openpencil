@@ -202,6 +202,17 @@ impl WidgetHost {
                 // necessarily covers the whole canvas rect, and the previous
                 // frame's design content must not show through around it.
                 backend.fill_rect(canvas_rect, self.theme.canvas_surface);
+                if self.editor_state.editor_ui.embed.host_owns_chrome()
+                    && !self.preview_slideshow_active()
+                {
+                    op_editor_ui::widgets::paint_grid(
+                        &mut PaintCx { backend },
+                        canvas_rect,
+                        &op_editor_core::Viewport::default(),
+                        &self.theme,
+                        true,
+                    );
+                }
 
                 // Slideshow presentation paints the board letterboxed in the full viewport.
                 if self.preview_slideshow_active() {

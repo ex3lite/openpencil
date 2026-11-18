@@ -17,8 +17,8 @@ use op_editor_ui::widgets::{PaintCx, PreviewDeviceSwitcher, ScreenSwitcherPills}
 use op_editor_ui::{Point2D, Rect};
 
 use op_preview_core::device_frame::{
-    compute_frame_geometry, device_scene_point, device_surface_at, frame_radius,
-    infer_kind_for_width, paint_corner_notches, scroll_max, PinnedGeom,
+    compute_frame_geometry, compute_sized_frame_geometry, device_scene_point, device_surface_at,
+    frame_radius, frame_size, infer_kind_for_width, paint_corner_notches, scroll_max, PinnedGeom,
 };
 use op_preview_core::PinnedPaint;
 
@@ -139,9 +139,33 @@ impl super::WidgetHost {
         let is_phone = kind == PreviewDeviceKind::Phone;
         let nav = session.pinned_nav_candidate(is_phone);
         let status = session.pinned_status_bar_candidate(is_phone);
-        let mut frame = compute_frame_geometry(
+        let (logical_size, area) = if self.editor_state.editor_ui.embed.host_owns_chrome() {
+            // Present the authored board beneath the floating header. A tall page
+            // keeps a scrollable viewport rather than shrinking to a thumbnail.
+            let logical = (
+                root_rect.size.x.max(1.0),
+                root_rect
+                    .size
+                    .y
+                    .clamp(1.0, frame_size(kind).1.max(canvas.size.y)),
+            );
+            let width = (canvas.size.x - 32.0).max(1.0);
+            let height = (canvas.size.y - 104.0).max(1.0);
+            let scale = (width / logical.0).min(height / logical.1).min(1.0);
+            let size = Point2D::new(logical.0 * scale, logical.1 * scale);
+            let top = ((canvas.size.y - size.y) / 2.0).max(88.0);
+            let origin = Point2D::new(
+                canvas.origin.x + (canvas.size.x - size.x) / 2.0,
+                canvas.origin.y + top,
+            );
+            (logical, Rect { origin, size })
+        } else {
+            (frame_size(kind), canvas)
+        };
+        let mut frame = compute_sized_frame_geometry(
             kind,
-            canvas,
+            logical_size,
+            area,
             root_rect,
             nav.as_ref().map(|(_, rect)| *rect),
             status.as_ref().map(|(_, rect)| *rect),
@@ -315,8 +339,13 @@ impl super::WidgetHost {
                         .framed_root()
                         .map(|(_, rect)| rect)
                         .unwrap_or(steady_frame.frame);
-                    let mut frame = compute_frame_geometry(
+                    let logical = (
+                        steady_frame.frame.size.x / steady_frame.fit,
+                        steady_frame.frame.size.y / steady_frame.fit,
+                    );
+                    let mut frame = compute_sized_frame_geometry(
                         steady_frame.kind,
+                        logical,
                         transition.canvas_rect_for_frame(self.now_ms),
                         root_rect,
                         nav.as_ref().map(|(_, rect)| *rect),
@@ -438,7 +467,7 @@ impl super::WidgetHost {
         backend: &mut dyn op_editor_ui::RenderBackend,
         canvas_rect: Rect,
     ) {
-        if self.preview.is_none() {
+        if self.preview.is_none() || self.editor_state.editor_ui.embed.host_owns_chrome() {
             return;
         }
         let labels = self.preview_switcher_labels();
@@ -486,7 +515,7 @@ impl super::WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> bool {
-        if self.preview.is_none() {
+        if self.preview.is_none() || self.editor_state.editor_ui.embed.host_owns_chrome() {
             return false;
         }
         let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
@@ -520,7 +549,7 @@ impl super::WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) {
-        if self.preview.is_none() {
+        if self.preview.is_none() || self.editor_state.editor_ui.embed.host_owns_chrome() {
             return;
         }
         let canvas = self.preview_canvas_rect(viewport_w, viewport_h);

@@ -195,6 +195,7 @@ pub mod canvas_viewport;
 mod canvas_viewport_background;
 mod canvas_viewport_fill_layers;
 mod canvas_viewport_grid;
+pub use canvas_viewport_grid::paint_grid;
 // `pub` for the remote-image miss-queue API (`take_remote_image_requests`
 // / `store_remote_image_bytes` / …) the desktop host drains per frame;
 // the paint entry point itself stays `pub(super)`.
