@@ -410,14 +410,29 @@ pub fn layer_panel_rect(state: &EditorState, viewport_h: f32) -> Rect {
 /// current selection — this returns the rect it WOULD occupy. In mobile
 /// layout the panel becomes a bottom sheet: full-width, ~45% of the
 /// viewport height, anchored to the bottom edge.
+pub fn codex_inspector_header(state: &EditorState) -> bool {
+    state.editor_ui.embed.host_owns_chrome()
+        && state.right_rail_visible()
+        && state.editor_ui.effective_property_tab() == op_editor_core::PropertyTab::Design
+        && !state.editor_ui.preview.mode
+}
+
 pub fn property_panel_rect(state: &EditorState, viewport_w: f32, viewport_h: f32) -> Rect {
     let width = state.editor_ui.property_panel_width;
     if state.editor_ui.embed.host_owns_chrome() {
+        use super::property_panel_inputs::{HEADER_HEIGHT, TAB_HEIGHT};
+        // Keep the original tabs and node header in the covered inset. The
+        // host's pinned selection controls end where the Rust sections begin.
+        let top = if codex_inspector_header(state) {
+            88.0 + 226.0 - TAB_HEIGHT - HEADER_HEIGHT
+        } else {
+            88.0
+        };
         return Rect {
-            origin: Point2D::new((viewport_w - width - 16.0).max(16.0), 88.0),
+            origin: Point2D::new((viewport_w - width - 16.0).max(16.0), top),
             size: Point2D::new(
                 width.min((viewport_w - 32.0).max(0.0)),
-                (viewport_h - 104.0).max(0.0),
+                (viewport_h - top - 16.0).max(0.0),
             ),
         };
     }

@@ -119,6 +119,7 @@ pub struct CanvasViewport<'a> {
     pub canvas_background: Color,
     /// Authored Figma page backgrounds replace the editor grid.
     pub(super) show_grid: bool,
+    pub(super) openbrush_grid: bool,
     pub theme: Theme,
     /// Host ms clock — text-edit caret blink.
     pub now_ms: u64,
@@ -175,7 +176,13 @@ impl<'a> Widget for CanvasViewport<'a> {
         // 2. Dotted grid — canvas-local, scales with pan/zoom.
         let viewport = &self.viewport;
         if self.show_grid {
-            super::canvas_viewport_grid::paint_grid(cx, rect, viewport, &self.theme);
+            super::canvas_viewport_grid::paint_grid(
+                cx,
+                rect,
+                viewport,
+                &self.theme,
+                self.openbrush_grid,
+            );
         }
         let indicators = op_editor_core::agent_indicators::snapshot_at_if_active(self.now_ms);
         let selection_chrome_visible = !self.node_drag_active;

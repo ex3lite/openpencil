@@ -119,6 +119,7 @@ struct LayerRowKey {
     collapsed_fp: u64,
     rename_fp: u64,
     touch_density: bool,
+    layer_search: String,
 }
 
 impl LayerRowKey {
@@ -129,6 +130,7 @@ impl LayerRowKey {
             collapsed_fp: collapsed_fingerprint(state),
             rename_fp: rename_fingerprint(state),
             touch_density: state.editor_ui.touch_chrome(),
+            layer_search: state.editor_ui.layer_search_query.clone(),
         }
     }
 }

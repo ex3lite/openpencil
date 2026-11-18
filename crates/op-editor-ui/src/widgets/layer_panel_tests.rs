@@ -774,3 +774,21 @@ fn pages_hit_test_uses_page_row_height() {
     assert_eq!(index, 41, "hit-test must map to the 32px-row index");
     assert!((row_top - (rows_top + PAGE_ROW_HEIGHT * 2.0)).abs() < 0.01);
 }
+
+#[test]
+fn codex_layer_search_finds_nested_layers_without_unfolding_the_document() {
+    let document = jian_ops_schema::load_str(r#"{"version":"1.0","children":[{"type":"frame","id":"parent","name":"Экран","width":200,"height":100,"children":[{"type":"text","id":"match","name":"Заголовок","content":"Текст"}]},{"type":"rectangle","id":"unrelated","name":"Фон","width":20,"height":20}]}"#).unwrap().value;
+    let mut state = op_editor_core::EditorState::from_document(document);
+    state.editor_ui.embed = op_editor_core::EmbedHost::Codex;
+    state
+        .editor_ui
+        .collapsed_layers
+        .insert(op_editor_core::NodeId::new("parent"));
+    assert_eq!(LayerPanel::from_editor(&state).items.len(), 2);
+    state.editor_ui.layer_search_query = "заголовок".to_owned();
+    let result = LayerPanel::from_editor(&state);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].node_id.as_str(), "match");
+    state.editor_ui.layer_search_query.clear();
+    assert_eq!(LayerPanel::from_editor(&state).items.len(), 2);
+}

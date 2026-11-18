@@ -38,9 +38,9 @@ fn t(ui: &EditorUiState, key: &'static str) -> &'static str {
 pub(crate) const ROW_PAD_X: f32 = 12.0;
 use crate::widgets::layer_panel_paint::{
     layer_content_clip_rect_with_metrics, layer_label_available_width_with_metrics,
-    paint_drag_ghost, paint_layer_action_backing, paint_layer_drag_handle,
-    paint_rename_input_with_metrics, paint_section_header_with_metrics, truncate_to_fit,
-    truncate_to_fit_measured,
+    paint_codex_layer_scrollbar, paint_drag_ghost, paint_layer_action_backing,
+    paint_layer_drag_handle, paint_page_glyph, paint_rename_input_with_metrics,
+    paint_section_header_with_metrics, truncate_to_fit, truncate_to_fit_measured,
 };
 
 /// One row in the layers tree — flat depth-walked view.
@@ -342,6 +342,14 @@ fn build_layer_rows(state: &EditorState, metrics: LayerPanelMetrics) -> CachedLa
         walk(child, &cx, 0, &mut items);
     }
     apply_layer_rename(&mut items, &rename);
+    if !state.editor_ui.layer_search_query.is_empty() {
+        let query = &state.editor_ui.layer_search_query;
+        items.retain(|item| item.label.to_lowercase().contains(query));
+        for item in &mut items {
+            item.depth = 0;
+            item.has_children = false;
+        }
+    }
     let pages_content_width = pages_content_width(&pages, LAYER_PANEL_WIDTH, metrics);
     let layers_content_width = layers_content_width(&items, LAYER_PANEL_WIDTH, metrics);
     CachedLayerRows {
@@ -397,13 +405,17 @@ impl Widget for LayerPanel {
 
         // Right-edge hairline so the LayerPanel reads as a
         // distinct surface from the canvas next to it.
-        cx.backend.fill_rect(
-            Rect {
-                origin: Point2D::new(rect.origin.x + rect.size.x - 1.0, rect.origin.y),
-                size: Point2D::new(1.0, rect.size.y),
-            },
-            self.theme.border,
-        );
+        if !self.metrics.codex {
+            cx.backend.fill_rect(
+                Rect::xywh(
+                    rect.origin.x + rect.size.x - 1.0,
+                    rect.origin.y,
+                    1.0,
+                    rect.size.y,
+                ),
+                self.theme.border,
+            );
+        }
 
         let r = self.regions(rect);
         let mut y = r.pages_header_y;
@@ -445,10 +457,7 @@ impl Widget for LayerPanel {
         ) {
             let page = &self.pages[index];
             y = r.pages_rows_top - r.pages.offset + index as f32 * self.metrics.page_row_height;
-            let row = Rect {
-                origin: Point2D::new(rect.origin.x + 6.0, y + 2.0),
-                size: Point2D::new(rect.size.x - 12.0, self.metrics.page_row_height - 4.0),
-            };
+            let row = self.metrics.row(rect, y, self.metrics.page_row_height);
             let page_hovered = self.is_page_hovered(index);
             if page.active {
                 cx.backend
@@ -457,7 +466,7 @@ impl Widget for LayerPanel {
                 cx.backend
                     .fill_round_rect(row, 6.0, self.theme.button_hover);
             }
-            let label_x = row.origin.x + 12.0;
+            let label_x = paint_page_glyph(cx, row, self.metrics, &self.theme, page.active);
             let delete_target = delete_page_target(rect, y, self.metrics);
             let label_max_x = if self.metrics.touch {
                 delete_target.origin.x - 4.0
@@ -490,7 +499,7 @@ impl Widget for LayerPanel {
                     .to_jian(),
                     Point2D::new(0.0, 0.0),
                 );
-                let baseline = if self.metrics.touch {
+                let baseline = if self.metrics.touch || self.metrics.codex {
                     jian_widgets::centered_text_baseline_y(row, self.metrics.row_font)
                 } else {
                     row.origin.y + 19.0
@@ -556,10 +565,7 @@ impl Widget for LayerPanel {
             let selected = self.is_row_selected(&item.node_id);
             let hovered = self.is_row_hovered(&item.node_id);
             y = r.layers_rows_top - r.layers.offset + index as f32 * self.metrics.layer_row_height;
-            let row = Rect {
-                origin: Point2D::new(rect.origin.x + 6.0, y + 2.0),
-                size: Point2D::new(rect.size.x - 12.0, self.metrics.layer_row_height - 4.0),
-            };
+            let row = self.metrics.layer_row(rect, y);
             if selected {
                 // TS uses bg-blue-500/15 + primary text + primary
                 // icon for the selected layer row.
@@ -677,7 +683,7 @@ impl Widget for LayerPanel {
                     (label_color).to_jian(),
                     Point2D::new(0.0, 0.0),
                 );
-                let baseline = if self.metrics.touch {
+                let baseline = if self.metrics.touch || self.metrics.codex {
                     jian_widgets::centered_text_baseline_y(row, self.metrics.row_font)
                 } else {
                     row.origin.y + 17.0
@@ -768,10 +774,7 @@ impl Widget for LayerPanel {
                 }
                 DropPosition::Into => {
                     // 1.5 px outline rect spanning the full row.
-                    let outline = Rect {
-                        origin: Point2D::new(rect.origin.x + 6.0, drop.indicator_y + 2.0),
-                        size: Point2D::new(rect.size.x - 12.0, self.metrics.layer_row_height - 4.0),
-                    };
+                    let outline = self.metrics.layer_row(rect, drop.indicator_y);
                     cx.backend
                         .stroke_round_rect(outline, 6.0, self.theme.primary, 1.5);
                 }
@@ -779,6 +782,10 @@ impl Widget for LayerPanel {
         }
 
         cx.backend.restore();
+
+        if self.metrics.codex {
+            paint_codex_layer_scrollbar(cx, rect, &r);
+        }
 
         if let Some((ghost, cursor_y)) = &self.drag_ghost {
             paint_drag_ghost(cx, &self.theme, ghost, *cursor_y, rect, self.metrics);

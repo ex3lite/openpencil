@@ -20,6 +20,7 @@ pub(crate) struct LayerPanelMetrics {
     pub action_target: f32,
     pub pages_max_rows: usize,
     pub touch: bool,
+    pub codex: bool,
 }
 
 impl LayerPanelMetrics {
@@ -36,9 +37,42 @@ impl LayerPanelMetrics {
         action_target: 22.0,
         pages_max_rows: 6,
         touch: false,
+        codex: false,
     };
 
+    pub fn row(self, bounds: Rect, y: f32, height: f32) -> Rect {
+        let x_inset = if self.codex { 8.0 } else { 6.0 };
+        let y_inset = if self.codex { 1.0 } else { 2.0 };
+        Rect::xywh(
+            bounds.origin.x + x_inset,
+            y + y_inset,
+            (bounds.size.x - 2.0 * x_inset).max(0.0),
+            height - 2.0 * y_inset,
+        )
+    }
+
+    pub fn layer_row(self, mut bounds: Rect, y: f32) -> Rect {
+        if self.codex {
+            bounds.size.x = (bounds.size.x - 16.0).max(0.0);
+        }
+        self.row(bounds, y, self.layer_row_height)
+    }
+
     pub fn for_ui(ui: &EditorUiState) -> Self {
+        if ui.embed.host_owns_chrome() {
+            return Self {
+                section_header_height: 40.0,
+                layer_row_height: 32.0,
+                section_gap: 16.0,
+                row_pad_x: 16.0,
+                header_font: 11.0,
+                row_font: 12.0,
+                glyph_size: 16.0,
+                pages_max_rows: 3,
+                codex: true,
+                ..Self::DESKTOP
+            };
+        }
         if !ui.touch_chrome() {
             return Self::DESKTOP;
         }
@@ -55,6 +89,7 @@ impl LayerPanelMetrics {
             action_target: 44.0,
             pages_max_rows: if ui.size_class.is_compact() { 3 } else { 6 },
             touch: true,
+            codex: false,
         }
     }
 }

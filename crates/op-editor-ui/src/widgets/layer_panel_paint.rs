@@ -2,7 +2,7 @@
 //! extracted to keep `layer_panel.rs` under the 800-line cap.
 
 use crate::theme::Theme;
-use crate::widgets::icons::draw_icon;
+use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel_text_input::paint_text_input_view_value;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
@@ -331,4 +331,56 @@ pub(super) fn paint_section_header_with_metrics(
     };
     cx.backend
         .draw_text(&header_text, Point2D::new(x + metrics.row_pad_x, baseline));
+}
+
+pub(super) fn paint_page_glyph(
+    cx: &mut PaintCx<'_>,
+    row: Rect,
+    metrics: LayerPanelMetrics,
+    theme: &Theme,
+    active: bool,
+) -> f32 {
+    if !metrics.codex {
+        return row.origin.x + 12.0;
+    }
+    draw_icon(
+        cx.backend,
+        Icon::Frame,
+        Point2D::new(
+            row.origin.x + 10.0,
+            row.origin.y + (row.size.y - 15.0) / 2.0,
+        ),
+        15.0,
+        if active {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        },
+        1.4,
+    );
+    row.origin.x + 36.0
+}
+
+pub(super) fn paint_codex_layer_scrollbar(
+    cx: &mut PaintCx<'_>,
+    rect: Rect,
+    regions: &super::layer_panel_walkers::LayerRegions,
+) {
+    let view = regions.layers_view_h;
+    let max = regions.layers.max_offset;
+    if max <= 0.0 || view <= 16.0 {
+        return;
+    }
+    let thumb_h = (view * view / (view + max)).clamp(16.0, view);
+    let top = regions.layers_rows_top + (view - thumb_h) * (regions.layers.offset / max);
+    cx.backend.fill_round_rect(
+        Rect::xywh(rect.origin.x + rect.size.x - 12.0, top, 4.0, thumb_h),
+        2.0,
+        Color {
+            r: 129.0 / 255.0,
+            g: 135.0 / 255.0,
+            b: 146.0 / 255.0,
+            a: 1.0,
+        },
+    );
 }

@@ -20,6 +20,9 @@ enum HostMessage {
     SelectTool(op_editor_core::Tool),
     Zoom(bool),
     Toolbar(op_editor_ui::widgets::ToolbarAction),
+    LayerSearch(String),
+    LayersView(op_editor_core::LeftPanelTab),
+    InspectorView(op_editor_core::PropertyTab),
 }
 
 impl HostMessage {
@@ -29,6 +32,25 @@ impl HostMessage {
         }
         let value: serde_json::Value = serde_json::from_str(raw).ok()?;
         match value.get("type")?.as_str()? {
+            "op-bridge/layer-search" => {
+                let query = value.get("query")?.as_str()?.trim();
+                return (query.chars().count() <= 100)
+                    .then(|| Self::LayerSearch(query.to_lowercase()));
+            }
+            "op-bridge/layers-view" => {
+                return match value.get("tab")?.as_str()? {
+                    "layers" => Some(Self::LayersView(op_editor_core::LeftPanelTab::Layers)),
+                    "slides" => Some(Self::LayersView(op_editor_core::LeftPanelTab::Slides)),
+                    _ => None,
+                }
+            }
+            "op-bridge/inspector-view" => {
+                return match value.get("tab")?.as_str()? {
+                    "design" => Some(Self::InspectorView(op_editor_core::PropertyTab::Design)),
+                    "code" => Some(Self::InspectorView(op_editor_core::PropertyTab::Code)),
+                    _ => None,
+                }
+            }
             "op-bridge/tool" => {
                 let ident = value.get("tool")?.as_str()?;
                 return op_editor_core::Tool::ALL
@@ -76,7 +98,7 @@ thread_local! {
     static INBOUND: RefCell<Option<MessageHandler>> = const { RefCell::new(None) };
     static SELECTION: RefCell<Option<SelectionHandler>> = const { RefCell::new(None) };
     static NAME: RefCell<Option<NameHandler>> = const { RefCell::new(None) };
-    static LAST_PANELS: RefCell<Option<(bool, bool, bool)>> = const { RefCell::new(None) };
+    static LAST_PANELS: RefCell<Option<(bool, bool, bool, bool, bool, usize)>> = const { RefCell::new(None) };
     static LAST_DOCK: RefCell<Option<(op_editor_core::Tool, i32)>> = const { RefCell::new(None) };
     static LAST_PREVIEW: RefCell<Option<bool>> = const { RefCell::new(None) };
     static EARLY: RefCell<Vec<HostMessage>> = const { RefCell::new(Vec::new()) };
@@ -184,11 +206,14 @@ pub(crate) fn panels_state(state: &op_editor_core::EditorState) {
         state.editor_ui.sidebar_open,
         state.editor_ui.inspector_open,
         state.right_rail_visible(),
+        op_editor_ui::widgets::host_canvas_geometry::codex_inspector_header(state),
+        op_editor_ui::widgets::slides_panel_flow::slides_tab_active(state),
+        state.page_count().min(3),
     );
     LAST_PANELS.with(|slot| {
         if *slot.borrow()==Some(next) { return; }
         *slot.borrow_mut()=Some(next);
-        emit(&format!(r#"{{"type":"op-shell/panels-state","layers":{},"inspector":{},"inspectorVisible":{}}}"#,next.0,next.1,next.2));
+        emit(&format!(r#"{{"type":"op-shell/panels-state","layers":{},"inspector":{},"inspectorVisible":{},"inspectorHeader":{},"slides":{},"layerPages":{}}}"#,next.0,next.1,next.2,next.3,next.4,next.5));
     });
 }
 
@@ -284,6 +309,40 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
             if let Ok(mut context) = message_inner.try_borrow_mut() {
                 context.host_mut().commit_codex_inputs();
                 context.host_mut().dispatch_toolbar_action(action);
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::LayerSearch(query) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let host = context.host_mut();
+                let ui = &mut host.editor_state_mut().editor_ui;
+                if ui.layer_search_query != query {
+                    ui.layer_search_query = query;
+                    ui.layer_layers_scroll = Default::default();
+                    ui.layer_layers_h_scroll = Default::default();
+                    host.mark_editor_state_dirty();
+                    let _ = context.repaint();
+                }
+            }
+        }
+        HostMessage::LayersView(tab) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let host = context.host_mut();
+                let state = host.editor_state_mut();
+                state.editor_ui.sidebar_open = true;
+                op_editor_ui::widgets::slides_panel_flow::select_tab(state, tab);
+                host.mark_editor_state_dirty();
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::InspectorView(tab) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let host = context.host_mut();
+                host.commit_codex_inputs();
+                let ui = &mut host.editor_state_mut().editor_ui;
+                ui.inspector_open = true;
+                ui.set_property_tab(tab);
+                host.mark_editor_state_dirty();
                 let _ = context.repaint();
             }
         }

@@ -31,6 +31,11 @@ impl WidgetHost {
         if !self.editor_state.editor_ui.sidebar_open {
             return None;
         }
+        if self.editor_state.editor_ui.embed.host_owns_chrome()
+            && !flow::slides_tab_active(&self.editor_state)
+        {
+            return None;
+        }
         flow::tab_row(&self.editor_state, self.slides_panel_rect(viewport_h))
     }
 
@@ -40,6 +45,16 @@ impl WidgetHost {
         let panel = self.slides_panel_rect(viewport_h);
         if !self.editor_state.editor_ui.sidebar_open {
             return panel;
+        }
+        if self.editor_state.editor_ui.embed.host_owns_chrome()
+            && !flow::slides_tab_active(&self.editor_state)
+        {
+            return Rect::xywh(
+                panel.origin.x,
+                panel.origin.y + 48.0,
+                panel.size.x,
+                (panel.size.y - 48.0).max(0.0),
+            );
         }
         flow::layers_content_rect(&self.editor_state, panel)
     }

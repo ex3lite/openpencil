@@ -160,7 +160,7 @@ pub(super) fn walk(node: &PenNode, cx: &WalkCx<'_>, depth: usize, out: &mut Vec<
         let item = item_for(node, cx, depth);
         let collapsed = item.collapsed;
         out.push(item);
-        if collapsed {
+        if collapsed && cx.ui.layer_search_query.is_empty() {
             continue;
         }
         if let Some(children) = node.children() {

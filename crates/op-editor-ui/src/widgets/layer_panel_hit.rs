@@ -29,10 +29,7 @@ impl LayerPanel {
         if item.renaming {
             return None;
         }
-        let row = Rect {
-            origin: Point2D::new(rect.origin.x + 6.0, y + 2.0),
-            size: Point2D::new(rect.size.x - 12.0, self.metrics.layer_row_height - 4.0),
-        };
+        let row = self.metrics.layer_row(rect, y);
         layer_drag_target(row, self.metrics)
             .filter(|target| target.contains(point))
             .map(|_| item.node_id.clone())
@@ -168,10 +165,7 @@ impl LayerPanel {
             }
             // Match the paint geometry — same 14 px icon boxes with
             // 4 px slop so small mouse offsets still register.
-            let inner = Rect {
-                origin: Point2D::new(row.origin.x + 6.0, y + 2.0),
-                size: Point2D::new(row.size.x - 12.0, self.metrics.layer_row_height - 4.0),
-            };
+            let inner = self.metrics.layer_row(row, y);
             let (eye_target, lock_target) = layer_action_targets(inner, self.metrics);
             let row_hovered = self.is_row_hovered(&item.node_id);
             let actions_visible = self.metrics.touch || row_hovered;
