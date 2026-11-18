@@ -129,3 +129,28 @@ fn changing_a_shared_token_and_master_updates_cross_page_instances() {
         assert_eq!(node.children[0].text.as_deref(), Some("Новая кнопка"));
     }
 }
+
+#[test]
+fn leaving_the_host_surface_runs_hover_leave_and_can_enter_again() {
+    let mut s = session();
+    let hover = |s: &mut PreviewSession, time| {
+        s.dispatch_pointer_for_id_at(
+            1,
+            PointerKind::Mouse,
+            100.0,
+            45.0,
+            PointerPhase::Hover,
+            time,
+        );
+        let _ = opacity(s, "button");
+        s.pump(time + 150);
+        assert!((opacity(s, "button") - 0.94).abs() < 0.01);
+    };
+    hover(&mut s, 0);
+    assert!(s.clear_hover());
+    assert!(!s.clear_hover());
+    let _ = opacity(&s, "button");
+    s.pump(320);
+    assert!((opacity(&s, "button") - 1.0).abs() < 0.01);
+    hover(&mut s, 400);
+}

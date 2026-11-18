@@ -47,6 +47,7 @@ struct PressedPointer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HoveredPointer {
     id: u32,
+    kind: PointerKind,
     node: Option<String>,
     scene: ScenePoint,
 }
@@ -142,6 +143,7 @@ impl InteractionState {
                 if !matches!(kind, PointerKind::Touch) {
                     self.hovered = Some(HoveredPointer {
                         id: pointer_id,
+                        kind,
                         node: hit_node.map(str::to_owned),
                         scene,
                     });
@@ -163,6 +165,7 @@ impl InteractionState {
                 }
                 self.hovered = Some(HoveredPointer {
                     id: pointer_id,
+                    kind,
                     node: hit_node.map(str::to_owned),
                     scene,
                 });
@@ -204,11 +207,9 @@ impl InteractionState {
 
     /// Clear the current non-Touch hover sample when the host moves over a
     /// surface that owns the cursor above the preview, or leaves the canvas.
-    pub(crate) fn clear_hover(&mut self) -> bool {
-        let changed = self.hovered.take().is_some();
-        if changed {
-            self.publish_primary();
-        }
-        changed
+    pub(crate) fn take_hover(&mut self) -> Option<(u32, PointerKind, (f32, f32))> {
+        let pointer = self.hovered.take()?;
+        self.publish_primary();
+        Some((pointer.id, pointer.kind, pointer.scene.get()))
     }
 }

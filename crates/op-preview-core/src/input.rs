@@ -472,6 +472,40 @@ impl PreviewSession {
         !self.runtime.dispatch_wheel(ev).is_empty()
     }
 
+    /// Clear a mouse/pen hover sample when the host moves outside the
+    /// preview-owned surface. Returns whether the visual state changed.
+    pub fn clear_hover(&mut self) -> bool {
+        use jian_core::gesture::pointer::{MouseButtons, PointerEvent, PointerPhase};
+        if self.interaction.hovered_node().is_none() {
+            return self.interaction.take_hover().is_some();
+        }
+        let before = self.binding_values();
+        let Some((id, kind, (x, y))) = self.interaction.take_hover() else {
+            return false;
+        };
+        let (x, y) = self.scene_to_runtime(x, y);
+        let mut event = PointerEvent::simple_at(
+            id,
+            PointerPhase::Hover,
+            jian_core::geometry::point(x, y),
+            self.last_now_ms,
+        );
+        event.kind = kind;
+        event.buttons = MouseButtons::empty();
+        event.pressure = 0.0;
+        // Outside an owned surface there is no hit target. Keep the last
+        // factual position for the leave handler and let the runtime deliver
+        // its real HoverLeave (including the pointer router's target reset).
+        let spatial = std::mem::take(&mut self.runtime.spatial);
+        self.runtime.dispatch_pointer(event);
+        // A handler can rebuild the active spatial index (e.g. tab changes).
+        if self.runtime.spatial.is_empty() {
+            self.runtime.spatial = spatial;
+        }
+        self.finish_binding_update(&before);
+        true
+    }
+
     /// Translate a scene-space point into the runtime's hit-test space.
     ///
     /// The scene paints DESIGN-canvas geometry (authored rects for

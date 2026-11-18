@@ -479,7 +479,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             &mut listeners,
             move |_| {
                 if let Ok(mut context) = inner.try_borrow_mut() {
-                    if context.host.update_layer_thumb_pointer(None) {
+                    let thumb_changed = context.host.update_layer_thumb_pointer(None);
+                    if context.host.clear_preview_surface_hover() || thumb_changed {
                         crate::repaint_coalescer::request();
                     }
                 }

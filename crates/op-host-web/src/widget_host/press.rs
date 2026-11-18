@@ -295,6 +295,21 @@ impl WidgetHost {
         handled
     }
 
+    #[cfg(feature = "canvaskit")]
+    pub(crate) fn clear_preview_surface_hover(&mut self) -> bool {
+        if !self.preview_pressed_pids.is_empty() {
+            return false;
+        }
+        let changed = self
+            .preview
+            .as_mut()
+            .is_some_and(op_preview_core::PreviewSession::clear_hover);
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
     /// Route a cursor move into the live preview runtime.
     /// Returns `true` (consumed) when the point is on-canvas and a gesture
     /// is active or the preview handled the move event.
@@ -324,16 +339,7 @@ impl WidgetHost {
         let Some(doc_point) =
             self.preview_screen_to_scene_point(screen_x, screen_y, viewport_w, viewport_h)
         else {
-            if !held {
-                let cleared = self
-                    .preview
-                    .as_mut()
-                    .is_some_and(op_preview_core::PreviewSession::clear_hover);
-                if cleared {
-                    self.mark_dirty();
-                }
-            }
-            return false;
+            return self.clear_preview_surface_hover();
         };
         // Check edge-swipe BEFORE updating preview_last_doc, so cancel
         // dispatches at the gesture's last real position
