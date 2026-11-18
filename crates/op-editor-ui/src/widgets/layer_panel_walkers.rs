@@ -353,6 +353,32 @@ pub struct LayerRegions {
     pub layers: LayerResolvedScroll,
 }
 
+impl LayerRegions {
+    pub fn layer_thumb(&self) -> Option<scroll::Thumb> {
+        ScrollState {
+            offset: self.layers.offset,
+        }
+        .thumb(
+            self.layers_view_h,
+            self.layers_view_h + self.layers.max_offset,
+            self.layers_view_h,
+            32.0,
+        )
+    }
+    pub fn drag_layer_thumb(&self, top: f32) -> f32 {
+        let mut scroll = ScrollState {
+            offset: self.layers.offset,
+        };
+        scroll.set_from_thumb(
+            top - self.layers_rows_top,
+            self.layers_view_h,
+            self.layers_view_h + self.layers.max_offset,
+            self.layers_view_h,
+            32.0,
+        );
+        scroll.offset
+    }
+}
 #[derive(Debug, Clone, Copy)]
 pub struct LayerRegionInput {
     pub rect: Rect,

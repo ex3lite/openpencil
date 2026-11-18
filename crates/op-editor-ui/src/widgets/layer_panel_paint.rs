@@ -366,16 +366,17 @@ pub(super) fn paint_codex_layer_scrollbar(
     rect: Rect,
     regions: &super::layer_panel_walkers::LayerRegions,
 ) {
-    let view = regions.layers_view_h;
-    let max = regions.layers.max_offset;
-    if max <= 0.0 || view <= 16.0 {
+    let Some(thumb) = regions.layer_thumb() else {
         return;
-    }
-    let thumb_h = (view * view / (view + max)).clamp(16.0, view);
-    let top = regions.layers_rows_top + (view - thumb_h) * (regions.layers.offset / max);
+    };
     cx.backend.fill_round_rect(
-        Rect::xywh(rect.origin.x + rect.size.x - 12.0, top, 4.0, thumb_h),
-        2.0,
+        Rect::xywh(
+            rect.origin.x + rect.size.x - 12.0,
+            regions.layers_rows_top + thumb.offset,
+            6.0,
+            thumb.len,
+        ),
+        3.0,
         Color {
             r: 129.0 / 255.0,
             g: 135.0 / 255.0,

@@ -145,6 +145,7 @@ impl WidgetHost {
         self.create_drag = None;
         self.path_anchor_drag = None;
         self.marquee_drag = None;
+        self.layer_thumb_grab = None;
         self.layer_drag = None;
         self.design_md_drag = None;
         self.component_browser_drag = None;

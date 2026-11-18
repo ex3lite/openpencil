@@ -96,6 +96,9 @@ impl WidgetHost {
         if self.chat_input_selection_drag.take().is_some() {
             return true;
         }
+        if self.layer_thumb_grab.take().is_some() {
+            return true;
+        }
         if self.chat_text_selection_drag.take().is_some() {
             return true;
         }
@@ -174,6 +177,9 @@ impl WidgetHost {
             return true;
         }
         if self.chat_input_selection_drag.take().is_some() {
+            return true;
+        }
+        if self.layer_thumb_grab.take().is_some() {
             return true;
         }
         if self.chat_text_selection_drag.take().is_some() {

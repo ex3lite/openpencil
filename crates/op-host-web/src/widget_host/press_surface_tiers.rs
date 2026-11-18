@@ -131,6 +131,22 @@ impl WidgetHost {
         if self.slides_panel_press(x, y, viewport_width, viewport_height) {
             return Some(true);
         }
+        if self.editor_state.editor_ui.embed.host_owns_chrome()
+            && self.editor_state.editor_ui.sidebar_open
+        {
+            let rect = self.layer_panel_rect(viewport_height);
+            let right = rect.origin.x + rect.size.x;
+            if x >= right - 16.0 && x < right {
+                let regions = self.layer_panel().regions(rect);
+                if let Some(thumb) = regions.layer_thumb() {
+                    let within = y - regions.layers_rows_top - thumb.offset;
+                    if (0.0..=thumb.len).contains(&within) {
+                        self.layer_thumb_grab = Some(within);
+                        return Some(true);
+                    }
+                }
+            }
+        }
         // 3. apply_click — LayerPanel + chat-defocus.
         //    Pre-seed a `layer_drag` candidate when the press lands
         //    on a Layer row so a subsequent move past the threshold

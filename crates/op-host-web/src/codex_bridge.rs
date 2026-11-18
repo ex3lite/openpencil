@@ -9,6 +9,9 @@ use crate::live_sync_glue::SharedSync;
 use crate::repaint_ctx::RepaintContext;
 use op_editor_core::bridge_protocol::BridgeInbound;
 
+#[path = "codex_inspector.rs"]
+mod inspector;
+
 #[derive(Debug, PartialEq)]
 enum HostMessage {
     Editor(BridgeInbound),
@@ -20,6 +23,7 @@ enum HostMessage {
     SelectTool(op_editor_core::Tool),
     Zoom(bool),
     Toolbar(op_editor_ui::widgets::ToolbarAction),
+    EditProperty(serde_json::Value),
     LayerSearch(String),
     LayersView(op_editor_core::LeftPanelTab),
     InspectorView(op_editor_core::PropertyTab),
@@ -32,6 +36,9 @@ impl HostMessage {
         }
         let value: serde_json::Value = serde_json::from_str(raw).ok()?;
         match value.get("type")?.as_str()? {
+            "op-bridge/edit-text-property" => {
+                return (raw.len() <= 4096).then_some(Self::EditProperty(value))
+            }
             "op-bridge/layer-search" => {
                 let query = value.get("query")?.as_str()?.trim();
                 return (query.chars().count() <= 100)
@@ -127,6 +134,7 @@ pub fn codex_on_event(callback: js_sys::Function) -> Result<(), JsValue> {
         return Err(JsValue::from_str("Codex embedding mode required"));
     }
     OUTBOUND.with(|slot| *slot.borrow_mut() = Some(callback));
+    inspector::reset();
     LAST_PANELS.with(|slot| *slot.borrow_mut() = None);
     LAST_PREVIEW.with(|slot| *slot.borrow_mut() = None);
     LAST_DOCK.with(|slot| *slot.borrow_mut() = None);
@@ -210,6 +218,7 @@ pub(crate) fn panels_state(state: &op_editor_core::EditorState) {
         op_editor_ui::widgets::slides_panel_flow::slides_tab_active(state),
         state.page_count().min(3),
     );
+    inspector::publish(state, next.3);
     LAST_PANELS.with(|slot| {
         if *slot.borrow()==Some(next) { return; }
         *slot.borrow_mut()=Some(next);
@@ -309,6 +318,19 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
             if let Ok(mut context) = message_inner.try_borrow_mut() {
                 context.host_mut().commit_codex_inputs();
                 context.host_mut().dispatch_toolbar_action(action);
+                let _ = context.repaint();
+            }
+        }
+        HostMessage::EditProperty(message) => {
+            if let Ok(mut context) = message_inner.try_borrow_mut() {
+                let host = context.host_mut();
+                host.commit_codex_inputs();
+                if inspector::apply(host.editor_state_mut(), &message) {
+                    host.mark_editor_state_dirty();
+                } else {
+                    emit(r#"{"type":"op-shell/property-rejected"}"#);
+                }
+                inspector::reset();
                 let _ = context.repaint();
             }
         }

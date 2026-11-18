@@ -15,6 +15,12 @@ impl WidgetHost {
     /// Cursor-move handler — drives canvas pan-drag, marquee /
     /// layer / chat / overlay drags, and the chrome hover washes.
     pub fn apply_cursor_move(&mut self, x: f32, y: f32) -> bool {
+        if let Some(grab) = self.layer_thumb_grab {
+            let rect = self.layer_panel_rect(self.last_viewport_h);
+            let offset = self.layer_panel().regions(rect).drag_layer_thumb(y - grab);
+            self.editor_state.editor_ui.layer_layers_scroll.offset = offset;
+            return true;
+        }
         self.last_cursor_x = x;
         self.last_cursor_y = y;
         // Session-switch owner rotation before the cursor_probe resolve stores
