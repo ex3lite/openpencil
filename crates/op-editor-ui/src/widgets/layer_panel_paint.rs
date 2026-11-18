@@ -365,23 +365,17 @@ pub(super) fn paint_codex_layer_scrollbar(
     cx: &mut PaintCx<'_>,
     rect: Rect,
     regions: &super::layer_panel_walkers::LayerRegions,
+    pointer: Option<Point2D>,
+    dragging: bool,
 ) {
-    let Some(thumb) = regions.layer_thumb() else {
+    let Some(thumb) = regions.layer_thumb_rect(rect) else {
         return;
     };
-    cx.backend.fill_round_rect(
-        Rect::xywh(
-            rect.origin.x + rect.size.x - 12.0,
-            regions.layers_rows_top + thumb.offset,
-            6.0,
-            thumb.len,
-        ),
-        3.0,
-        Color {
-            r: 129.0 / 255.0,
-            g: 135.0 / 255.0,
-            b: 146.0 / 255.0,
-            a: 1.0,
-        },
-    );
+    let color = if dragging {
+        Color::rgb_u8(120, 153, 255)
+    } else {
+        let hovered = pointer.is_some_and(|point| thumb.contains(point));
+        Color::rgba_u8(129, 135, 146, if hovered { 0.85 } else { 0.5 })
+    };
+    cx.backend.fill_round_rect(thumb, 3.0, color);
 }

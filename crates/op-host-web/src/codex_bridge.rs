@@ -15,7 +15,9 @@ mod inspector;
 #[derive(Debug, PartialEq)]
 enum HostMessage {
     Editor(BridgeInbound),
-    DisplayMode { fullscreen: bool },
+    DisplayMode {
+        fullscreen: bool,
+    },
     FitContent,
     ToggleSidebar,
     ToggleInspector,
@@ -25,6 +27,10 @@ enum HostMessage {
     Toolbar(op_editor_ui::widgets::ToolbarAction),
     EditProperty(serde_json::Value),
     LayerSearch(String),
+    RevealLayers {
+        page_id: String,
+        node_ids: Vec<String>,
+    },
     LayersView(op_editor_core::LeftPanelTab),
     InspectorView(op_editor_core::PropertyTab),
 }
@@ -38,6 +44,27 @@ impl HostMessage {
         match value.get("type")?.as_str()? {
             "op-bridge/edit-text-property" => {
                 return (raw.len() <= 4096).then_some(Self::EditProperty(value))
+            }
+            "op-bridge/reveal-layers" => {
+                let page_id = value.get("pageId")?.as_str()?;
+                let ids = value.get("nodeIds")?.as_array()?;
+                if page_id.len() > 1024 || ids.is_empty() || ids.len() > 100 {
+                    return None;
+                }
+                let mut node_ids = Vec::with_capacity(ids.len());
+                for id in ids {
+                    let id = id.as_str()?;
+                    if id.is_empty() || id.len() > 1024 {
+                        return None;
+                    }
+                    if !node_ids.iter().any(|existing| existing == id) {
+                        node_ids.push(id.to_owned());
+                    }
+                }
+                return Some(Self::RevealLayers {
+                    page_id: page_id.to_owned(),
+                    node_ids,
+                });
             }
             "op-bridge/layer-search" => {
                 let query = value.get("query")?.as_str()?.trim();
@@ -333,6 +360,19 @@ pub(crate) fn install<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync:
                 inspector::reset();
                 let _ = context.repaint();
             }
+        }
+        HostMessage::RevealLayers { page_id, node_ids } => {
+            let ok = message_inner.try_borrow_mut().is_ok_and(|mut context| {
+                let (width, height) = context.viewport_size();
+                let host = context.host_mut();
+                host.commit_codex_inputs();
+                let ok = host.reveal_codex_layers(&page_id, &node_ids, width, height);
+                if ok {
+                    let _ = context.repaint();
+                }
+                ok
+            });
+            emit(&serde_json::json!({"type":"op-shell/reveal-result","pageId":page_id,"nodeIds":node_ids,"ok":ok}).to_string());
         }
         HostMessage::LayerSearch(query) => {
             if let Ok(mut context) = message_inner.try_borrow_mut() {

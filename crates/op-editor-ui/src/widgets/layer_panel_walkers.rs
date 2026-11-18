@@ -365,6 +365,17 @@ impl LayerRegions {
             32.0,
         )
     }
+    /// The thumb hugs the inside of the eight-pixel panel inset.
+    pub fn layer_thumb_rect(&self, panel: Rect) -> Option<Rect> {
+        let thumb = self.layer_thumb()?;
+        Some(Rect::xywh(
+            panel.origin.x + panel.size.x - 14.0,
+            self.layers_rows_top + thumb.offset.round(),
+            6.0,
+            thumb.len.round(),
+        ))
+    }
+
     pub fn drag_layer_thumb(&self, top: f32) -> f32 {
         let mut scroll = ScrollState {
             offset: self.layers.offset,
@@ -422,7 +433,12 @@ pub fn layer_regions(input: LayerRegionInput) -> LayerRegions {
     let layers_header_y = pages_rows_top + pages_view_h + metrics.section_gap;
     let layers_rows_top = layers_header_y + metrics.section_header_height;
     let layers_view_h = (rect.origin.y + rect.size.y - 8.0 - layers_rows_top).max(0.0);
-    let layers_content = items_len.max(1) as f32 * metrics.layer_row_height;
+    let layers_content = if metrics.codex {
+        items_len
+    } else {
+        items_len.max(1)
+    } as f32
+        * metrics.layer_row_height;
     let layers = resolve_layer_scroll(layers, layers_content, layers_view_h, rect.size.x);
 
     LayerRegions {

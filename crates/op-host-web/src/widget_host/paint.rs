@@ -363,6 +363,8 @@ impl WidgetHost {
                     layer_panel.drag_ghost = Some((item, d.current_y));
                 }
             }
+            layer_panel.thumb_pointer = self.layer_thumb_pointer;
+            layer_panel.thumb_dragging = self.layer_thumb_grab.is_some();
             layer_panel.now_ms = self.now_ms;
             {
                 let mut cx = PaintCx {

@@ -316,6 +316,7 @@ pub struct WidgetHost {
     /// native host — press a layer row, drag past threshold, drop
     /// before/after the hovered row to reparent.
     layer_thumb_grab: Option<f32>,
+    layer_thumb_pointer: Option<Point2D>,
     pub(in crate::widget_host) layer_drag: Option<LayerDragState>,
     /// Active floating-panel header drags (Design-MD / Component-
     /// Browser / Icon-picker). Mirror the native host's per-panel

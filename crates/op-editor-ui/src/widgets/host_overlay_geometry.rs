@@ -105,10 +105,36 @@ pub fn zoom_to_fit_node(
     viewport_w: f32,
     viewport_h: f32,
 ) -> bool {
-    let Some(bounds) = scene
-        .active_page()
-        .and_then(|page| page.find(node_id))
+    zoom_to_fit_nodes(
+        state,
+        scene,
+        std::iter::once(node_id),
+        viewport_w,
+        viewport_h,
+    )
+}
+
+pub fn zoom_to_fit_nodes<'a>(
+    state: &mut EditorState,
+    scene: &LayoutScene,
+    ids: impl Iterator<Item = &'a str>,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> bool {
+    let Some(page) = scene.active_page() else {
+        return false;
+    };
+    let Some(bounds) = ids
+        .filter_map(|id| page.find(id))
         .map(|node| node.aggregate_bounds())
+        .reduce(|a, b| {
+            let origin = a.origin.min(b.origin);
+            let end = (a.origin + a.size).max(b.origin + b.size);
+            Rect {
+                origin,
+                size: end - origin,
+            }
+        })
     else {
         return false;
     };

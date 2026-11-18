@@ -43,6 +43,7 @@ impl WidgetHost {
             path_anchor_drag: None,
             marquee_drag: None,
             layer_thumb_grab: None,
+            layer_thumb_pointer: None,
             layer_drag: None,
             design_md_drag: None,
             component_browser_drag: None,

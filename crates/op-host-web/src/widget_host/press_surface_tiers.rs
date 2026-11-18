@@ -135,15 +135,13 @@ impl WidgetHost {
             && self.editor_state.editor_ui.sidebar_open
         {
             let rect = self.layer_panel_rect(viewport_height);
-            let right = rect.origin.x + rect.size.x;
-            if x >= right - 16.0 && x < right {
-                let regions = self.layer_panel().regions(rect);
-                if let Some(thumb) = regions.layer_thumb() {
-                    let within = y - regions.layers_rows_top - thumb.offset;
-                    if (0.0..=thumb.len).contains(&within) {
-                        self.layer_thumb_grab = Some(within);
-                        return Some(true);
-                    }
+            let point = Point2D::new(x, y);
+            if rect.contains(point) {
+                let thumb = self.layer_panel().regions(rect).layer_thumb_rect(rect);
+                if let Some(thumb) = thumb.filter(|thumb| thumb.contains(point)) {
+                    self.layer_thumb_grab = Some(y - thumb.origin.y);
+                    self.layer_thumb_pointer = Some(point);
+                    return Some(true);
                 }
             }
         }

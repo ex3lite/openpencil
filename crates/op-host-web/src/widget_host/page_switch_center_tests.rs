@@ -215,3 +215,88 @@ fn authored_document_all_pages_have_matching_scene_and_layers() {
         assert!(host.preview.is_none());
     }
 }
+
+#[test]
+fn codex_comment_reveal_selects_and_centers_nested_node_atomically() {
+    let mut host = page_switch_host();
+    let doc_revision = host.editor_state.revision;
+    assert!(host.reveal_codex_layers("p2", &["spill".into()], VIEWPORT_W, VIEWPORT_H));
+    assert_eq!(host.editor_state.ui.active_page_index, 1);
+    assert_eq!(host.editor_state.selection.anchor.as_str(), "spill");
+    let scene = host.layout_scene.active_page().unwrap();
+    let bounds = scene.find("spill").unwrap().aggregate_bounds();
+    let view = host.editor_state.viewport;
+    let (_, _, width, height) = host.canvas_region(VIEWPORT_W, VIEWPORT_H);
+    assert!(
+        (view.pan_x + (bounds.origin.x + bounds.size.x * 0.5) * view.zoom - width * 0.5).abs()
+            < 0.01
+    );
+    assert!(
+        (view.pan_y + (bounds.origin.y + bounds.size.y * 0.5) * view.zoom - height * 0.5).abs()
+            < 0.01
+    );
+    assert!(!host.reveal_codex_layers(
+        "p1",
+        &["near".into(), "missing".into()],
+        VIEWPORT_W,
+        VIEWPORT_H
+    ));
+    assert_eq!(host.editor_state.ui.active_page_index, 1);
+    assert_eq!(host.editor_state.selection.anchor.as_str(), "spill");
+    assert_eq!(host.editor_state.viewport, view);
+    assert_eq!(host.editor_state.revision, doc_revision);
+}
+
+#[test]
+fn codex_scrollbar_matches_panel_examples_and_consumes_wheel() {
+    let rows: Vec<_> = (0..24)
+        .map(|id| {
+            serde_json::json!({
+                "type":"rectangle", "id":format!("n{id}"), "name":"A long name ".repeat(40),
+                "x":id * 100,"y":0, "width":90, "height":80
+            })
+        })
+        .collect();
+    let doc = jian_ops_schema::load_str(
+        &serde_json::json!({
+            "version":"1.0.0","children":[],"pages":[
+                {"id":"p0","name":"A","children":rows},
+                {"id":"p1","name":"B","children":[]},
+                {"id":"p2","name":"C","children":[]}]
+        })
+        .to_string(),
+    )
+    .unwrap()
+    .value;
+    let mut host = WidgetHost::new();
+    host.editor_state = op_editor_core::EditorState::from_document(doc);
+    host.editor_state.editor_ui.embed = op_editor_core::EmbedHost::Codex;
+    host.editor_state.editor_ui.sidebar_open = true;
+    host.last_viewport_w = 1440.0;
+    host.last_viewport_h = 704.0;
+    let panel = host.layer_panel();
+    let rect = host.layer_panel_rect(704.0);
+    let region = panel.regions(rect);
+    assert_eq!(region.layers_rows_top, 336.0);
+    assert_eq!(region.layers_view_h, 344.0);
+    let thumb = region.layer_thumb_rect(rect).unwrap();
+    assert_eq!(thumb, op_editor_ui::Rect::xywh(242.0, 336.0, 6.0, 154.0));
+    assert!(panel.hit_test(rect, Point2D::new(231.0, 345.0)).is_some());
+    assert!(panel.hit_test(rect, Point2D::new(232.0, 345.0)).is_none());
+    let camera = host.editor_state.viewport;
+    assert!(host.try_scroll_layer_panel(150.0, 345.0, -120.0, 0.0, 704.0));
+    assert_eq!(
+        host.editor_state.editor_ui.layer_layers_h_scroll.offset,
+        0.0
+    );
+    assert_eq!(host.editor_state.viewport, camera);
+    assert!(host.apply_press(244.0, 348.0, 1440.0, 704.0));
+    assert!(host.layer_thumb_grab.is_some());
+    assert!(host.apply_cursor_move(244.0, 434.0));
+    let scrolled = host.layer_panel().regions(rect);
+    assert!((scrolled.layers.offset - 192.0).abs() < 1.0);
+    assert_eq!(scrolled.layer_thumb_rect(rect).unwrap().origin.y, 422.0);
+    assert!(host.apply_release_with_viewport(1440.0, 704.0));
+    assert!(host.layer_thumb_grab.is_none());
+    assert!(host.editor_state.selection.is_empty());
+}

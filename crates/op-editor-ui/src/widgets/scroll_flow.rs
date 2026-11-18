@@ -277,6 +277,11 @@ pub fn scroll_layer_panel(
     }
     let r = panel.regions(rect);
     let mut changed = false;
+    let delta_x = if panel.metrics.codex && point.y >= r.layers_rows_top {
+        0.0
+    } else {
+        delta_x
+    };
     let (vertical, horizontal, max_v, max_h) = if point.y >= r.layers_rows_top {
         (
             &mut state.editor_ui.layer_layers_scroll,

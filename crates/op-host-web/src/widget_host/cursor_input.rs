@@ -15,6 +15,38 @@ impl WidgetHost {
     /// Cursor-move handler — drives canvas pan-drag, marquee /
     /// layer / chat / overlay drags, and the chrome hover washes.
     pub fn apply_cursor_move(&mut self, x: f32, y: f32) -> bool {
+        let thumb_changed = self.update_layer_thumb_pointer(Some(Point2D::new(x, y)));
+        self.move_cursor_content(x, y) || thumb_changed
+    }
+
+    /// Repaint immediately when entering or leaving the actual painted thumb.
+    pub(crate) fn update_layer_thumb_pointer(&mut self, pointer: Option<Point2D>) -> bool {
+        if !self.editor_state.editor_ui.embed.host_owns_chrome()
+            || !self.editor_state.editor_ui.sidebar_open
+        {
+            return self.layer_thumb_pointer.take().is_some();
+        }
+        let rect = self.layer_panel_rect(self.last_viewport_h);
+        let near_track = |p: Point2D| {
+            rect.contains(p)
+                && p.x >= rect.origin.x + rect.size.x - 14.0
+                && p.x <= rect.origin.x + rect.size.x - 8.0
+        };
+        let previous = self.layer_thumb_pointer;
+        self.layer_thumb_pointer = pointer.filter(|p| near_track(*p));
+        if previous == self.layer_thumb_pointer {
+            return false;
+        }
+        self.layer_panel()
+            .regions(rect)
+            .layer_thumb_rect(rect)
+            .is_some_and(|thumb| {
+                previous.is_some_and(|p| thumb.contains(p))
+                    != self.layer_thumb_pointer.is_some_and(|p| thumb.contains(p))
+            })
+    }
+
+    fn move_cursor_content(&mut self, x: f32, y: f32) -> bool {
         if let Some(grab) = self.layer_thumb_grab {
             let rect = self.layer_panel_rect(self.last_viewport_h);
             let offset = self.layer_panel().regions(rect).drag_layer_thumb(y - grab);

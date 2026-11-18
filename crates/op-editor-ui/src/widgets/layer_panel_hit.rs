@@ -166,6 +166,11 @@ impl LayerPanel {
             // Match the paint geometry — same 14 px icon boxes with
             // 4 px slop so small mouse offsets still register.
             let inner = self.metrics.layer_row(row, y);
+            if self.metrics.codex
+                && (point.x < inner.origin.x || point.x >= inner.origin.x + inner.size.x)
+            {
+                return None;
+            }
             let (eye_target, lock_target) = layer_action_targets(inner, self.metrics);
             let row_hovered = self.is_row_hovered(&item.node_id);
             let actions_visible = self.metrics.touch || row_hovered;

@@ -471,6 +471,21 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             },
         )?;
     }
+    {
+        let inner = inner.clone();
+        add_listener::<MouseEvent, _, _>(
+            &canvas_target,
+            "mouseleave",
+            &mut listeners,
+            move |_| {
+                if let Ok(mut context) = inner.try_borrow_mut() {
+                    if context.host.update_layer_thumb_pointer(None) {
+                        crate::repaint_coalescer::request();
+                    }
+                }
+            },
+        )?;
+    }
     // Window-level mouseup → release. A text selection or canvas drag can
     // leave the canvas before the button is released; listening only on the
     // canvas would strand the drag state until a later in-canvas mouseup.

@@ -2,7 +2,6 @@
 //!
 //! Its page rows and depth-flattened layer rows are built from the canonical
 //! `PenNode` tree on `op_editor_core::EditorState`.
-
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
@@ -19,14 +18,12 @@ use crate::widgets::layer_panel_walkers::{
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_core::text_input::TextInputState;
-use op_editor_core::{NodeId, SelectionState};
-use std::rc::Rc;
-
 use jian_ops_schema::node::PenNode;
 use op_editor_core::editor_ui_state::EditorUiState;
 use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_core::EditorState;
-
+use op_editor_core::{NodeId, SelectionState};
+use std::rc::Rc;
 /// Outer panel width; host layout uses this.
 pub const LAYER_PANEL_WIDTH: f32 = 240.0;
 
@@ -89,12 +86,12 @@ pub struct LayerPanel {
     pub drag_ghost: Option<(LayerItem, f32)>,
     pub now_ms: u64,
     pub rename_input: Option<TextInputState>,
-    /// Live styling overlay — selection + hover are applied at paint /
-    /// hit-test time so they never invalidate the cached row model.
+    /// Selection and hover do not invalidate the cached row model.
     pub selection: SelectionState,
     pub hovered_layer: Option<NodeId>,
     pub hovered_page: Option<usize>,
-    /// Scroll state for the bounded Pages / Layers regions.
+    pub thumb_pointer: Option<Point2D>,
+    pub thumb_dragging: bool,
     pub pages_scroll: LayerScrollSnapshot,
     pub layers_scroll: LayerScrollSnapshot,
 }
@@ -157,8 +154,7 @@ impl LayerPanel {
         self.hovered_page == Some(page_index)
     }
 
-    /// Assemble a panel from an already-built (cached or fresh) row model,
-    /// stamping the live styling overlay + scroll snapshots + chrome.
+    /// Assemble live styling and scrolling around an existing row model.
     fn assemble(
         state: &EditorState,
         metrics: LayerPanelMetrics,
@@ -182,6 +178,8 @@ impl LayerPanel {
             selection: state.selection.clone(),
             hovered_layer: state.editor_ui.hovered_layer_id.clone(),
             hovered_page: state.editor_ui.hovered_page_index,
+            thumb_pointer: None,
+            thumb_dragging: false,
             pages_scroll: LayerScrollSnapshot::new(
                 state.editor_ui.layer_pages_scroll,
                 state.editor_ui.layer_pages_h_scroll,
@@ -275,6 +273,8 @@ impl LayerPanel {
             selection: SelectionState::empty(),
             hovered_layer: None,
             hovered_page: None,
+            thumb_pointer: None,
+            thumb_dragging: false,
             pages_scroll: LayerScrollSnapshot::default(),
             layers_scroll: LayerScrollSnapshot::default(),
         }
@@ -784,7 +784,7 @@ impl Widget for LayerPanel {
         cx.backend.restore();
 
         if self.metrics.codex {
-            paint_codex_layer_scrollbar(cx, rect, &r);
+            paint_codex_layer_scrollbar(cx, rect, &r, self.thumb_pointer, self.thumb_dragging);
         }
 
         if let Some((ghost, cursor_y)) = &self.drag_ghost {
