@@ -210,9 +210,8 @@ impl PreviewSession {
     /// runtime so clicks land on switches / buttons / and place caret /
     /// focus in text inputs. The host converts the screen press to scene
     /// (document) space via the editor viewport; here we translate it
-    /// into the runtime's root-relative space (subtract the containing
-    /// root's authored origin) so the hit-test matches where the widget
-    /// paints. Returns `true` when the runtime emitted any semantic
+    /// into the runtime's absolute layout coordinates so the hit-test matches
+    /// the painted widget. Returns `true` when the runtime emitted any semantic
     /// event.
     pub fn dispatch_tap(&mut self, scene_x: f32, scene_y: f32) -> bool {
         let down = self.dispatch_pointer_phase(scene_x, scene_y, PointerPhase::Down);
@@ -486,7 +485,7 @@ impl PreviewSession {
     /// the same relative spot inside the runtime's copy of the node —
     /// keeping caret placement and slider-knob drags accurate.
     ///
-    /// Falls back to the root-origin translation when the point is
+    /// Passes through the original scene coordinates when the point is
     /// outside every mapped node (empty canvas — nothing to hit).
     pub(crate) fn scene_to_runtime(&self, x: f32, y: f32) -> (f32, f32) {
         let mapping = self.deepest_mapped_rects(x, y);
@@ -497,7 +496,7 @@ impl PreviewSession {
     /// anchor — same relative position inside the runtime rect,
     /// linearly extrapolated when the point is outside the scene rect
     /// (a held drag past the node's edge). `None` resolves fresh at the
-    /// point, falling back to the root-origin translation.
+    /// point, falling back to the original coordinates.
     fn scene_to_runtime_via(&self, x: f32, y: f32, mapping: Option<(Rect, Rect)>) -> (f32, f32) {
         if let Some((s, r)) = mapping {
             let fx = if s.size.x > f32::EPSILON {
@@ -511,16 +510,6 @@ impl PreviewSession {
                 0.0
             };
             return (r.origin.x + fx * r.size.x, r.origin.y + fy * r.size.y);
-        }
-        for frame in &self.root_frames {
-            let rect = frame.scene_rect;
-            if x >= rect.origin.x
-                && x <= rect.origin.x + rect.size.x
-                && y >= rect.origin.y
-                && y <= rect.origin.y + rect.size.y
-            {
-                return (x - frame.offset.0, y - frame.offset.1);
-            }
         }
         (x, y)
     }
@@ -595,49 +584,16 @@ impl PreviewSession {
     /// `pub(crate)` so `mod.rs`'s test-only `node_rect`
     /// accessor can reach it from the parent module.
     ///
-    /// Merge note (responsive-m1a into main): jian-core's `node_rect`
-    /// now bakes a non-viewport-normalized root's own authored origin
-    /// into every rect under it (see `op-pen-loader`'s `compute_layout`
-    /// for the full mechanism) — jian's own convention calls this
-    /// "absolute scene coordinates" and its own runtimes hit-test
-    /// directly against it. OpenPencil's PreviewSession keeps a SECOND,
-    /// separate coordinate frame ("runtime space", root-relative) for
-    /// `Runtime::dispatch_pointer` and friends, which `scene_to_runtime`
-    /// above maps into via this function. Subtract the root's authored
-    /// origin back out so `runtime_rect` keeps returning root-relative
-    /// space regardless of jian-core's own internal convention.
+    /// Use the absolute solved rectangle used by the runtime's spatial index.
+    /// Its origin already accounts for viewport-normalized and offset roots.
     pub(crate) fn runtime_rect(&self, id: &str) -> Option<Rect> {
         let doc = self.runtime.document.as_ref()?;
         let key = doc.tree.by_id.get(id).copied()?;
         let r = self.runtime.layout.node_rect(key)?;
-        let (ox, oy) = self.root_authored_origin_of(doc, key);
         Some(Rect {
-            origin: Point2D::new(r.origin.x - ox, r.origin.y - oy),
+            origin: Point2D::new(r.origin.x, r.origin.y),
             size: Point2D::new(r.size.width, r.size.height),
         })
-    }
-
-    /// Walk `key` up to its tree root and return that root's authored
-    /// `(x, y)`, or `(0, 0)` when the root is viewport-normalized (its
-    /// origin is already baked out of `node_rect` by jian-core) or has
-    /// no authored position.
-    fn root_authored_origin_of(
-        &self,
-        doc: &jian_core::document::RuntimeDocument,
-        key: jian_core::document::tree::NodeKey,
-    ) -> (f32, f32) {
-        let mut cur = key;
-        while let Some(parent) = doc.tree.nodes.get(cur).and_then(|n| n.parent) {
-            cur = parent;
-        }
-        if self.runtime.layout.is_origin_normalized(cur) {
-            return (0.0, 0.0);
-        }
-        doc.tree
-            .nodes
-            .get(cur)
-            .map(|root| op_pen_loader::root_authored_origin(&root.schema))
-            .unwrap_or((0.0, 0.0))
     }
 
     /// Advance focus to the next focusable widget (Tab). `focus_next` now
@@ -683,7 +639,7 @@ impl PreviewSession {
     }
 
     /// Test-only: translate a scene-space point into the runtime's
-    /// root-relative space (exercises the tap coordinate fix).
+    /// absolute input coordinates.
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn scene_to_runtime_for_test(&self, x: f32, y: f32) -> (f32, f32) {
         self.scene_to_runtime(x, y)

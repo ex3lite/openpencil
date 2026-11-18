@@ -4,7 +4,7 @@
 //! 800-line-per-file cap. Holds:
 //! - [`AppMode`] — the routed multi-screen state a marked document
 //!   enters (entry screen mounted + `ScreenRouter` installed).
-//! - [`solve_roots`] — the per-root layout + scene↔runtime coordinate
+//! - [`solve_roots`] — the per-root layout and scene bounds
 //!   capture, extracted from `enter` so Task 9's screen-switch reconcile
 //!   can re-solve the newly-mounted root(s) the same way.
 //! - the [`super::PreviewSession`] app-mode query + mutation methods
@@ -24,7 +24,7 @@ use super::{PreviewSession, RootFrame};
 use crate::invalidation::InvalidationKind;
 use jian_core::action::services::Router;
 use jian_core::Runtime;
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::Rect;
 
 /// APP MODE state: present only when [`super::PreviewSession::enter`]
 /// found at least one explicitly `screen`-marked top-level frame
@@ -588,7 +588,7 @@ fn enabled_page_hook<'a>(
 }
 
 /// Solve layout for every mounted page-root against its OWN authored
-/// available size and capture the scene↔runtime coordinate mapping.
+/// available size and capture the resulting root bounds.
 /// Extracted from `enter` so Task 9's screen-switch reconcile can
 /// re-solve the newly-mounted root(s) the same way, without duplicating
 /// this logic.
@@ -661,46 +661,20 @@ pub(crate) fn solve_roots(
     };
     runtime.rebuild_spatial();
 
-    // Capture each root's scene↔runtime coordinate mapping for tap
-    // translation. The design scene offsets every root by its authored
-    // `(base.x, base.y)`; the runtime lays each at its own origin.
-    // `runtime.document` + `runtime.layout` are disjoint fields, so the
-    // two immutable borrows below co-exist.
-    //
-    // Merge note (responsive-m1a into main): `LayoutEngine::node_rect`
-    // now bakes a non-origin-normalized root's own authored offset into
-    // its returned rect (see `op-pen-loader`'s `compute_layout` for the
-    // full explanation) — `solve_roots` above never calls
-    // `override_root_for_viewport`, so `rrect` here already carries
-    // `offset`. Adding `offset` again doubled `scene_rect`'s origin,
-    // making every scene-space tap fall outside every root's bounds
-    // (matched nothing, fell through to the "outside all roots"
-    // passthrough). `frame.offset` itself (used unchanged by
-    // `input.rs`'s scene→runtime subtraction) is still the standalone
-    // authored origin, independent of this rect-construction bug.
-    let root_frames = {
-        let mut frames = Vec::new();
-        if let Some(rt_doc) = runtime.document.as_ref() {
-            for root_key in rt_doc.tree.roots.iter() {
-                let Some(node_data) = rt_doc.tree.nodes.get(*root_key) else {
-                    continue;
-                };
-                let offset = op_pen_loader::root_authored_origin(&node_data.schema);
-                let rrect = runtime.layout.node_rect(*root_key);
-                let (rx, ry, rw, rh) = rrect
-                    .map(|r| (r.origin.x, r.origin.y, r.size.width, r.size.height))
-                    .unwrap_or((0.0, 0.0, 0.0, 0.0));
-                frames.push(RootFrame {
-                    scene_rect: Rect {
-                        origin: Point2D::new(rx, ry),
-                        size: Point2D::new(rw, rh),
-                    },
-                    offset,
-                });
-            }
-        }
-        frames
-    };
-
+    // Keep the solved absolute bounds for framing and scroll limits.
+    let root_frames = runtime
+        .document
+        .iter()
+        .flat_map(|doc| &doc.tree.roots)
+        .filter_map(|key| runtime.layout.node_rect(*key))
+        .map(|rect| RootFrame {
+            scene_rect: Rect::xywh(
+                rect.origin.x,
+                rect.origin.y,
+                rect.size.width,
+                rect.size.height,
+            ),
+        })
+        .collect();
     Ok((root_frames, primary_available))
 }

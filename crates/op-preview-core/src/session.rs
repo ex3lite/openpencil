@@ -3,7 +3,7 @@
 //!
 //! Split out of `preview/mod.rs` (the crate spine) to keep every file under
 //! the repo's 800-line-per-file cap. Holds [`RootFrame`] (the per-root
-//! scene↔runtime coordinate mapping), [`PreviewSession`] with its retained
+//! solved scene bounds), [`PreviewSession`] with its retained
 //! source/session fields, [`PreviewSession::enter`], and the accessor +
 //! test-helper surface. The scene overlay / paint impls live in the sibling
 //! `session_paint.rs`; app-mode routing, input dispatch, device-frame
@@ -33,19 +33,9 @@ use crate::error::PreviewEnterError;
 use crate::scene_helpers::format_warning;
 use crate::transition::ScreenTransition;
 
-/// One page-root's mapping between the design scene's coordinate space
-/// (root offset baked in) and the jian runtime's root-relative
-/// hit-test space. Used to translate a scene-space tap back into the
-/// space `Runtime::dispatch_pointer` expects.
-///
-/// Fields are `pub(crate)` so the sibling `app_mode` module's
-/// `solve_roots` (which constructs these) can reach them.
+/// A solved page root used by preview framing and scroll bounds.
 pub(crate) struct RootFrame {
-    /// The root's bounds in SCENE space (authored origin + size).
     pub(crate) scene_rect: Rect,
-    /// The root's authored `(base.x, base.y)` — the delta between scene
-    /// space and the runtime's root-relative space.
-    pub(crate) offset: (f32, f32),
 }
 
 #[derive(Clone)]
@@ -99,9 +89,7 @@ pub struct PreviewSession {
     /// deferred input can prove the screen it targeted is still on screen
     /// before it replays.
     pub(crate) route_generation: u64,
-    /// Per-root scene↔runtime coordinate mapping for tap translation.
-    /// `pub(crate)` so `app_mode`'s
-    /// `current_screen_scene_rect` can read the first frame's scene rect.
+    /// Solved root bounds for preview framing and runtime scrolling.
     pub(crate) root_frames: Vec<RootFrame>,
     /// The design `LayoutScene` preview paints: paint tree from the
     /// prepared + PROMOTED document (so a generated/legacy `role=input`
@@ -725,7 +713,6 @@ impl PreviewSession {
 
     /// Test-only: the absolute layout rect `(x, y, w, h)` the runtime
     /// resolved for the node with schema `id`, or `None` if unknown.
-    /// In the runtime's root-relative space (no scene offset).
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn node_rect(&self, id: &str) -> Option<(f32, f32, f32, f32)> {
         let r = self.runtime_rect(id)?;

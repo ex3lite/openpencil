@@ -3,7 +3,7 @@
 //! Preview now renders the live document through the design-canvas scene
 //! painter, overlaying live widget runtime state onto the `LayoutScene`,
 //! and hit-tests by translating scene-space taps into the runtime's
-//! root-relative space. These tests cover the invariants testable
+//! absolute layout space. These tests cover the invariants testable
 //! without a live skia surface: document byte-invariance across
 //! enter→input→exit, typed text reaching the runtime, the live overlay
 //! reflecting runtime state (typed text, toggles), resolved colours /
@@ -304,11 +304,7 @@ fn overlay_reflects_widget_toggle_on_tap() {
 }
 
 #[test]
-fn tap_translates_scene_space_to_runtime_for_offset_root() {
-    // A root authored at (100, 50): the design scene offsets the whole
-    // subtree by (100, 50), but the runtime lays it at its own origin.
-    // A scene-space tap must subtract the root's authored origin so it
-    // hits the runtime's root-relative geometry.
+fn tap_hits_the_painted_switch_on_an_offset_root() {
     let src = r##"{
         "version": "1.1",
         "formatVersion": "1.1",
@@ -327,7 +323,7 @@ fn tap_translates_scene_space_to_runtime_for_offset_root() {
     let doc = jian_ops_schema::load_str(src)
         .expect("parse offset-root doc")
         .value;
-    let session = PreviewSession::enter(
+    let mut session = PreviewSession::enter(
         &doc,
         (800.0, 600.0),
         &default_theme(),
@@ -339,12 +335,16 @@ fn tap_translates_scene_space_to_runtime_for_offset_root() {
     )
     .expect("enter preview");
 
-    // A point inside the root in SCENE space maps to that point minus
-    // the root's authored origin in RUNTIME space.
-    let (rx, ry) = session.scene_to_runtime_for_test(150.0, 80.0);
-    assert!(
-        (rx - 50.0).abs() < 0.001 && (ry - 30.0).abs() < 0.001,
-        "scene (150,80) under root@(100,50) should map to runtime (50,30), got ({rx},{ry})"
+    let initial = session.preview_scene_for_test();
+    let button = find(&initial, "sw").unwrap().bounds;
+    assert!(session.dispatch_tap(
+        button.origin.x + button.size.x / 2.0,
+        button.origin.y + button.size.y / 2.0
+    ));
+    let scene = session.preview_scene_for_test();
+    assert_eq!(
+        find(&scene, "sw").unwrap().widget.as_ref().unwrap().checked,
+        Some(true)
     );
 
     // A point outside every root falls through unchanged (nothing to hit).
