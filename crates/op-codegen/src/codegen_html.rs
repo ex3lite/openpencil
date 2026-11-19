@@ -15,6 +15,8 @@ use jian_ops_schema::style::{PenEffect, StrokeCap, StrokeJoin};
 use jian_ops_schema::PenDocument;
 use op_editor_core::{fills, PenNodeExt};
 use std::fmt::Write;
+#[path = "html_fields.rs"]
+mod fields;
 #[path = "html_layout.rs"]
 mod layout;
 #[path = "html_text.rs"]
@@ -302,6 +304,9 @@ fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalo
                 out,
                 "{indent}<img src=\"{}\" alt=\"{}\"{attrs} style=\"{}\" />",
                 html_escape(img.src.as_ref()),
+    if fields::emit(out, node, &attrs, &style, &indent) {
+        return;
+    }
                 html_escape(img.base.name.as_deref().unwrap_or_default()),
                 html_escape(&style)
             );
