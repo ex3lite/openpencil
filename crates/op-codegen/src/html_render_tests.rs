@@ -107,3 +107,17 @@ fn css_tokens_stay_editable_for_paints_and_numeric_dimensions() {
     }
     assert!(!html.contains("<script>"));
 }
+
+#[test]
+fn standalone_frame_subtracts_its_inset_from_the_available_width() {
+    let html = render(
+        r#"{"version":"1","children":[{"id":"panel","type":"frame","layout":"horizontal","x":16,"width":1408,"height":56,"maxWidth":1600,"children":[{"id":"child","type":"frame","width":180,"layout":"horizontal","maxWidth":200}]}]}"#,
+    );
+    let root = element(&html, "panel");
+    assert!(root.contains("left:16px"));
+    assert!(root.contains("width:1408px"));
+    assert!(root.contains("max-width:min(1600px,calc(100% - 16px))"));
+    let child = element(&html, "child");
+    assert!(child.contains("max-width:200px"));
+    assert!(!child.contains("100%"));
+}

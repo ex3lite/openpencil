@@ -170,16 +170,36 @@ pub(super) fn geometry(node: &PenNode, parent: Parent, standalone: bool) -> Stri
         let (w, h) = node_size(node);
         let _ = write!(style, ";width:{}px;height:{}px", fmt_num(w), fmt_num(h));
     }
+    // A selected frame keeps its canvas origin in a standalone page. Only
+    // the space to the right of that origin is available on narrow screens.
+    let authored_max = limits.and_then(|l| l.max_width).filter(|n| *n >= 0.0);
     if standalone
         && matches!(flow(node), Parent::Row | Parent::Column)
-        && matches!(width, Some(SizingBehavior::Number(_)))
+        && matches!(
+            width,
+            Some(SizingBehavior::Number(_) | SizingBehavior::Expression(_))
+        )
     {
-        style.push_str(";max-width:100%");
+        let inset = base.x.unwrap_or(0.0);
+        let available = if inset > 0.0 {
+            format!("calc(100% - {}px)", fmt_num(inset))
+        } else {
+            "100%".into()
+        };
+        match authored_max {
+            Some(max) => {
+                let _ = write!(style, ";max-width:min({}px,{available})", fmt_num(max));
+            }
+            None => {
+                let _ = write!(style, ";max-width:{available}");
+            }
+        }
+    } else if let Some(max) = authored_max {
+        let _ = write!(style, ";max-width:{}px", fmt_num(max));
     }
     if let Some(limits) = limits {
         for (prop, value) in [
             ("min-width", limits.min_width),
-            ("max-width", limits.max_width),
             ("min-height", limits.min_height),
             ("max-height", limits.max_height),
         ] {
