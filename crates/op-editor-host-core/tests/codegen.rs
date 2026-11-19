@@ -164,3 +164,29 @@ fn framework_extensions_match_desktop_and_web() {
     assert_eq!(framework_ext(Framework::SwiftUi), "swift");
     assert_eq!(framework_ext(Framework::Compose), "kt");
 }
+
+#[test]
+fn html_panel_shares_expanded_visual_input_and_keeps_local_authored_dependencies() {
+    let doc = jian_ops_schema::load_str(
+        r##"{"version":"1.0.0","pages":[
+        {"id":"view","name":"View","children":[{"type":"ref","id":"button","ref":"master",
+            "descendants":{"title":{"content":"Click"}}}]},
+        {"id":"parts","name":"Parts","children":[{"type":"frame","id":"master","children":[
+            {"type":"text","id":"title","content":"Button"}]}]}
+    ]}"##,
+    )
+    .unwrap()
+    .value;
+    let mut state = EditorState::from_document(doc);
+    state.codegen.framework = op_editor_core::codegen::Framework::Html;
+    let (input, raw) = build_codegen_input(&state).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap()[0]["ref"],
+        "master"
+    );
+    let visible: serde_json::Value = serde_json::from_str(&input.nodes_json).unwrap();
+    assert_eq!(visible[0]["children"][0]["content"], "Click");
+    let html = input.html_selection.unwrap().generate();
+    assert!(html.contains(">Click</"));
+    assert!(html.contains("openbrush-source-v1"));
+}

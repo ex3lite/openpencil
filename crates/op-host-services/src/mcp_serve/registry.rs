@@ -166,7 +166,7 @@ pub(super) fn rebuild_registry(
     register_tool!("set_active_axis_value", set_active_axis_value_snapshot(doc));
     register_tool!("insert_node", insert_node_snapshot());
     register_tool!("import_svg", import_svg_snapshot());
-    register_tool!("import_html", import_html_snapshot());
+    register_tool!("import_html", import_html_for_document(doc));
     register_tool!("import_html_url", import_html_url_snapshot());
     register_tool!("import_web_snapshot", import_web_snapshot_tool());
     register_tool!("update_node", update_node_snapshot());

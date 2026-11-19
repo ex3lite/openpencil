@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use jian_ops_schema::node::PenNode;
-use op_editor_core::NodeId;
+use op_editor_core::{NodeId, PenNodeExt};
 use op_html::HtmlImportResult;
 
 use super::write_tools::{parse_opt_i32, root_or_node_id};
@@ -17,8 +17,8 @@ use super::{EditorCommand, ToolErrorCode, ToolOutcome};
 /// Placement args shared by every import tool: optional x/y offset for
 /// the root frame, target parent, and target page.
 pub struct ImportPlacement {
-    pub x: i32,
-    pub y: i32,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
     pub parent_id: NodeId,
     pub page_id: Option<String>,
 }
@@ -54,11 +54,9 @@ pub fn parse_import_placement(
     args: &BTreeMap<String, String>,
 ) -> Result<ImportPlacement, (ToolErrorCode, String)> {
     let x = parse_opt_i32(args, "x")
-        .map_err(|error| (ToolErrorCode::InvalidArgument, format!("x: {error}")))?
-        .unwrap_or(0);
+        .map_err(|error| (ToolErrorCode::InvalidArgument, format!("x: {error}")))?;
     let y = parse_opt_i32(args, "y")
-        .map_err(|error| (ToolErrorCode::InvalidArgument, format!("y: {error}")))?
-        .unwrap_or(0);
+        .map_err(|error| (ToolErrorCode::InvalidArgument, format!("y: {error}")))?;
     let parent_id = args
         .get("parent")
         .or_else(|| args.get("parent_id"))
@@ -87,24 +85,10 @@ pub fn count_subtree_nodes(nodes: &[PenNode]) -> usize {
     nodes
         .iter()
         .map(|node| {
-            1 + match node {
-                PenNode::Frame(node) => node
-                    .children
-                    .as_deref()
-                    .map(count_subtree_nodes)
-                    .unwrap_or_default(),
-                PenNode::Group(node) => node
-                    .children
-                    .as_deref()
-                    .map(count_subtree_nodes)
-                    .unwrap_or_default(),
-                PenNode::Rectangle(node) => node
-                    .children
-                    .as_deref()
-                    .map(count_subtree_nodes)
-                    .unwrap_or_default(),
-                _ => 0,
-            }
+            1 + node
+                .children_ref()
+                .map(count_subtree_nodes)
+                .unwrap_or_default()
         })
         .sum()
 }
@@ -128,24 +112,63 @@ pub fn import_result_to_outcome(
         );
     }
     let mut nodes = result.nodes;
-    if placement.x != 0 || placement.y != 0 {
-        if let PenNode::Frame(frame) = &mut nodes[0] {
-            frame.base.x = Some(placement.x as f64);
-            frame.base.y = Some(placement.y as f64);
-        }
-    }
+    place_imported_nodes(&mut nodes, &placement);
     let mut output = BTreeMap::new();
     output.insert("wrote".into(), "true".into());
     output.insert("nodeCount".into(), count_subtree_nodes(&nodes).to_string());
     if !result.warnings.is_empty() {
         output.insert("warnings".into(), result.warnings.join("\n"));
     }
-    ToolOutcome::OkWithCommand(
-        output,
-        EditorCommand::InsertSubtree {
-            nodes,
-            parent_id: placement.parent_id,
-            page_id: placement.page_id,
-        },
-    )
+    let insert = EditorCommand::InsertSubtree {
+        nodes,
+        parent_id: placement.parent_id,
+        page_id: placement.page_id,
+    };
+    let mut commands = Vec::new();
+    if !result.variables.is_empty() {
+        commands.push(EditorCommand::SetVariables {
+            variables: result.variables,
+            replace: false,
+        });
+    }
+    if !result.themes.is_empty() {
+        commands.push(EditorCommand::SetThemes {
+            themes: result.themes,
+            replace: false,
+        });
+    }
+    let command = if commands.is_empty() {
+        insert
+    } else {
+        commands.push(insert);
+        EditorCommand::Batch { commands }
+    };
+    ToolOutcome::OkWithCommand(output, command)
+}
+
+/// Apply optional canvas coordinates to an imported forest.
+pub fn place_imported_nodes(nodes: &mut [PenNode], placement: &ImportPlacement) {
+    // Anchor the primary selection at the requested axes. Preserve spacing
+    // across multiple selected roots and accept explicit zero coordinates.
+    let Some(first) = nodes.first() else {
+        return;
+    };
+    let origin = first.base();
+    let dx = placement
+        .x
+        .map(|x| f64::from(x) - origin.x.unwrap_or_default());
+    let dy = placement
+        .y
+        .map(|y| f64::from(y) - origin.y.unwrap_or_default());
+    if dx.is_some() || dy.is_some() {
+        for node in nodes {
+            let base = node.base_mut();
+            if let Some(dx) = dx {
+                base.x = Some(base.x.unwrap_or_default() + dx);
+            }
+            if let Some(dy) = dy {
+                base.y = Some(base.y.unwrap_or_default() + dy);
+            }
+        }
+    }
 }

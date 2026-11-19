@@ -10,6 +10,7 @@ pub mod color;
 pub mod css;
 pub mod css_encoding;
 pub mod dom;
+mod editable_document;
 pub(crate) mod font_face;
 pub mod html_encoding;
 pub mod import_warning;
@@ -119,6 +120,10 @@ impl Default for HtmlImportOptions {
 }
 
 pub struct HtmlImportResult {
+    /// Design variables and theme axes used by a reversible export.
+    pub variables:
+        std::collections::BTreeMap<String, jian_ops_schema::variable::VariableDefinition>,
+    pub themes: std::collections::BTreeMap<String, Vec<String>>,
     pub nodes: Vec<PenNode>,
     /// Rendered warning text, in emission order. Kept for the CLI JSON and
     /// MCP payloads, whose wording callers already depend on.
@@ -140,6 +145,8 @@ impl HtmlImportResult {
     /// string list from them so the two views can never drift.
     pub fn new(nodes: Vec<PenNode>, diagnostics: Vec<ImportWarning>) -> Self {
         Self {
+            variables: Default::default(),
+            themes: Default::default(),
             nodes,
             warnings: import_warning::render_warnings(&diagnostics),
             diagnostics,
@@ -182,7 +189,8 @@ impl HtmlDocumentResult {
 }
 
 pub fn import_html(source: &str, opts: &HtmlImportOptions) -> HtmlImportResult {
-    import_html_with_resources(source, opts, None, None)
+    editable_document::restore(source)
+        .unwrap_or_else(|| import_html_with_resources(source, opts, None, None))
 }
 
 pub fn import_html_with_resources(
@@ -453,7 +461,10 @@ pub fn import_html_document(
     fetcher: Option<&resources::ResourceFetcher<'_>>,
     transform: Option<&resources::ImageTransform<'_>>,
 ) -> HtmlDocumentResult {
-    wrap_imported_document(import_html_with_resources(source, opts, fetcher, transform))
+    wrap_imported_document(
+        editable_document::restore(source)
+            .unwrap_or_else(|| import_html_with_resources(source, opts, fetcher, transform)),
+    )
 }
 
 pub(crate) fn wrap_imported_document(imported: HtmlImportResult) -> HtmlDocumentResult {
@@ -465,8 +476,8 @@ pub(crate) fn wrap_imported_document(imported: HtmlImportResult) -> HtmlDocument
         PenDocument {
             version: "1.0".to_string(),
             name,
-            themes: None,
-            variables: None,
+            themes: (!imported.themes.is_empty()).then_some(imported.themes),
+            variables: (!imported.variables.is_empty()).then_some(imported.variables),
             pages: None,
             children: imported.nodes,
             format_version: None,

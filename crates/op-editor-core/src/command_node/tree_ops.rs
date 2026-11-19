@@ -7,7 +7,7 @@ use crate::id_allocator::{IdAllocError, IdAllocator, SequentialIdAllocator};
 use crate::node_id::NodeId;
 use crate::pen_node_ext::PenNodeExt;
 use jian_ops_schema::node::PenNode;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Replace the node with `target` id with `replacement` at its current
 /// slot, preserving sibling order. True on the first match.
@@ -152,6 +152,13 @@ pub fn remap_subtree_ids_mapping_with_allocator(
     let mut staged = nodes.to_vec();
     let mut map = Vec::new();
     remap_collect(&mut staged, allocator, taken, &mut map)?;
+    if crate::ref_resolve::roots_have_refs(&staged) {
+        let by_old: HashMap<_, _> = map
+            .iter()
+            .map(|(old, new)| (old.as_str(), new.as_str()))
+            .collect();
+        remap_local_refs(&mut staged, &by_old);
+    }
     for (destination, remapped) in nodes.iter_mut().zip(staged) {
         *destination = remapped;
     }
@@ -175,4 +182,28 @@ fn remap_collect(
         }
     }
     Ok(())
+}
+
+fn remap_local_refs(nodes: &mut [PenNode], ids: &HashMap<&str, &str>) {
+    for node in nodes {
+        if let PenNode::Ref(instance) = node {
+            if let Some(new_target) = ids.get(instance.target.as_str()) {
+                instance.target = (*new_target).to_owned();
+                if let Some(overrides) = &mut instance.descendants {
+                    *overrides = std::mem::take(overrides)
+                        .into_iter()
+                        .map(|(id, patch)| {
+                            (
+                                ids.get(id.as_str()).map_or(id, |new| (*new).to_owned()),
+                                patch,
+                            )
+                        })
+                        .collect();
+                }
+            }
+        }
+        if let Some(children) = node.children_mut() {
+            remap_local_refs(children, ids);
+        }
+    }
 }

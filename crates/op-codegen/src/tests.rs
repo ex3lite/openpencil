@@ -443,7 +443,7 @@ fn html_skips_hidden_nodes() {
     hidden.base_mut().name = Some("hidden".into());
     let doc = doc_with_nodes(vec![hidden]);
     let html = Html.generate(&doc);
-    assert!(!html.contains("hidden"));
+    assert!(!html.contains("data-op-id=\"n10\""));
 }
 
 #[test]
@@ -687,7 +687,10 @@ fn expression_bound_values_degrade_to_no_attribute() {
     let html = Html.generate(&doc_with_nodes(vec![node]));
     assert!(html.contains("<input type=\"range\""));
     assert!(!html.contains("value="));
-    assert!(!html.contains("$progress"));
+    let (visible_html, _) = html
+        .split_once("<script type=\"application/json\"")
+        .unwrap_or((&html, ""));
+    assert!(!visible_html.contains("$progress"));
 }
 
 /// B1: `--`-prefixed shadcn variable names must emit as CSS custom

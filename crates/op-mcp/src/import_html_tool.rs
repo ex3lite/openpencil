@@ -7,7 +7,11 @@ use super::import_common::{
 };
 use super::{McpTool, ToolErrorCode, ToolOutcome};
 
-pub struct ImportHtml;
+#[derive(Default)]
+pub struct ImportHtml {
+    variables: BTreeMap<String, jian_ops_schema::variable::VariableDefinition>,
+    themes: BTreeMap<String, Vec<String>>,
+}
 
 impl McpTool for ImportHtml {
     fn name(&self) -> &str {
@@ -54,11 +58,49 @@ impl McpTool for ImportHtml {
             viewport_height,
             ..HtmlImportOptions::default()
         };
-        let result = import_html(&html, &options);
+        let mut result = import_html(&html, &options);
+        // Imported component libraries can share tokens with their source
+        // document. Reuse equal definitions and protect unrelated designs.
+        for (name, imported) in &result.variables {
+            if self
+                .variables
+                .get(name)
+                .is_some_and(|current| current != imported)
+            {
+                return ToolOutcome::Err(
+                    ToolErrorCode::InvalidArgument,
+                    format!("imported variable {name:?} conflicts with an existing definition"),
+                );
+            }
+        }
+        result
+            .variables
+            .retain(|name, _| !self.variables.contains_key(name));
+        for (axis, values) in &mut result.themes {
+            if let Some(existing) = self.themes.get(axis) {
+                let mut merged = existing.clone();
+                for value in values.iter() {
+                    if !merged.contains(value) {
+                        merged.push(value.clone());
+                    }
+                }
+                *values = merged;
+            }
+        }
+        result
+            .themes
+            .retain(|key, values| self.themes.get(key) != Some(values));
         import_result_to_outcome(result, placement)
     }
 }
 
 pub fn import_html_snapshot() -> ImportHtml {
-    ImportHtml
+    ImportHtml::default()
+}
+
+pub fn import_html_for_document(doc: &op_editor_core::EditorState) -> ImportHtml {
+    ImportHtml {
+        variables: doc.doc.variables.clone().unwrap_or_default(),
+        themes: doc.doc.themes.clone().unwrap_or_default(),
+    }
 }

@@ -19,6 +19,7 @@ fn input() -> CodegenInput {
         nodes_json: "[]".into(),
         framework: Framework::React,
         variables_json: None,
+        html_selection: None,
         max_output_tokens: 4096,
         thinking: ThinkingMode::Adaptive,
         effort: EffortLevel::Low,

@@ -22,6 +22,7 @@ pub mod acp_agent_probe_host;
 pub mod ai_proxy;
 pub mod ai_proxy_error;
 pub mod builtin_model_discovery;
+pub mod bundled_fonts;
 pub mod chat_agent_loop;
 pub mod chat_attachment;
 #[cfg(test)]

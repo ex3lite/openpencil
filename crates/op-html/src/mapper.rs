@@ -257,7 +257,12 @@ pub(crate) fn map_element_scoped(
     let parent_reference = (context.containing_width, context.containing_height);
     let mut base = PenNodeBase {
         id: context.generate_id(),
-        name: Some(element.tag.clone()),
+        name: Some(
+            element
+                .attr("data-op-name")
+                .unwrap_or(&element.tag)
+                .to_string(),
+        ),
         role: ((element.tag == "button") || element.attr("role") == Some("button"))
             .then_some("button".to_string()),
         ..Default::default()

@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use crate::import_html_url::import_html_url_snapshot;
 use op_editor_core::{EditorCommand, EditorState};
-use op_mcp::import_html_tool::import_html_snapshot;
+use op_mcp::import_html_tool::import_html_for_document;
 use op_mcp::import_snapshot_tool::import_web_snapshot_tool;
 use op_mcp::{
     add_node_effect_snapshot, add_page_snapshot, align_selected_snapshot,

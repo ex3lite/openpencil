@@ -74,6 +74,8 @@ pub(crate) fn load_bundled_fonts_at_mount<C: RepaintContext + 'static>(inner: &R
             if let Ok(bytes) = result {
                 if let Some(family) = register_bundled_font(&inner, &bytes) {
                     families.borrow_mut().push(family);
+                    #[cfg(target_arch = "wasm32")]
+                    op_codegen::register_bundled_export_font(file, bytes);
                 }
             }
             // Counted for failures too — a 404 for one face must not hold the

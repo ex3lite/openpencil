@@ -8,6 +8,7 @@ fn input() -> CodegenInput {
         nodes_json: "[{\"type\":\"frame\",\"id\":\"n1\",\"children\":[]}]".into(),
         framework: Framework::React,
         variables_json: None,
+        html_selection: None,
         max_output_tokens: 3000,
         thinking: ThinkingMode::Adaptive,
         effort: EffortLevel::Low,

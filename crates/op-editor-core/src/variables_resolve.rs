@@ -103,6 +103,17 @@ fn resolve_themed_value<'a>(
     values.first().map(|v| &v.value)
 }
 
+/// The authored scalar for an active theme, retaining any alias reference.
+pub fn themed_scalar<'a>(
+    definition: &'a VariableDefinition,
+    theme: &Theme,
+) -> Option<&'a VariableScalar> {
+    match &definition.value {
+        VariableValue::Scalar(value) => Some(value),
+        VariableValue::Themed(entries) => resolve_themed_value(entries, theme),
+    }
+}
+
 /// Whether the built-in semantic palette (shadcn dictionary, or the
 /// legacy `color-*` compat table) can answer `name` on its own — a
 /// reference the document's own table does not define is not
@@ -138,32 +149,31 @@ fn fallback_scalar(fallback: &FallbackValue, theme: &Theme) -> VariableScalar {
     }
 }
 
-/// Resolve a single `$name` reference to its concrete scalar
-/// (TS `resolveVariableRef`). Unknown tokens consult the built-in
-/// semantic palette; a resolved value that is itself a `$ref` is a
-/// circular guard miss.
+/// Resolve a design token, following aliases in the active theme. A repeated
+/// alias is a cycle; unknown names can still use the built-in palette.
 pub fn resolve_variable_ref(
     reference: &str,
     vars: Option<&Vars>,
     theme: &Theme,
 ) -> Option<VariableScalar> {
-    let name = reference.strip_prefix('$')?;
-    let def = vars.and_then(|v| v.get(name));
-    let Some(def) = def else {
-        let fallback = palette_fallback(name)?;
-        return Some(fallback_scalar(fallback, theme));
-    };
-    let scalar = match &def.value {
-        VariableValue::Scalar(s) => s,
-        VariableValue::Themed(entries) => resolve_themed_value(entries, theme)?,
-    };
-    // Circular guard: a variable resolving to another `$ref` stops.
-    if let VariableScalar::Str(s) = scalar {
-        if is_variable_ref(s) {
-            return None;
+    let mut name = reference.strip_prefix('$')?;
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        let Some(definition) = vars.and_then(|table| table.get(name)) else {
+            return Some(fallback_scalar(palette_fallback(name)?, theme));
+        };
+        let scalar = themed_scalar(definition, theme)?;
+        if let VariableScalar::Str(value) = scalar {
+            if let Some(alias) = value.strip_prefix('$').filter(|name| !name.is_empty()) {
+                if !seen.insert(alias) {
+                    return None;
+                }
+                name = alias;
+                continue;
+            }
         }
+        return Some(scalar.clone());
     }
-    Some(scalar.clone())
 }
 
 /// Resolve a colour string that may be a `$ref`; non-refs pass

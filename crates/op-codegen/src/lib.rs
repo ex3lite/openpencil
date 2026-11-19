@@ -20,6 +20,11 @@
 pub mod ai;
 
 mod codegen_targets;
+mod html_fonts;
+#[cfg(target_arch = "wasm32")]
+pub use html_fonts::register_bundled_export_font;
+mod html_input;
+pub use html_input::HtmlSelection;
 #[cfg(test)]
 mod tests;
 

@@ -21,6 +21,7 @@ fn main() {
         );
         exit(2);
     };
+    op_host_services::bundled_fonts::register();
     match op_host_services::cli_modes::run_cli_mode("op-host-web-server", &first, args) {
         Some(0) => {}
         Some(code) => exit(code),

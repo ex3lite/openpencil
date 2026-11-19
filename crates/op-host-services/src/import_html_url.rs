@@ -51,14 +51,7 @@ impl McpTool for ImportHtmlUrl {
             Err(error) => return ToolOutcome::Err(error.tool_error_code(), error.to_string()),
         };
         let mut nodes = page.nodes;
-        if placement.x != 0 || placement.y != 0 {
-            if let PenNode::Frame(frame) = &mut nodes[0] {
-                frame.base.x = Some(placement.x as f64);
-                frame.base.y = Some(placement.y as f64);
-            }
-        }
-        // Diverges from `op_mcp::import_common::import_result_to_outcome`
-        // only by the extra `sourceUrl` output entry.
+        op_mcp::import_common::place_imported_nodes(&mut nodes, &placement);
         let mut output = BTreeMap::new();
         output.insert("wrote".into(), "true".into());
         output.insert("nodeCount".into(), count_subtree_nodes(&nodes).to_string());

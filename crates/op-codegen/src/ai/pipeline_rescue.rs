@@ -65,17 +65,24 @@ impl CodegenPipeline {
     }
 
     fn finish_with_deterministic_fallback(&mut self) -> PipelineStep {
-        match deterministic_fallback::generate(
-            &self.sanitized_nodes_json,
-            self.input.variables_json.as_deref(),
-            self.input.framework,
-        ) {
-            Ok(code) => {
+        let generated = if let Some(selection) = self.input.html_selection.as_ref() {
+            // Standalone HTML embeds the selection's image sources.
+            Ok((selection.generate(), Vec::new()))
+        } else {
+            deterministic_fallback::generate(
+                &self.sanitized_nodes_json,
+                self.input.variables_json.as_deref(),
+                self.input.framework,
+            )
+            .map(|code| (code, self.assets.clone()))
+        };
+        match generated {
+            Ok((code, assets)) => {
                 self.assembly_done = Some(true);
                 let step = PipelineStep::Done {
                     code,
                     degraded: true,
-                    assets: self.assets.clone(),
+                    assets,
                 };
                 self.phase = Phase::Terminal(step.clone());
                 step

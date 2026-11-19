@@ -12,6 +12,8 @@ use crate::css::cascade::ComputedStyle;
 use crate::dom::{DomElement, DomNode};
 use crate::mapper::{container_props_from, MapCtx};
 
+#[path = "editable_path.rs"]
+mod editable_path;
 #[path = "special_image.rs"]
 mod image;
 #[cfg(test)]
@@ -29,7 +31,8 @@ pub fn map_special(
     let element = *path.last()?;
     let node = match element.tag.as_str() {
         "img" => map_image(context, path, element, style),
-        "svg" => map_svg(context, element, style),
+        "svg" => editable_path::map(context, path, element, style)
+            .unwrap_or_else(|| map_svg(context, element, style)),
         "input" => map_input(context, element, style),
         "textarea" => map_text_area(context, element, style),
         "select" => map_select(context, element, style),

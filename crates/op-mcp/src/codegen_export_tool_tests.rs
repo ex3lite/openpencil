@@ -95,3 +95,43 @@ fn bad_arguments_return_typed_errors() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn html_export_uses_document_order_component_overrides_and_the_active_theme() {
+    let mut state = state();
+    state
+        .ui
+        .variables
+        .active_theme
+        .insert("Mode".into(), "Dark".into());
+    let html = json(call(
+        &state,
+        &[("framework", "html"), ("nodeIds", "other,cta,card,card")],
+    ));
+    assert_eq!(html["nodeCount"], 2);
+    let code = html["code"].as_str().unwrap();
+    let visible = code
+        .split("<script type=\"application/json\" id=\"openbrush-source-v1\"")
+        .next()
+        .unwrap();
+    assert!(visible.contains(">Buy</"), "{visible}");
+    assert!(!visible.contains(">Button</"), "{visible}");
+    assert!(
+        visible.contains("#18181b") || visible.contains("rgb(24,24,27)"),
+        "{visible}"
+    );
+    assert!(!visible.contains("$--card"));
+    let card = visible.find("data-op-id=\"card\"").unwrap();
+    let cta = visible.find("data-op-id=\"cta\"").unwrap();
+    let other = visible.find("data-op-id=\"other\"").unwrap();
+    assert!(card < cta && cta < other);
+    let source: Value =
+        serde_json::from_str(op_util::editable_html::unchanged_document_source(code).unwrap())
+            .unwrap();
+    assert_eq!(source["themes"]["Mode"][0], "Dark");
+    assert_eq!(source["children"][0]["children"][0]["ref"], "btn");
+    assert_eq!(
+        source["pages"][0]["children"][0]["children"][0]["content"],
+        "Button"
+    );
+}

@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::PenDocument;
 use op_codegen::{
-    Codegen, Compose, CssVariables, Flutter, Html, React, ReactNative, Svelte, SwiftUi, Vue,
+    Codegen, Compose, CssVariables, Flutter, HtmlSelection, React, ReactNative, Svelte, SwiftUi,
+    Vue,
 };
 use op_editor_core::codegen::Framework;
 use op_editor_core::walkers::find_node;
@@ -23,6 +24,7 @@ pub struct CodegenExport {
     doc: PenDocument,
     active_page: usize,
     selection: Vec<String>,
+    active_theme: BTreeMap<String, String>,
 }
 
 /// Every wire token `codegen_export` accepts, in catalog order.
@@ -38,6 +40,7 @@ pub fn codegen_export_snapshot(state: &EditorState) -> CodegenExport {
     CodegenExport {
         doc: state.doc.clone(),
         active_page: state.ui.active_page_index,
+        active_theme: state.ui.variables.active_theme.clone(),
         selection: state
             .selection
             .set
@@ -72,26 +75,31 @@ impl McpTool for CodegenExport {
             Ok(roots) => roots,
             Err(message) => return ToolOutcome::Err(ToolErrorCode::ToolFailed, message),
         };
-        let mut scoped = self.doc.clone();
-        scoped.pages = None;
-        scoped.children = roots.iter().map(|node| (*node).clone()).collect();
-
-        let mut files = Map::new();
-        let code = match framework {
-            Some(Framework::React) => React.generate(&scoped),
-            Some(Framework::Vue) => Vue.generate(&scoped),
-            Some(Framework::Svelte) => Svelte.generate(&scoped),
-            Some(Framework::Html) => Html.generate(&scoped),
-            Some(Framework::Flutter) => Flutter.generate(&scoped),
-            Some(Framework::SwiftUi) => SwiftUi.generate(&scoped),
-            Some(Framework::Compose) => Compose.generate(&scoped),
-            Some(Framework::ReactNative) => ReactNative.generate(&scoped),
-            None => CssVariables.generate(&scoped),
+        let (code, node_count) = if framework == Some(Framework::Html) {
+            let selection = HtmlSelection::new(&self.doc, roots, &self.active_theme);
+            (selection.generate(), selection.node_count())
+        } else {
+            let mut scoped = self.doc.clone();
+            scoped.pages = None;
+            scoped.children = roots.into_iter().cloned().collect();
+            let code = match framework {
+                Some(Framework::React) => React.generate(&scoped),
+                Some(Framework::Vue) => Vue.generate(&scoped),
+                Some(Framework::Svelte) => Svelte.generate(&scoped),
+                Some(Framework::Flutter) => Flutter.generate(&scoped),
+                Some(Framework::SwiftUi) => SwiftUi.generate(&scoped),
+                Some(Framework::Compose) => Compose.generate(&scoped),
+                Some(Framework::ReactNative) => ReactNative.generate(&scoped),
+                Some(Framework::Html) => unreachable!(),
+                None => CssVariables.generate(&scoped),
+            };
+            (code, scoped.children.len())
         };
+        let mut files = Map::new();
         files.insert(format!("component.{}", extension(framework)), json!(code));
         let out = json!({
             "framework": target,
-            "nodeCount": roots.len(),
+            "nodeCount": node_count,
             "code": code,
             "files": Value::Object(files),
         });

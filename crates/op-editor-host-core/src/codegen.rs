@@ -29,11 +29,22 @@ pub(crate) enum CodegenNodesJsonError {
 /// the raw selected-nodes JSON used by desktop export bundling.
 pub fn build_codegen_input(state: &EditorState) -> Option<(CodegenInput, String)> {
     let selected = codegen_target_nodes(state)?;
-    Some(input_from_nodes(
-        &selected,
-        state.codegen.framework,
-        state.doc.variables.as_ref(),
-    ))
+    let framework = state.codegen.framework;
+    if framework == op_editor_core::codegen::Framework::Html {
+        let selection = op_codegen::HtmlSelection::new(
+            &state.doc,
+            selected.iter().copied(),
+            &state.ui.variables.active_theme,
+        );
+        // The model sees the same visible instance content as the canvas. Keep
+        // the authored nodes separately for user-requested structure bundles.
+        let (mut input, raw_nodes) = input_from_nodes(&selected, framework, selection.variables());
+        input.nodes_json = serde_json::to_string(&selection.prepared_document().children).ok()?;
+        input.html_selection = Some(selection);
+        return Some((input, raw_nodes));
+    }
+    let (input, raw_nodes) = input_from_nodes(&selected, framework, state.doc.variables.as_ref());
+    Some((input, raw_nodes))
 }
 
 /// Serialize only the selected/page nodes for live bundle export, stopping
@@ -141,6 +152,7 @@ fn input_from_nodes(
         nodes_json: nodes_json.clone(),
         framework,
         variables_json,
+        html_selection: None,
         max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
         thinking: ThinkingMode::Adaptive,
         effort: EffortLevel::Low,

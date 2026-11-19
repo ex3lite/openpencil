@@ -148,6 +148,8 @@ pub struct CodegenInput {
     pub framework: Framework,
     /// Design variables as JSON (None if the doc has none).
     pub variables_json: Option<String>,
+    /// Local authored context for the deterministic HTML fallback. Never sent to the model.
+    pub html_selection: Option<crate::HtmlSelection>,
     /// Per-request token cap.
     pub max_output_tokens: u32,
     pub thinking: ThinkingMode,
