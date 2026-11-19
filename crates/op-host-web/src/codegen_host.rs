@@ -37,6 +37,13 @@ fn matches(pending: &Pending, id: &str, epoch: u64, state: &EditorState) -> bool
         && state.editor_ui.host_owns_chat
 }
 
+// Match the host bridge's primary-file limit. Standalone HTML may embed fonts
+// and the editable scene alongside the visible markup.
+fn valid_source(framework: Framework, code: &str) -> bool {
+    let mib = if framework == Framework::Html { 16 } else { 2 };
+    code.len() <= mib * 1024 * 1024 && !code.trim().is_empty()
+}
+
 fn discard() -> Option<Pending> {
     PENDING.with(|pending| pending.borrow_mut().take())
 }
@@ -162,7 +169,7 @@ pub(crate) fn receive<C: RepaintContext + 'static>(
         cg.phase = CodegenPhase::Error;
     } else {
         if let Some(code) = code {
-            if code.trim().is_empty() || code.len() > 2 * 1024 * 1024 {
+            if !valid_source(pending.framework, &code) {
                 cg.error = Some("The canvas host returned invalid source code.".into());
                 cg.phase = CodegenPhase::Error;
                 context.host_mut().mark_editor_state_dirty();
@@ -195,6 +202,15 @@ pub(crate) fn receive<C: RepaintContext + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_page_html_can_carry_fonts_and_editable_source() {
+        let page = "a".repeat(16 * 1024 * 1024);
+        assert!(valid_source(Framework::Html, &page));
+        assert!(!valid_source(Framework::Vue, &page));
+        assert!(!valid_source(Framework::Html, &(page + "a")));
+        assert!(!valid_source(Framework::Html, "  "));
+    }
 
     #[test]
     fn cancellation_discards_the_host_request() {
