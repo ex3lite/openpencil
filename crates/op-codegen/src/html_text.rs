@@ -54,7 +54,10 @@ fn decoration(style: &mut String, underline: Option<bool>, strike: Option<bool>)
 
 pub(super) fn style(style: &mut String, n: &TextNode) {
     // Block alignment keeps styled runs together on the same text line.
-    style.push_str(";display:block");
+    // The canvas requests the font's weight axis and leaves optical size at
+    // its default. Browsers otherwise select a narrower display cut for
+    // large type in variable fonts such as Inter.
+    style.push_str(";display:block;font-optical-sizing:none");
     match n.text_align_vertical {
         Some(TextAlignVertical::Middle) => style.push_str(";align-content:center"),
         Some(TextAlignVertical::Bottom) => style.push_str(";align-content:end"),
@@ -89,8 +92,13 @@ pub(super) fn style(style: &mut String, n: &TextNode) {
     if matches!(n.font_style, Some(TextFontStyle::Italic)) {
         style.push_str(";font-style:italic");
     }
-    if let Some(n) = n.letter_spacing {
-        let _ = write!(style, ";letter-spacing:{}px", fmt_num(n));
+    if let Some(spacing) = n.letter_spacing {
+        let _ = write!(style, ";letter-spacing:{}px", fmt_num(spacing));
+        // Nonzero tracking is painted one glyph at a time on the canvas,
+        // so pair kerning must not change these advances in HTML.
+        if spacing != 0.0 {
+            style.push_str(";font-kerning:none");
+        }
     }
     let _ = write!(
         style,
@@ -139,6 +147,26 @@ pub(super) fn body(out: &mut String, node: &TextNode) {
                     html_escape(&seg.text)
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserve_optical_size_and_only_disable_kerning_for_tracked_text() {
+        let mut node: TextNode = serde_json::from_str(r#"{"id":"headline","content":"AV","fontFamily":"Inter","fontSize":46,"fontWeight":600}"#).unwrap();
+        for tracking in [None, Some(0.0), Some(-1.2), Some(0.5)] {
+            node.letter_spacing = tracking;
+            let mut css = String::new();
+            style(&mut css, &node);
+            assert!(css.contains("font-optical-sizing:none"));
+            assert_eq!(
+                css.contains("font-kerning:none"),
+                tracking.unwrap_or_default() != 0.0
+            );
         }
     }
 }
