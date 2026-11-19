@@ -493,6 +493,28 @@ mod tests {
     }
 
     #[test]
+    fn selected_images_embed_their_shared_source_and_retain_canvas_sampling() {
+        let cover = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNoYGgAAAIEAQHNMi3gAAAAAElFTkSuQmCC";
+        let other = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC";
+        let wire = serde_json::json!({
+            "version":"1","images":{"cover":cover,"other":other},"children":[
+                {"type":"frame","id":"library","children":[
+                    {"type":"image","id":"card","src":"op-image:cover","objectFit":"crop"},
+                    {"type":"image","id":"preview","src":"op-image:cover","objectFit":"fit"}
+                ]},
+                {"type":"image","id":"unused","src":"op-image:other"}
+            ]
+        });
+        let doc = jian_ops_schema::load_str(&wire.to_string()).unwrap().value;
+        let selection = HtmlSelection::new(&doc, [&doc.children[0]], &Default::default());
+        let html = selection.generate();
+        assert_eq!(html.matches(&format!(r#"<img src="{cover}""#)).count(), 2);
+        assert!(html.contains("object-fit:cover;image-rendering:pixelated"));
+        assert!(html.contains("object-fit:contain;image-rendering:pixelated"));
+        assert!(!html.contains("op-image:") && !html.contains(other));
+    }
+
+    #[test]
     fn independently_selected_master_child_and_instance_have_distinct_import_ids() {
         let doc: PenDocument = serde_json::from_value(serde_json::json!({
             "version":"1","children":[

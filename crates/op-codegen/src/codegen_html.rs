@@ -291,9 +291,11 @@ fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalo
             return;
         }
         PenNode::Image(img) => {
+            // The canvas samples an untransformed image with Skia's default
+            // nearest filter. Browser smoothing blurs small type in cover art.
             let _ = write!(
                 style,
-                ";object-fit:{}",
+                ";object-fit:{};image-rendering:pixelated",
                 image_object_fit(node).expect("image fit")
             );
             let _ = writeln!(
