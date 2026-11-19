@@ -54,8 +54,15 @@ impl Html {
         }
         out.push_str("</head>\n<body>\n");
         let roots = root_nodes(doc);
-        for node in roots {
-            emit(&mut out, node, 1, Parent::Canvas, roots.len() == 1);
+        for (index, node) in roots.iter().enumerate() {
+            emit(
+                &mut out,
+                node,
+                1,
+                Parent::Canvas,
+                roots.len() == 1,
+                roots.len() - 1 - index,
+            );
         }
         out.push_str("</body></html>\n");
         out
@@ -63,7 +70,7 @@ impl Html {
 }
 
 pub(super) fn emit_node_html(out: &mut String, node: &PenNode, depth: usize) {
-    emit(out, node, depth, Parent::Canvas, false);
+    emit(out, node, depth, Parent::Canvas, false, 0);
 }
 
 fn paint_color(color: &str, opacity: f32) -> String {
@@ -260,7 +267,14 @@ fn vector(
     out.push_str(" /></svg>\n");
 }
 
-fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalone: bool) {
+fn emit(
+    out: &mut String,
+    node: &PenNode,
+    depth: usize,
+    parent: Parent,
+    standalone: bool,
+    z_index: usize,
+) {
     if node_hidden(node) {
         return;
     }
@@ -277,6 +291,9 @@ fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalo
     let button =
         matches!(semantics.and_then(|s| s.role), Some(SemanticRole::Button)) && node.is_container();
     let mut style = layout::geometry(node, parent, standalone);
+    // Canonical siblings are topmost first. Keep DOM and flex order for layout
+    // and focus while painting each subtree as one native layer.
+    let _ = write!(style, ";z-index:{z_index}");
     if button {
         attrs.push_str(" type=\"button\"");
         if matches!(node.base().enabled, Some(BoolOrExpression::Bool(false))) {
@@ -287,6 +304,9 @@ fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalo
     shape_style(&mut style, node);
     layout::container_style(&mut style, node);
     style.push_str(&codegen_motion_css::inline_style(node));
+    if fields::emit(out, node, &attrs, &style, &indent) {
+        return;
+    }
     match node {
         PenNode::Path(path) => {
             vector(out, node, path, &attrs, style, &indent);
@@ -304,9 +324,6 @@ fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalo
                 out,
                 "{indent}<img src=\"{}\" alt=\"{}\"{attrs} style=\"{}\" />",
                 html_escape(img.src.as_ref()),
-    if fields::emit(out, node, &attrs, &style, &indent) {
-        return;
-    }
                 html_escape(img.base.name.as_deref().unwrap_or_default()),
                 html_escape(&style)
             );
@@ -340,8 +357,15 @@ fn emit(out: &mut String, node: &PenNode, depth: usize, parent: Parent, standalo
         let children = node_children(node);
         if !children.is_empty() {
             out.push('\n');
-            for child in children {
-                emit(out, child, depth + 1, layout::flow(node), false);
+            for (index, child) in children.iter().enumerate() {
+                emit(
+                    out,
+                    child,
+                    depth + 1,
+                    layout::flow(node),
+                    false,
+                    children.len() - 1 - index,
+                );
             }
             out.push_str(&indent);
         }

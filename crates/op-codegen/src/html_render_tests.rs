@@ -26,7 +26,7 @@ fn row_and_column_share_remaining_space_and_keep_fixed_and_hugged_children() {
         "flex-direction:row",
         "padding:4px 12px",
         "gap:6px",
-        "align-items:center",
+        "align-items:safe center",
         "justify-content:space-between",
         "width:800px",
         "max-width:100%",
@@ -120,4 +120,68 @@ fn standalone_frame_subtracts_its_inset_from_the_available_width() {
     let child = element(&html, "child");
     assert!(child.contains("max-width:200px"));
     assert!(!child.contains("100%"));
+}
+
+#[test]
+fn selected_frames_use_local_coordinates_and_docked_panels_keep_their_gutter() {
+    use op_editor_core::PenNodeExt;
+    let doc: PenDocument = serde_json::from_str(r#"{"version":"1","children":[{"id":"board","type":"frame","x":1880,"y":2160,"width":1440,"height":960,"layout":"none","children":[
+        {"id":"inspector","type":"frame","x":1152,"y":88,"width":272,"height":856,"layout":"vertical"},
+        {"id":"bar","type":"frame","x":16,"y":16,"width":1408,"height":56,"layout":"horizontal"}
+    ]}]}"#).unwrap();
+    let root = &doc.children[0];
+    let kids = root.children().unwrap();
+    let export = |node| Html.generate_selection(&doc, [node], &Default::default());
+    let board = export(root);
+    assert!(element(&board, "board").contains("left:0px;top:0px"));
+    assert!(element(&board, "inspector").contains("left:1152px;top:88px"));
+    let inspector = export(&kids[0]);
+    assert!(element(&inspector, "inspector").contains("left:0px;top:0px;width:272px"));
+    assert!(element(&inspector, "inspector").contains("max-width:100%"));
+    let bar = export(&kids[1]);
+    assert!(element(&bar, "bar").contains("left:16px;top:16px"));
+    assert!(element(&bar, "bar").contains("max-width:calc(100% - 16px)"));
+    let saved = op_util::editable_html::unchanged_document_source(&board).unwrap();
+    let source: PenDocument = serde_json::from_str(saved).unwrap();
+    assert_eq!(source.children[0].base().x, Some(1880.0));
+}
+
+#[test]
+fn sibling_layers_paint_topmost_first_without_reversing_flex_or_focus_order() {
+    let html = render(
+        r#"{"version":"1","children":[{"id":"row","type":"frame","layout":"horizontal","children":[
+        {"id":"label","type":"text","content":"Caption"},{"id":"surface","type":"frame","children":[{"id":"nested","type":"rectangle"}]}
+    ]},{"id":"back","type":"rectangle"}]}"#,
+    );
+    for (id, index) in [
+        ("row", 1),
+        ("label", 1),
+        ("surface", 0),
+        ("nested", 0),
+        ("back", 0),
+    ] {
+        assert!(element(&html, id).contains(&format!("z-index:{index}")));
+    }
+    assert!(html.find("data-op-id=\"label\"") < html.find("data-op-id=\"surface\""));
+}
+
+#[test]
+fn open_row_grows_below_the_original_alignment_box_for_taller_flow_children() {
+    let html = render(
+        r#"{"version":"1","children":[{"type":"frame","id":"row","height":32,"layout":"horizontal","alignItems":"center","children":[
+        {"type":"rectangle","id":"small","height":32},{"type":"rectangle","id":"large","height":36},
+        {"type":"rectangle","id":"overlay","role":"overlay","height":120}
+    ]}]}"#,
+    );
+    let row = element(&html, "row");
+    assert!(row.contains("height:36px;padding-bottom:4px"));
+    assert!(row.contains("align-items:safe center"));
+}
+
+#[test]
+fn positioned_vector_snaps_its_two_edges_independently() {
+    let html = render(
+        r#"{"version":"1","children":[{"type":"path","id":"dots","x":11.3,"y":11.3,"width":1417.4,"height":937.4,"d":"M0 0 L1417.4 937.4"}]}"#,
+    );
+    assert!(element(&html, "dots").contains("left:11px;top:11px;width:1418px;height:938px"));
 }

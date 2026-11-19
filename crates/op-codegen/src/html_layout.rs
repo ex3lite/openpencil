@@ -61,6 +61,31 @@ fn measures(node: &PenNode) -> Measures<'_> {
 }
 
 impl super::Html {
+    /// A standalone frame gets its own viewport. A docked flow panel with
+    /// matching side gutters retains those insets in its responsive preview.
+    pub(crate) fn standalone_frame_origin(
+        node: &PenNode,
+        parent: Option<&PenNode>,
+    ) -> Option<(f64, f64)> {
+        if !matches!(node, PenNode::Frame(_) | PenNode::Ref(_)) {
+            return None;
+        }
+        let (x, y) = node_origin(node);
+        if matches!(flow(node), Parent::Row | Parent::Column) {
+            if let Some((parent_width, width)) =
+                parent.and_then(PenNodeExt::width_px).zip(node.width_px())
+            {
+                if x > 0.0
+                    && width > parent_width / 2.0
+                    && (parent_width - width - 2.0 * x).abs() < 0.01
+                {
+                    return Some((x, y.clamp(0.0, x)));
+                }
+            }
+        }
+        Some((0.0, 0.0))
+    }
+
     pub(crate) fn resolve_sizing(
         node: &mut PenNode,
         vars: Option<
@@ -107,8 +132,16 @@ pub(super) fn geometry(node: &PenNode, parent: Parent, standalone: bool) -> Stri
             base.role.as_deref() == Some("overlay") || (base.constraints.is_some() && positioned)
         }
     };
+    let (x, y) = node_origin(node);
+    // Taffy snaps both edges of a positioned vector. Fractional SVG
+    // viewports otherwise accumulate visible drift across repeating paths.
+    let snap_vector = absolute && matches!(node, PenNode::Path(_));
     if absolute {
-        let (x, y) = node_origin(node);
+        let (x, y) = if snap_vector {
+            (x.round(), y.round())
+        } else {
+            (x, y)
+        };
         let _ = write!(
             style,
             ";position:absolute;left:{}px;top:{}px",
@@ -129,7 +162,13 @@ pub(super) fn geometry(node: &PenNode, parent: Parent, standalone: bool) -> Stri
     ] {
         match size {
             Some(SizingBehavior::Number(n)) => {
-                let _ = write!(style, ";{axis}:{}px", fmt_num(*n));
+                let value = if snap_vector && *n > 0.0 {
+                    let origin = if axis == "width" { x } else { y };
+                    ((origin + n).round() - origin.round()).max(1.0)
+                } else {
+                    *n
+                };
+                let _ = write!(style, ";{axis}:{}px", fmt_num(value));
             }
             Some(SizingBehavior::Expression(s)) => {
                 if let Some(length) = super::tokens::length(s) {
@@ -221,6 +260,9 @@ pub(super) fn container_style(style: &mut String, node: &PenNode) {
         return;
     }
     let align = match c.align_items {
+        // Taffy clamps negative cross-axis free space to the start edge.
+        Some(AlignItems::Center) if mode != Parent::Stack => "safe center",
+        Some(AlignItems::End) if mode != Parent::Stack => "safe end",
         Some(AlignItems::Center) => "center",
         Some(AlignItems::End) => "end",
         Some(AlignItems::Stretch) => "stretch",
@@ -266,13 +308,46 @@ pub(super) fn container_style(style: &mut String, node: &PenNode) {
             }
             return;
         }
-        None => return,
+        None => &[],
     };
-    style.push_str(";padding:");
+    if !values.is_empty() {
+        style.push_str(";padding:");
+    }
     for (i, n) in values.iter().enumerate() {
         if i > 0 {
             style.push(' ');
         }
         let _ = write!(style, "{}px", fmt_num(*n));
+    }
+    // The native layout repair grows an open row to fit a taller child after
+    // aligning children within its original content box. Reserve that growth
+    // below the box so smaller siblings stay at their authored alignment.
+    if mode == Parent::Row && c.clip_content != Some(true) {
+        if let Some(height) = node.height_px() {
+            let (top, bottom) = match values {
+                [top, _, bottom, _] => (*top, *bottom),
+                [vertical, ..] => (*vertical, *vertical),
+                [] => (0.0, 0.0),
+            };
+            let tallest = crate::node_children(node)
+                .iter()
+                .filter(|child| {
+                    let base = child.base();
+                    base.role.as_deref() != Some("overlay")
+                        && !(base.constraints.is_some() && (base.x.is_some() || base.y.is_some()))
+                        && !crate::node_hidden(child)
+                })
+                .filter_map(PenNodeExt::height_px)
+                .fold(0.0, f64::max);
+            let growth = tallest + top + bottom - height;
+            if tallest > 0.0 && growth > 0.5 {
+                let _ = write!(
+                    style,
+                    ";height:{}px;padding-bottom:{}px",
+                    fmt_num(height + growth),
+                    fmt_num(bottom + growth)
+                );
+            }
+        }
     }
 }

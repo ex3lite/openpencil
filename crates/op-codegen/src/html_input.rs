@@ -15,6 +15,7 @@ use crate::Html;
 #[derive(Clone, Debug)]
 pub struct HtmlSelection {
     source: PenDocument,
+    standalone_frame_origin: Option<(f64, f64)>,
     active_theme: BTreeMap<String, String>,
 }
 
@@ -49,11 +50,15 @@ impl HtmlSelection {
         // Selection order can be click order, and a selected frame may include another
         // selected node. Traverse the original forest once to retain paint order.
         let roots = ordered_roots(&forest, &selected);
+        let standalone_frame_origin = match roots.as_slice() {
+            [(root, parent)] => Html::standalone_frame_origin(root, *parent),
+            _ => None,
+        };
         let mut available = HashMap::new();
         let mut pending = BTreeSet::new();
         let mut tokens = BTreeSet::new();
         let mut included = HashSet::new();
-        for node in &roots {
+        for (node, _) in &roots {
             walk(std::slice::from_ref(*node), &mut |node| {
                 included.insert(node.base().id.as_str());
             });
@@ -90,10 +95,10 @@ impl HtmlSelection {
                 }
             }
         }
-        source.children = roots.into_iter().cloned().collect();
+        source.children = roots.into_iter().map(|(node, _)| node.clone()).collect();
         let dependencies: Vec<_> = ordered_roots(&forest, &masters)
             .into_iter()
-            .cloned()
+            .map(|(node, _)| node.clone())
             .collect();
         if !dependencies.is_empty() {
             source.pages = Some(vec![PenPage {
@@ -122,6 +127,7 @@ impl HtmlSelection {
         }
         Self {
             source,
+            standalone_frame_origin,
             active_theme: active_theme.clone(),
         }
     }
@@ -209,7 +215,15 @@ impl HtmlSelection {
     }
 
     pub fn generate(&self) -> String {
-        let html = Html.generate_prepared(&self.prepare(true));
+        let mut prepared = self.prepare(true);
+        if let (Some((x, y)), [root]) = (
+            self.standalone_frame_origin,
+            prepared.children.as_mut_slice(),
+        ) {
+            root.base_mut().x = Some(x);
+            root.base_mut().y = Some(y);
+        }
+        let html = Html.generate_prepared(&prepared);
         match self.editable_source_json() {
             Ok(json) => op_util::editable_html::embed_editable_document(&html, &json),
             Err(_) => html,
@@ -362,23 +376,30 @@ fn empty_document(doc: &PenDocument) -> PenDocument {
     }
 }
 
-fn ordered_roots<'a>(forest: &[&'a [PenNode]], ids: &HashSet<&str>) -> Vec<&'a PenNode> {
-    fn walk<'a>(nodes: &'a [PenNode], ids: &mut HashSet<&str>, roots: &mut Vec<&'a PenNode>) {
+type RootWithParent<'a> = (&'a PenNode, Option<&'a PenNode>);
+
+fn ordered_roots<'a>(forest: &[&'a [PenNode]], ids: &HashSet<&str>) -> Vec<RootWithParent<'a>> {
+    fn walk<'a>(
+        nodes: &'a [PenNode],
+        parent: Option<&'a PenNode>,
+        ids: &mut HashSet<&str>,
+        roots: &mut Vec<RootWithParent<'a>>,
+    ) {
         for node in nodes {
             if ids.is_empty() {
                 break;
             }
             if ids.remove(node.base().id.as_str()) {
-                roots.push(node);
+                roots.push((node, parent));
             } else if let Some(children) = node.children() {
-                walk(children, ids, roots);
+                walk(children, Some(node), ids, roots);
             }
         }
     }
     let mut roots = Vec::new();
     let mut remaining = ids.clone();
     for nodes in forest {
-        walk(nodes, &mut remaining, &mut roots);
+        walk(nodes, None, &mut remaining, &mut roots);
     }
     roots
 }
