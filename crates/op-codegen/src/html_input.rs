@@ -417,14 +417,22 @@ fn collect_dependencies(
             _ => {}
         }
     }
+    fn override_refs(props: &Value, refs: &mut BTreeSet<String>) {
+        if let Some(target) = props.get("ref").and_then(Value::as_str) {
+            refs.insert(target.into());
+        }
+        if let Some(overrides) = props.get("descendants").and_then(Value::as_object) {
+            for patch in overrides.values() {
+                override_refs(patch, refs);
+            }
+        }
+    }
     walk(std::slice::from_ref(node), &mut |child| {
         if let PenNode::Ref(instance) = child {
             refs.insert(instance.target.clone());
             if let Some(overrides) = &instance.descendants {
                 for props in overrides.values() {
-                    if let Some(target) = props.get("ref").and_then(Value::as_str) {
-                        refs.insert(target.into());
-                    }
+                    override_refs(props, refs);
                 }
             }
         }

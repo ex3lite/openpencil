@@ -104,6 +104,55 @@ fn editable_html_import_remaps_component_and_override_and_survives_edit_save_reo
 }
 
 #[test]
+fn roundtrip_preserves_nested_component_override_keys_and_swapped_targets() {
+    use op_editor_core::{EditorState, PenNodeExt};
+    use serde_json::{json, Value};
+
+    let source: jian_ops_schema::PenDocument =
+        serde_json::from_value(json!({"version":"1","children":[
+            {"type":"ref","id":"screen","ref":"card","descendants":{
+                "button":{"descendants":{
+                    "icon":{"ref":"alt-icon","descendants":{
+                        "alt-label":{"content":"Selected","events":{"onTap":[]}}
+                    }}
+                }}
+            }},
+            {"type":"frame","id":"card","reusable":true,"children":[
+                {"type":"ref","id":"button","ref":"button-master"}
+            ]},
+            {"type":"frame","id":"button-master","reusable":true,"children":[
+                {"type":"ref","id":"icon","ref":"default-icon"}
+            ]},
+            {"type":"frame","id":"default-icon","reusable":true},
+            {"type":"frame","id":"alt-icon","name":"Swapped master","reusable":true,"children":[
+                {"type":"text","id":"alt-label","content":"Default"}
+            ]}
+        ]}))
+        .unwrap();
+    let selection = &source.children[0];
+    let html = op_codegen::Html.generate_selection(&source, [selection], &Default::default());
+    let mut state = EditorState::new();
+    let args = BTreeMap::from([("html".to_owned(), html)]);
+    let ToolOutcome::OkWithCommand(_, cmd) = import_html_for_document(&state).call(&args) else {
+        panic!("expected native import command")
+    };
+    assert!(state.apply(cmd));
+    let roots = state.active_children();
+    let masters = roots[1].children_ref().unwrap();
+    let [card, button_master, _, swapped] = masters else {
+        panic!("missing master dependency")
+    };
+    let nested_button = card.children_ref().unwrap()[0].id_str();
+    let nested_icon = button_master.children_ref().unwrap()[0].id_str();
+    let nested_label = swapped.children_ref().unwrap()[0].id_str();
+    let instance = serde_json::to_value(&roots[0]).unwrap();
+    let patch = &instance["descendants"][nested_button]["descendants"][nested_icon];
+    assert_eq!(patch["ref"], swapped.id_str());
+    assert_eq!(patch["descendants"][nested_label]["content"], "Selected");
+    assert_eq!(patch["descendants"][nested_label]["events"], Value::Null);
+}
+
+#[test]
 fn conflicting_token_in_existing_document_aborts_without_overwriting_it() {
     use op_editor_core::EditorState;
     use serde_json::json;

@@ -87,13 +87,6 @@ fn visit_nodes(
             return None;
         }
         strip_actions(object);
-        if let Some(overrides) = object.get_mut("descendants").and_then(Value::as_object_mut) {
-            for value in overrides.values_mut() {
-                if let Some(overrides) = value.as_object_mut() {
-                    strip_actions(overrides);
-                }
-            }
-        }
         if let Some(children) = object.get_mut("children") {
             visit_nodes(children, ids, budget, depth + 1)?;
         }
@@ -111,6 +104,13 @@ fn strip_actions(object: &mut serde_json::Map<String, Value>) {
         "bindings",
     ] {
         object.remove(key);
+    }
+    // Nested component overrides carry partial nodes, including their own
+    // descendant overrides. Apply the same import contract at each level.
+    if let Some(overrides) = object.get_mut("descendants").and_then(Value::as_object_mut) {
+        for props in overrides.values_mut().filter_map(Value::as_object_mut) {
+            strip_actions(props);
+        }
     }
 }
 

@@ -192,12 +192,7 @@ fn remap_local_refs(nodes: &mut [PenNode], ids: &HashMap<&str, &str>) {
                 if let Some(overrides) = &mut instance.descendants {
                     *overrides = std::mem::take(overrides)
                         .into_iter()
-                        .map(|(id, patch)| {
-                            (
-                                ids.get(id.as_str()).map_or(id, |new| (*new).to_owned()),
-                                patch,
-                            )
-                        })
+                        .map(|(id, patch)| remap_override(id, patch, ids))
                         .collect();
                 }
             }
@@ -206,4 +201,31 @@ fn remap_local_refs(nodes: &mut [PenNode], ids: &HashMap<&str, &str>) {
             remap_local_refs(children, ids);
         }
     }
+}
+
+/// A card may override its nested button instance, whose own overrides
+/// address the button master's children. Only schema ID fields are remapped.
+fn remap_override(
+    id: String,
+    mut patch: serde_json::Value,
+    ids: &HashMap<&str, &str>,
+) -> (String, serde_json::Value) {
+    if let Some(target) = patch.get_mut("ref") {
+        if let Some(mapped) = target.as_str().and_then(|old| ids.get(old)) {
+            *target = serde_json::Value::String((*mapped).to_owned());
+        }
+    }
+    if let Some(nested) = patch
+        .get_mut("descendants")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        *nested = std::mem::take(nested)
+            .into_iter()
+            .map(|(key, value)| remap_override(key, value, ids))
+            .collect();
+    }
+    (
+        ids.get(id.as_str()).map_or(id, |new| (*new).to_owned()),
+        patch,
+    )
 }
